@@ -17,6 +17,10 @@ const CacheManagementScreen: React.FC = () => {
     categories: {name: string; count: number; size: string}[];
     total: number;
   }>({categories: [], total: 0});
+  const [asyncStorageStats, setAsyncStorageStats] = useState<{
+    readPostsCount: number;
+    readPostsSize: number;
+  }>({readPostsCount: 0, readPostsSize: 0});
   const [storageSize, setStorageSize] = useState<string>('计算中...');
   const [refreshing, setRefreshing] = useState(false);
 
@@ -34,12 +38,31 @@ const CacheManagementScreen: React.FC = () => {
       const keys = await AsyncStorage.getAllKeys();
       const items = await AsyncStorage.multiGet(keys);
       let totalSize = 0;
+      let readPostsCount = 0;
+      let readPostsSize = 0;
+
       items.forEach(([key, value]) => {
         if (value) {
-          totalSize += value.length;
+          const size = value.length;
+          totalSize += size;
+
+          if (key === 'read_posts_ids') {
+            try {
+              const ids = JSON.parse(value);
+              readPostsCount = Array.isArray(ids) ? ids.length : 0;
+            } catch (e) {
+              readPostsCount = 0;
+            }
+            readPostsSize += size;
+          }
         }
       });
+      
       setStorageSize(`${(totalSize / 1024).toFixed(2)} KB`);
+      setAsyncStorageStats({
+        readPostsCount,
+        readPostsSize,
+      });
     } catch (error) {
       console.error('Get storage size error:', error);
       setStorageSize('未知');
@@ -75,6 +98,17 @@ const CacheManagementScreen: React.FC = () => {
     const cleaned = cleanExpiredCache();
     loadStats();
     Alert.alert('成功', `已清理 ${cleaned} 个过期缓存项`);
+  };
+
+  const handleClearReadPosts = async () => {
+    try {
+      await AsyncStorage.removeItem('read_posts_ids');
+      loadStats();
+      Alert.alert('成功', '已清除已读记录');
+    } catch (error) {
+      console.error('Clear read posts error:', error);
+      Alert.alert('错误', '清除已读记录失败');
+    }
   };
 
   const handleClearAllData = () => {
@@ -178,9 +212,40 @@ const CacheManagementScreen: React.FC = () => {
           </View>
         </View>
 
-        {/* 缓存详情 */}
+        {/* 持久化缓存详情 */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>缓存详情</Text>
+          <Text style={styles.sectionTitle}>持久化缓存</Text>
+          <View style={styles.card}>
+            <View style={styles.statItem}>
+              <View style={styles.statItemLeft}>
+                <Text style={styles.statItemName}>已读帖子记录</Text>
+                <Text style={styles.statItemValue}>
+                  {asyncStorageStats.readPostsCount} 条记录 ({(asyncStorageStats.readPostsSize / 1024).toFixed(2)} KB)
+                </Text>
+              </View>
+              {asyncStorageStats.readPostsCount > 0 && (
+                <TouchableOpacity
+                  style={styles.clearButton}
+                  onPress={() => {
+                    Alert.alert(
+                      '清除记录',
+                      '确定要清除所有已读帖子记录吗？',
+                      [
+                        {text: '取消', style: 'cancel'},
+                        {text: '确定', onPress: handleClearReadPosts},
+                      ]
+                    );
+                  }}>
+                  <Text style={styles.clearButtonText}>清除</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        </View>
+
+        {/* 内存缓存详情 */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>内存缓存详情</Text>
           <View style={styles.card}>
             {cacheStats.categories.map(renderCategoryItem)}
           </View>

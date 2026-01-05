@@ -1,11 +1,13 @@
 {
-  "name": "SmthApp",
+  "name": "mySMTH",
   "version": "0.0.1",
   "private": true,
   "scripts": {
     "android": "react-native run-android",
     "ios": "react-native run-ios --simulator='iPhone 17 Pro'",
+    "ios:boot": "react-native run-ios --simulator='iPhone 17 Pro'",
     "ios:device": "react-native run-ios --device",
+    "ios:device:wifi": "react-native run-ios --device --udid 7B895AF7-23D9-55A6-8FAB-9768D3AC628E",
     "ios:verbose": "react-native run-ios --verbose",
     "ios:debug": "REACT_NATIVE_LOG_LEVEL=debug react-native run-ios",
     "ios:build": "cd ios && xcodebuild -workspace SmthApp.xcworkspace -scheme SmthApp -configuration Debug -sdk iphonesimulator -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build 2>&1 | xcpretty || xcodebuild -workspace SmthApp.xcworkspace -scheme SmthApp -configuration Debug -sdk iphonesimulator -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build",

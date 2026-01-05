@@ -20,6 +20,7 @@ import {getSubBoards} from '../services/dataFetcher';
 import {Board, Post} from '../types';
 import {getCache, setCache} from '../services/cacheManager';
 import {formatRelativeTime} from '../utils/timeFormat';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const {width: SCREEN_WIDTH} = Dimensions.get('window');
 const DRAWER_WIDTH = SCREEN_WIDTH * 0.8;
@@ -36,6 +37,7 @@ const BoardScreen: React.FC = () => {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [readPosts, setReadPosts] = useState<Set<string>>(new Set());
 
   const modalAnim = useRef(new Animated.Value(0)).current;
 
@@ -81,6 +83,7 @@ const BoardScreen: React.FC = () => {
   useEffect(() => {
     loadBoards();
     loadFavoriteBoards();
+    loadReadPosts();
   }, []);
 
   useEffect(() => {
@@ -165,6 +168,32 @@ const BoardScreen: React.FC = () => {
     }
   };
 
+  const loadReadPosts = async () => {
+    try {
+      const jsonValue = await AsyncStorage.getItem('read_posts_ids');
+      if (jsonValue != null) {
+        const ids = JSON.parse(jsonValue);
+        setReadPosts(new Set(ids));
+      }
+    } catch (e) {
+      console.error('Failed to load read posts:', e);
+    }
+  };
+
+  const markAsRead = async (postId: string) => {
+    if (readPosts.has(postId)) return;
+
+    const newReadPosts = new Set(readPosts);
+    newReadPosts.add(postId);
+    setReadPosts(newReadPosts);
+
+    try {
+      await AsyncStorage.setItem('read_posts_ids', JSON.stringify(Array.from(newReadPosts)));
+    } catch (e) {
+      console.error('Failed to save read post:', e);
+    }
+  };
+
   const loadPosts = async (boardId: string, pageNum: number) => {
     try {
       if (pageNum > 1) {
@@ -191,6 +220,7 @@ const BoardScreen: React.FC = () => {
     } catch (error) {
       console.error('Load posts error:', error);
     } finally {
+      setLoading(false);
       if (pageNum > 1) {
         setLoadingMore(false);
       }
@@ -332,10 +362,13 @@ const BoardScreen: React.FC = () => {
     <BoardItemGroup items={boards} level={0} />
   );
 
-  const renderPostItem = ({item}: {item: any}) => (
+  const renderPostItem = ({item}: {item: any}) => {
+    const isRead = readPosts.has(item.id);
+    return (
     <TouchableOpacity
       style={styles.postItem}
       onPress={() => {
+        markAsRead(item.id);
         navigation.navigate('PostDetail', {
           board: item.board,
           postId: item.id,
@@ -343,7 +376,14 @@ const BoardScreen: React.FC = () => {
       }}>
       <View style={styles.postHeader}>
         {item.isTop && <View style={styles.topBadge}><Text style={styles.topBadgeText}>置顶</Text></View>}
-        <Text style={[styles.postTitle, item.isTop && styles.topPostTitle]} numberOfLines={2}>
+        <Text 
+          style={[
+            styles.postTitle, 
+            item.isTop && styles.topPostTitle,
+            isRead && styles.readPostTitle
+          ]} 
+          numberOfLines={2}
+        >
         {item.title}
       </Text>
       </View>
@@ -362,7 +402,7 @@ const BoardScreen: React.FC = () => {
         </View>
       </View>
     </TouchableOpacity>
-  );
+  )};
 
   if (loading) {
     return (
@@ -513,6 +553,10 @@ const styles = StyleSheet.create({
   },
   topPostTitle: {
     color: '#FF3B30',
+  },
+  readPostTitle: {
+    color: '#999',
+    fontWeight: 'normal',
   },
   postMeta: {
     flexDirection: 'row',
@@ -701,4 +745,3 @@ const styles = StyleSheet.create({
 });
 
 export default BoardScreen;
-

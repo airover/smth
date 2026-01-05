@@ -13,6 +13,7 @@ import {useNavigation} from '@react-navigation/native';
 import {getTopTen, getHotPosts, getHotBoards} from '../services/api';
 import {TopTenItem, Board} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const HomeScreen: React.FC = () => {
   const navigation = useNavigation<any>();
@@ -24,9 +25,11 @@ const HomeScreen: React.FC = () => {
   const [hotPostsPage, setHotPostsPage] = useState(1);
   const [hasMoreHotPosts, setHasMoreHotPosts] = useState(true);
   const [loadingMoreHotPosts, setLoadingMoreHotPosts] = useState(false);
+  const [readPosts, setReadPosts] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     loadData();
+    loadReadPosts();
   }, []);
 
   const loadData = async () => {
@@ -88,41 +91,82 @@ const HomeScreen: React.FC = () => {
     setRefreshing(false);
   };
 
-  const renderTopTenItem = ({item}: {item: TopTenItem}) => (
-    <TouchableOpacity
-      style={styles.topTenItem}
-      onPress={() => {
-        // 导航到帖子详情
-        navigation.navigate('PostDetail', {
-          board: item.board,
-          postId: item.id,
-        });
-      }}>
-      <Text style={styles.topTenTitle} numberOfLines={1}>
-        {item.title}
-      </Text>
-      <View style={styles.topTenMeta}>
-        <Text style={styles.metaText}>{item.author}</Text>
-        <Text style={styles.metaText}>回复: {item.replyCount}</Text>
-        <Text style={styles.metaText}>
-          {formatRelativeTime(item.lastReplyTime || item.postTime)}
-        </Text>
-        <TouchableOpacity 
-          onPress={() => {
-            navigation.navigate('Board', {
-              board: item.board,
-              boardName: item.boardName || item.board,
-            });
-          }}
-          hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
+  const loadReadPosts = async () => {
+    try {
+      const jsonValue = await AsyncStorage.getItem('read_posts_ids');
+      if (jsonValue != null) {
+        const ids = JSON.parse(jsonValue);
+        setReadPosts(new Set(ids));
+      }
+    } catch (e) {
+      console.error('Failed to load read posts:', e);
+    }
+  };
+
+  const markAsRead = async (postId: string) => {
+    if (readPosts.has(postId)) return;
+
+    const newReadPosts = new Set(readPosts);
+    newReadPosts.add(postId);
+    setReadPosts(newReadPosts);
+
+    try {
+      await AsyncStorage.setItem('read_posts_ids', JSON.stringify(Array.from(newReadPosts)));
+    } catch (e) {
+      console.error('Failed to save read post:', e);
+    }
+  };
+
+  const renderTopTenItem = ({item, index, data}: {item: TopTenItem, index?: number, data?: TopTenItem[]}) => {
+    const isRead = readPosts.has(item.id);
+    const isLastItem = data && index !== undefined && index === data.length - 1;
+    
+    return (
+      <TouchableOpacity
+        style={[
+          styles.topTenItem,
+          isLastItem && styles.lastTopTenItem
+        ]}
+        onPress={() => {
+          markAsRead(item.id);
+          // 导航到帖子详情
+          navigation.navigate('PostDetail', {
+            board: item.board,
+            postId: item.id,
+          });
+        }}>
+        <Text 
+          style={[
+            styles.topTenTitle,
+            isRead && styles.readPostTitle
+          ]} 
+          numberOfLines={1}
         >
-          <Text style={[styles.metaText, styles.boardLink]}>
-            {item.boardName || item.board}
+          {item.title}
+        </Text>
+        <View style={styles.topTenMeta}>
+          <Text style={styles.metaText}>{item.author}</Text>
+          <Text style={styles.metaText}>回复: {item.replyCount}</Text>
+          <Text style={styles.metaText}>
+            {formatRelativeTime(item.lastReplyTime || item.postTime)}
           </Text>
-        </TouchableOpacity>
-      </View>
-    </TouchableOpacity>
-  );
+          <TouchableOpacity 
+            onPress={() => {
+              navigation.navigate('Board', {
+                board: item.board,
+                boardName: item.boardName || item.board,
+              });
+            }}
+            hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
+          >
+            <Text style={[styles.metaText, styles.boardLink]}>
+              {item.boardName || item.board}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   const renderHotBoardItem = ({item}: {item: Board}) => (
     <TouchableOpacity
@@ -159,19 +203,15 @@ const HomeScreen: React.FC = () => {
   return (
     <SafeAreaView style={styles.container}>
       <FlatList
-        data={hotPosts}
-        renderItem={renderTopTenItem}
-        keyExtractor={item => item.id}
-        onEndReached={loadMoreHotPosts}
-        onEndReachedThreshold={0.3}
-        ListHeaderComponent={
-          <>
+        data={[{type: 'content'}]} // 使用单个项目来包装所有内容
+        renderItem={() => (
+          <View>
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>今日十大</Text>
               {topTen.length > 0 ? (
                 <FlatList
                   data={topTen}
-                  renderItem={renderTopTenItem}
+                  renderItem={({item, index}) => renderTopTenItem({item, index, data: topTen})}
                   keyExtractor={item => item.id}
                   scrollEnabled={false}
                 />
@@ -198,23 +238,31 @@ const HomeScreen: React.FC = () => {
 
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>热门帖子</Text>
+              {hotPosts.length > 0 ? (
+                <FlatList
+                  data={hotPosts}
+                  renderItem={({item, index}) => renderTopTenItem({item, index, data: hotPosts})}
+                  keyExtractor={item => item.id}
+                  scrollEnabled={false}
+                  onEndReached={loadMoreHotPosts}
+                  onEndReachedThreshold={0.3}
+                  ListFooterComponent={
+                    hasMoreHotPosts ? (
+                      <View style={styles.footerContainer}>
+                        {loadingMoreHotPosts ? (
+                          <ActivityIndicator size="small" color="#007AFF" />
+                        ) : null}
+                      </View>
+                    ) : null
+                  }
+                />
+              ) : (
+                <Text style={styles.emptyText}>暂无热门帖子</Text>
+              )}
             </View>
-          </>
-        }
-        ListFooterComponent={
-          hasMoreHotPosts ? (
-            <View style={styles.footerContainer}>
-              {loadingMoreHotPosts ? (
-                <ActivityIndicator size="small" color="#007AFF" />
-              ) : null}
-            </View>
-          ) : null
-        }
-        ListEmptyComponent={
-          <View style={styles.section}>
-            <Text style={styles.emptyText}>暂无热门帖子</Text>
           </View>
-        }
+        )}
+        keyExtractor={() => 'content'}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
@@ -254,11 +302,18 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
   },
+  lastTopTenItem: {
+    borderBottomWidth: 0,
+  },
   topTenTitle: {
     fontSize: 16,
     color: '#000',
     marginBottom: 8,
     fontWeight: '500',
+  },
+  readPostTitle: {
+    color: '#999',
+    fontWeight: 'normal',
   },
   topTenMeta: {
     flexDirection: 'row',
