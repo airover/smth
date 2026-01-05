@@ -111,7 +111,7 @@ const AppNavigator = () => {
           name="PostDetail"
           component={PostDetailScreen}
           options={{
-            title: '帖子详情',
+            title: '',
             headerBackTitle: '返回',
           }}
         />

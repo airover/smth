@@ -25,11 +25,11 @@ const BoardListScreen: React.FC = () => {
     checkLoginAndLoadBoards();
   }, [favorites]);
 
-  // 页面获得焦点时重新检查登录状态
+  // 页面获得焦点时只检查登录状态，不重新加载数据
   useFocusEffect(
     React.useCallback(() => {
-      checkLoginAndLoadBoards();
-    }, [favorites])
+      checkLoginStatus();
+    }, [])
   );
 
   const checkLoginAndLoadBoards = async () => {
@@ -54,6 +54,17 @@ const BoardListScreen: React.FC = () => {
       console.error('Check login and load boards error:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const checkLoginStatus = async () => {
+    try {
+      // 只检查登录状态，不重新加载数据
+      const loginStatus = await AsyncStorage.getItem('isLoggedIn');
+      const loggedIn = loginStatus === 'true';
+      setIsLoggedIn(loggedIn);
+    } catch (error) {
+      console.error('Check login status error:', error);
     }
   };
 

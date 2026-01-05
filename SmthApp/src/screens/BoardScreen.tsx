@@ -13,6 +13,7 @@ import {
   Animated,
   Dimensions,
   TouchableWithoutFeedback,
+  RefreshControl,
 } from 'react-native';
 import {useNavigation, useRoute} from '@react-navigation/native';
 import {getBoards, getFavoriteBoards, getBoardPosts} from '../services/api';
@@ -24,6 +25,51 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const {width: SCREEN_WIDTH} = Dimensions.get('window');
 const DRAWER_WIDTH = SCREEN_WIDTH * 0.8;
+
+// 频道类型定义
+interface Channel {
+  id: string;
+  name: string;
+  type: string;
+  value: string;
+}
+
+// 频道帖子类型定义
+interface ChannelTopic {
+  id: string;
+  subject: string;
+  availables: number;
+  firstArticleId: string;
+  likeAvailables: number;
+  flushTime: number;
+  lastPostTime: number;
+  lastArticleOrder: number;
+  boardId: string;
+  fav: boolean;
+  lastArticleId: string;
+  status: number;
+  article: {
+    id: string;
+    subject: string;
+    body: string;
+    postTime: number;
+    editTime: number;
+    account: {
+      id: string;
+      name: string;
+      nick: string;
+      gender: number;
+      level: number;
+      levelTitle: string;
+      avatarUrl?: string;
+    };
+  };
+  board: {
+    id: string;
+    name: string;
+    title: string;
+  };
+}
 
 const BoardScreen: React.FC = () => {
   const navigation = useNavigation<any>();
@@ -38,6 +84,15 @@ const BoardScreen: React.FC = () => {
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [readPosts, setReadPosts] = useState<Set<string>>(new Set());
+  const [searchText, setSearchText] = useState('');
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
+  const [showChannels, setShowChannels] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [channelPosts, setChannelPosts] = useState<ChannelTopic[]>([]);
+  const [channelPage, setChannelPage] = useState(1);
+  const [channelHasMore, setChannelHasMore] = useState(true);
+  const [loadingChannelPosts, setLoadingChannelPosts] = useState(false);
 
   const modalAnim = useRef(new Animated.Value(0)).current;
 
@@ -72,6 +127,11 @@ const BoardScreen: React.FC = () => {
   useEffect(() => {
     const params = route.params as {board?: string, boardName?: string};
     if (params?.board) {
+      // 清理频道状态，确保从其他页面进入版面时状态正确
+      setSelectedChannel(null);
+      setChannelPosts([]);
+      setShowChannels(false);
+      
       setSelectedBoard({
         id: params.board,
         name: params.boardName || params.board,
@@ -84,7 +144,19 @@ const BoardScreen: React.FC = () => {
     loadBoards();
     loadFavoriteBoards();
     loadReadPosts();
+    loadChannels();
   }, []);
+
+  useEffect(() => {
+    if (selectedChannel) {
+      // 选择频道时清理版面相关状态
+      setSelectedBoard(null);
+      setPosts([]);
+      setPage(1);
+      setHasMore(true);
+      setShowChannels(true); // 显示频道列表
+    }
+  }, [selectedChannel]);
 
   useEffect(() => {
     if (selectedBoard) {
@@ -93,10 +165,50 @@ const BoardScreen: React.FC = () => {
       setHasMore(true);
       setPosts([]);
       loadPosts(selectedBoard.id, 1);
+      setShowChannels(false); // 选择版面后隐藏频道列表
     }
-    // 动态更新导航栏
+  }, [selectedBoard]);
+
+  // 动态更新导航栏
+  useEffect(() => {
+    const shouldShowSearch = !selectedBoard && !selectedChannel;
+    
     navigation.setOptions({
-      headerTitle: selectedBoard ? selectedBoard.chineseName || selectedBoard.name : '版面',
+      headerTitle: () => {
+        if (selectedBoard) {
+          return (
+            <View style={styles.headerTitleContainer}>
+              <Text style={styles.headerTitleText} numberOfLines={1}>
+                {selectedBoard.chineseName || selectedBoard.name}
+              </Text>
+            </View>
+          );
+        } else if (selectedChannel) {
+          return (
+            <View style={styles.headerTitleContainer}>
+              <Text style={styles.headerTitleText} numberOfLines={1}>
+                {selectedChannel.name}
+              </Text>
+            </View>
+          );
+        } else {
+          return (
+            <View style={styles.headerContainer}>
+              <TextInput
+                style={styles.searchInput}
+                placeholder="搜索版面或帖子"
+                value={searchText}
+                onChangeText={setSearchText}
+                returnKeyType="search"
+                onSubmitEditing={() => {
+                  // TODO: 实现搜索功能
+                  console.log('搜索:', searchText);
+                }}
+              />
+            </View>
+          );
+        }
+      },
       headerLeft: () => (
         <TouchableOpacity
           style={{paddingLeft: 16}}
@@ -112,7 +224,7 @@ const BoardScreen: React.FC = () => {
         </TouchableOpacity>
       ),
     });
-  }, [selectedBoard]);
+  }, [selectedBoard, selectedChannel, searchText]);
 
   const loadBoards = async () => {
     try {
@@ -165,6 +277,107 @@ const BoardScreen: React.FC = () => {
       setFavoriteBoards(data);
     } catch (error) {
       console.error('Load favorite boards error:', error);
+    }
+  };
+
+  const loadChannels = async () => {
+    try {
+      // 检查缓存
+      const cachedChannels = getCache<Channel[]>('channels');
+      if (cachedChannels) {
+        setChannels(cachedChannels);
+        return;
+      }
+
+      const response = await fetch('https://wap.newsmth.net/wap/api/profile/navigation', {
+        method: 'GET',
+        headers: {
+          'accept': 'application/json, text/plain, */*',
+          'accept-language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+          'access-control-allow-origin': '*',
+          'authorization': 'Basic Og==',
+          'cache-control': 'no-cache',
+          'pragma': 'no-cache',
+          'priority': 'u=1, i',
+          'sec-ch-ua': '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
+          'sec-ch-ua-mobile': '?0',
+          'sec-ch-ua-platform': '"macOS"',
+          'sec-fetch-dest': 'empty',
+          'sec-fetch-mode': 'cors',
+          'sec-fetch-site': 'same-origin',
+          'test-uin-only': '1',
+          'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
+        }
+      });
+
+      const result = await response.json();
+      if (result.code === 1 && result.data && result.data.data) {
+        const channelsData = result.data.data;
+        setChannels(channelsData);
+        // 缓存频道数据
+        setCache('channels', undefined, channelsData);
+      }
+    } catch (error) {
+      console.error('Load channels error:', error);
+    }
+  };
+
+  const loadChannelPosts = async (channelId: string, pageNum: number = 1) => {
+    try {
+      if (pageNum > 1) {
+        setLoadingChannelPosts(true);
+      }
+
+      const timestamp = Date.now();
+      const url = `https://wap.newsmth.net/wap/api/channel/loadTopics?t=${timestamp}&channel=${channelId}&page=${pageNum}&size=20`;
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'accept': 'application/json, text/plain, */*',
+          'accept-language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+          'access-control-allow-origin': '*',
+          'authorization': 'Basic Og==',
+          'cache-control': 'no-cache',
+          'pragma': 'no-cache',
+          'priority': 'u=1, i',
+          'sec-ch-ua': '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
+          'sec-ch-ua-mobile': '?0',
+          'sec-ch-ua-platform': '"macOS"',
+          'sec-fetch-dest': 'empty',
+          'sec-fetch-mode': 'cors',
+          'sec-fetch-site': 'same-origin',
+          'test-uin-only': '1',
+          'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
+        }
+      });
+
+      const result = await response.json();
+      if (result.code === 1 && result.data) {
+        const { topics, pager } = result.data;
+        
+        if (pageNum === 1) {
+          setChannelPosts(topics || []);
+          setChannelPage(1);
+        } else {
+          // 使用Set来去重，确保不会有重复的id
+          setChannelPosts(prev => {
+            const existingIds = new Set(prev.map(p => p.id));
+            const newPosts = (topics || []).filter((p: ChannelTopic) => !existingIds.has(p.id));
+            return [...prev, ...newPosts];
+          });
+        }
+        
+        // 检查是否还有更多数据
+        const totalPages = Math.ceil(pager.items / pager.size);
+        setChannelHasMore(pageNum < totalPages);
+      }
+    } catch (error) {
+      console.error('Load channel posts error:', error);
+    } finally {
+      if (pageNum > 1) {
+        setLoadingChannelPosts(false);
+      }
     }
   };
 
@@ -228,11 +441,83 @@ const BoardScreen: React.FC = () => {
   };
 
   const loadMore = () => {
-    if (hasMore && selectedBoard && !loadingMore) {
-      const nextPage = page + 1;
-      setPage(nextPage);
-      loadPosts(selectedBoard.id, nextPage);
+    if (selectedChannel) {
+      // 频道帖子加载更多
+      if (channelHasMore && !loadingChannelPosts) {
+        const nextPage = channelPage + 1;
+        setChannelPage(nextPage);
+        loadChannelPosts(selectedChannel.id, nextPage);
+      }
+    } else if (selectedBoard) {
+      // 版面帖子加载更多
+      if (hasMore && !loadingMore) {
+        const nextPage = page + 1;
+        setPage(nextPage);
+        loadPosts(selectedBoard.id, nextPage);
+      }
     }
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    try {
+      if (selectedChannel) {
+        setChannelPage(1);
+        setChannelHasMore(true);
+        await loadChannelPosts(selectedChannel.id, 1);
+      } else if (selectedBoard) {
+        setPage(1);
+        setHasMore(true);
+        await loadPosts(selectedBoard.id, 1);
+      } else {
+        await loadChannels();
+      }
+    } catch (error) {
+      console.error('Refresh error:', error);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const renderChannelItem = ({item}: {item: Channel}) => (
+    <TouchableOpacity
+      style={[
+        styles.channelItem,
+        selectedChannel?.id === item.id && styles.selectedChannelItem
+      ]}
+      onPress={() => {
+        setSelectedChannel(item);
+        setSelectedBoard(null); // 清除版面选择
+        setChannelPage(1);
+        setChannelHasMore(true);
+        setChannelPosts([]);
+        loadChannelPosts(item.id, 1);
+        console.log('选择频道:', item);
+      }}>
+      <Text style={[
+        styles.channelText,
+        selectedChannel?.id === item.id && styles.selectedChannelText
+      ]}>
+        {item.name}
+      </Text>
+    </TouchableOpacity>
+  );
+
+  const renderChannelsList = () => {
+    if (!showChannels || channels.length === 0) return null;
+    
+    return (
+      <View style={styles.channelsContainer}>
+        <FlatList
+          data={channels}
+          renderItem={renderChannelItem}
+          keyExtractor={item => item.id}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.channelsList}
+        />
+      </View>
+    );
   };
 
   // 子组件：渲染版面项目组（支持同级手风琴效果）
@@ -404,6 +689,50 @@ const BoardScreen: React.FC = () => {
     </TouchableOpacity>
   )};
 
+  const renderChannelPostItem = ({item}: {item: ChannelTopic}) => {
+    const isRead = readPosts.has(item.id);
+    return (
+      <TouchableOpacity
+        style={styles.postItem}
+        onPress={() => {
+          markAsRead(item.id);
+          navigation.navigate('PostDetail', {
+            board: item.board.name,
+            postId: item.id, // 使用topicId
+          });
+        }}>
+        <View style={styles.postHeader}>
+          <Text 
+            style={[
+              styles.postTitle,
+              isRead && styles.readPostTitle
+            ]} 
+            numberOfLines={2}
+          >
+            {item.subject}
+          </Text>
+        </View>
+        <View style={styles.postMeta}>
+          <View style={styles.postAuthorInfo}>
+            <Text style={styles.metaText}>
+              {item.article.account.nick} ({item.article.account.name})
+            </Text>
+            {item.article.account.levelTitle && (
+              <Text style={styles.levelTitle}> · {item.article.account.levelTitle}</Text>
+            )}
+          </View>
+          <View style={styles.postStats}>
+            <Text style={styles.metaText}>{item.availables} 回复</Text>
+            <Text style={styles.statsText}>{formatRelativeTime(item.lastPostTime)}</Text>
+          </View>
+        </View>
+        <View style={styles.channelPostBoard}>
+          <Text style={styles.boardNameText}>📋 {item.board.title}</Text>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
@@ -415,11 +744,14 @@ const BoardScreen: React.FC = () => {
   }
 
   const renderFooter = () => {
-    if (!hasMore) return null;
+    const showFooter = selectedChannel ? channelHasMore : hasMore;
+    const isLoading = selectedChannel ? loadingChannelPosts : loadingMore;
+    
+    if (!showFooter) return null;
     
     return (
       <View style={styles.footerContainer}>
-        {loadingMore ? (
+        {isLoading ? (
           <ActivityIndicator size="small" color="#007AFF" />
         ) : (
           <TouchableOpacity 
@@ -434,13 +766,34 @@ const BoardScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.container}>
-      {selectedBoard ? (
+      {renderChannelsList()}
+      {selectedChannel ? (
+        <FlatList
+          data={channelPosts}
+          renderItem={renderChannelPostItem}
+          keyExtractor={(item, index) => `${item.id}-${index}`}
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.3}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>暂无帖子</Text>
+            </View>
+          }
+          ListFooterComponent={renderFooter}
+        />
+      ) : selectedBoard ? (
         <FlatList
           data={posts}
           renderItem={renderPostItem}
           keyExtractor={(item, index) => `${item.id}-${index}`}
           onEndReached={loadMore}
           onEndReachedThreshold={0.3}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <Text style={styles.emptyText}>暂无帖子</Text>
@@ -449,9 +802,16 @@ const BoardScreen: React.FC = () => {
           ListFooterComponent={renderFooter}
         />
       ) : (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>请选择版面</Text>
-        </View>
+        <ScrollView
+          style={styles.container}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }>
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyText}>请选择版面或频道</Text>
+            <Text style={styles.hintText}>点击左上角菜单选择版面，或使用上方频道快速浏览</Text>
+          </View>
+        </ScrollView>
       )}
 
       <Modal
@@ -514,6 +874,48 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f5f5f5',
+  },
+  headerContainer: {
+    flex: 1,
+    marginHorizontal: 16,
+  },
+  searchInput: {
+    height: 36,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    fontSize: 14,
+    color: '#333',
+  },
+  channelsContainer: {
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+    paddingVertical: 8,
+  },
+  channelsList: {
+    paddingHorizontal: 16,
+  },
+  channelItem: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    marginRight: 8,
+    backgroundColor: '#f8f8f8',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  selectedChannelItem: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
+  },
+  channelText: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '500',
+  },
+  selectedChannelText: {
+    color: '#fff',
   },
   loadingContainer: {
     flex: 1,
@@ -588,10 +990,41 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    paddingTop: 100,
   },
   emptyText: {
-    fontSize: 14,
+    fontSize: 16,
     color: '#999',
+    marginBottom: 8,
+  },
+  hintText: {
+    fontSize: 14,
+    color: '#ccc',
+    textAlign: 'center',
+    paddingHorizontal: 32,
+    lineHeight: 20,
+  },
+  channelPostBoard: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#f0f0f0',
+  },
+  boardNameText: {
+    fontSize: 12,
+    color: '#666',
+    fontWeight: '500',
+  },
+  headerTitleContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerTitleText: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: '#000',
+    textAlign: 'center',
   },
   footerContainer: {
     paddingVertical: 20,
