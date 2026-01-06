@@ -17,6 +17,7 @@ import {getPostDetail, getTopicReplies} from '../services/api';
 import {Post, Reply, Attachment, Like} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
+import {cacheManager} from '../services/cacheManager';
 
 // 格式化具体时间（用于主帖）
 const formatDateTime = (time: string): string => {
@@ -60,12 +61,35 @@ const PostDetailScreen: React.FC = () => {
         setLoadingMore(true);
       }
       
-        if (pageNum === 1) {
-        // 第一页：同时获取主题详情和回复列表
-        const [detailData, repliesData] = await Promise.all([
-          getPostDetail(board, postId),
-          getTopicReplies(postId, 1)
-        ]);
+      if (pageNum === 1) {
+        // 第一页：检查缓存并获取主题详情和回复列表
+        const postCacheKey = `${board}-${postId}`;
+        const repliesCacheKey = `${postId}-1`;
+        
+        // 尝试从缓存获取数据
+        let detailData = cacheManager.get('postDetail', postCacheKey, 60 * 1000); // 1分钟缓存
+        let repliesData = cacheManager.get('topicReplies', repliesCacheKey, 60 * 1000);
+        
+        // 如果缓存中没有数据，则从API获取
+        if (!detailData || !repliesData) {
+          console.log('[PostDetail] Cache miss, fetching from API');
+          const [apiDetailData, apiRepliesData] = await Promise.all([
+            detailData ? Promise.resolve(detailData) : getPostDetail(board, postId),
+            repliesData ? Promise.resolve(repliesData) : getTopicReplies(postId, 1)
+          ]);
+          
+          // 缓存新获取的数据
+          if (apiDetailData && !detailData) {
+            cacheManager.set('postDetail', postCacheKey, apiDetailData);
+            detailData = apiDetailData;
+          }
+          if (apiRepliesData && !repliesData) {
+            cacheManager.set('topicReplies', repliesCacheKey, apiRepliesData);
+            repliesData = apiRepliesData;
+          }
+        } else {
+          console.log('[PostDetail] Cache hit, using cached data');
+        }
 
         if (detailData) {
           setPost(detailData);
@@ -79,8 +103,20 @@ const PostDetailScreen: React.FC = () => {
           setHasMore(repliesData.replies.length >= 20); // 假设 pageSize 为 20
         }
       } else {
-        // 后续页：只获取回复列表
-        const repliesData = await getTopicReplies(postId, pageNum);
+        // 后续页：检查缓存并获取回复列表
+        const repliesCacheKey = `${postId}-${pageNum}`;
+        let repliesData = cacheManager.get('topicReplies', repliesCacheKey, 60 * 1000);
+        
+        if (!repliesData) {
+          console.log(`[PostDetail] Cache miss for page ${pageNum}, fetching from API`);
+          repliesData = await getTopicReplies(postId, pageNum);
+          if (repliesData) {
+            cacheManager.set('topicReplies', repliesCacheKey, repliesData);
+          }
+        } else {
+          console.log(`[PostDetail] Cache hit for page ${pageNum}, using cached data`);
+        }
+        
         if (repliesData && repliesData.replies.length > 0) {
           // 使用Set来去重，确保不会有重复的id
           setReplies(prev => {

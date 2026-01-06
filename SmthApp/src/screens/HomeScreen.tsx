@@ -14,6 +14,7 @@ import {getTopTen, getHotPosts, getHotBoards} from '../services/api';
 import {TopTenItem, Board} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {cacheManager} from '../services/cacheManager';
 
 const HomeScreen: React.FC = () => {
   const navigation = useNavigation<any>();
@@ -32,27 +33,72 @@ const HomeScreen: React.FC = () => {
     loadReadPosts();
   }, []);
 
-  const loadData = async () => {
+  const loadData = async (forceRefresh = false) => {
     setLoading(true);
     try {
-      console.log('Loading home data...');
+      console.log('Loading home data...', forceRefresh ? '(force refresh)' : '');
+      
+      // 尝试从缓存获取数据
+      const cachedTopTen = cacheManager.get('topTen');
+      const cachedHotBoards = cacheManager.get('hotBoards');
+      const cachedHotPosts = cacheManager.get('hotPosts', 'page-1'); // 第一页数据
+      
+      // 如果有缓存且不是强制刷新，先显示缓存数据
+      if (!forceRefresh && cachedTopTen && cachedHotBoards && cachedHotPosts) {
+        console.log('Using cached data');
+        setTopTen(cachedTopTen);
+        setHotBoards(cachedHotBoards);
+        setHotPosts(cachedHotPosts.topics);
+        setHotPostsPage(1);
+        setHasMoreHotPosts(1 < cachedHotPosts.totalPages);
+        setLoading(false);
+        
+        // 后台异步刷新数据
+        loadDataFromAPI(true);
+        return;
+      }
+      
+      // 没有缓存或强制刷新，直接从API获取
+      await loadDataFromAPI(false);
+    } catch (error) {
+      console.error('Load data error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  const loadDataFromAPI = async (isBackground = false) => {
+    try {
+      console.log('Loading data from API...', isBackground ? '(background)' : '');
       const [topTenData, hotPostsResult, hotBoardsData] = await Promise.all([
         getTopTen(),
         getHotPosts(1, 20),
         getHotBoards(),
       ]);
-      console.log('Top ten data:', topTenData.length, 'items');
-      console.log('Hot posts data:', hotPostsResult.topics.length, 'items, total pages:', hotPostsResult.totalPages);
-      console.log('Hot boards data:', hotBoardsData.length, 'items');
+      
+      console.log('API data loaded:', {
+        topTen: topTenData.length,
+        hotPosts: hotPostsResult.topics.length,
+        hotBoards: hotBoardsData.length,
+        totalPages: hotPostsResult.totalPages
+      });
+      
+      // 缓存数据
+      cacheManager.set('topTen', undefined, topTenData);
+      cacheManager.set('hotBoards', undefined, hotBoardsData);
+      cacheManager.set('hotPosts', 'page-1', hotPostsResult); // 第一页数据
+      
+      // 更新状态
       setTopTen(topTenData);
       setHotPosts(hotPostsResult.topics);
       setHotBoards(hotBoardsData);
       setHotPostsPage(1);
       setHasMoreHotPosts(1 < hotPostsResult.totalPages);
     } catch (error) {
-      console.error('Load data error:', error);
-    } finally {
-      setLoading(false);
+      console.error('Load data from API error:', error);
+      if (!isBackground) {
+        throw error; // 如果不是后台刷新，抛出错误
+      }
     }
   };
 
@@ -63,18 +109,29 @@ const HomeScreen: React.FC = () => {
     try {
       const nextPage = hotPostsPage + 1;
       console.log('Loading more hot posts, page:', nextPage);
-      const result = await getHotPosts(nextPage, 20);
-      console.log('Loaded more hot posts:', result.topics.length, 'items, total pages:', result.totalPages);
       
-      if (result.topics.length > 0) {
+      // 尝试从缓存获取分页数据
+      const cacheKey = `page-${nextPage}`;
+      let cachedResult = cacheManager.get('hotPosts', cacheKey);
+      
+      if (!cachedResult) {
+        // 缓存未命中，从API获取
+        cachedResult = await getHotPosts(nextPage, 20);
+        // 缓存分页数据
+        cacheManager.set('hotPosts', cacheKey, cachedResult);
+      }
+      
+      console.log('Loaded more hot posts:', cachedResult.topics.length, 'items, total pages:', cachedResult.totalPages);
+      
+      if (cachedResult.topics.length > 0) {
         // 使用Set来去重，确保不会有重复的id
         setHotPosts(prev => {
           const existingIds = new Set(prev.map(p => p.id));
-          const newPosts = result.topics.filter(p => !existingIds.has(p.id));
+          const newPosts = cachedResult.topics.filter(p => !existingIds.has(p.id));
           return [...prev, ...newPosts];
         });
         setHotPostsPage(nextPage);
-        setHasMoreHotPosts(nextPage < result.totalPages);
+        setHasMoreHotPosts(nextPage < cachedResult.totalPages);
       } else {
         setHasMoreHotPosts(false);
       }
@@ -87,8 +144,14 @@ const HomeScreen: React.FC = () => {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadData();
-    setRefreshing(false);
+    try {
+      // 手动下拉刷新时强制从API获取最新数据
+      await loadDataFromAPI(false);
+    } catch (error) {
+      console.error('Refresh error:', error);
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const loadReadPosts = async () => {

@@ -21,6 +21,7 @@ interface CacheStore {
   // 内容相关缓存
   topTen?: CacheItem<any[]>;
   hotBoards?: CacheItem<any[]>;
+  hotPosts: {[key: string]: CacheItem<any>};
   postDetail: {[key: string]: CacheItem<any>};
   topicReplies: {[key: string]: CacheItem<any[]>};
 }
@@ -34,6 +35,7 @@ class CacheManager {
     this.cache = {
       subBoards: {},
       boardPosts: {},
+      hotPosts: {},
       postDetail: {},
       topicReplies: {},
     };
@@ -119,6 +121,7 @@ class CacheManager {
     this.cache = {
       subBoards: {},
       boardPosts: {},
+      hotPosts: {},
       postDetail: {},
       topicReplies: {},
     };
@@ -172,9 +175,10 @@ class CacheManager {
     let cleaned = 0;
 
     // 清理字典类型的缓存
-    const dictCategories: Array<'subBoards' | 'boardPosts' | 'postDetail' | 'topicReplies'> = [
+    const dictCategories: Array<'subBoards' | 'boardPosts' | 'hotPosts' | 'postDetail' | 'topicReplies'> = [
       'subBoards',
       'boardPosts',
+      'hotPosts',
       'postDetail',
       'topicReplies',
     ];
