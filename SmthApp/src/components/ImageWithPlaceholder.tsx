@@ -1,5 +1,5 @@
 import React, {useState} from 'react';
-import {Image, View, Text, StyleSheet, ImageStyle, StyleProp, ViewStyle} from 'react-native';
+import {Image, View, Text, StyleSheet, ImageStyle, StyleProp, ViewStyle, ActivityIndicator} from 'react-native';
 
 interface ImageWithPlaceholderProps {
   uri: string;
@@ -7,6 +7,8 @@ interface ImageWithPlaceholderProps {
   resizeMode?: 'cover' | 'contain' | 'stretch' | 'repeat' | 'center';
   placeholderText?: string;
   isAvatar?: boolean; // 是否是头像，如果是则显示为圆形占位符
+  onImageLoad?: (imageSize: {width: number; height: number}) => void; // 图片加载完成回调
+  showLoadingIndicator?: boolean; // 是否显示加载指示器
 }
 
 /**
@@ -19,6 +21,8 @@ const ImageWithPlaceholder: React.FC<ImageWithPlaceholderProps> = ({
   resizeMode = 'cover',
   placeholderText = '图片加载失败',
   isAvatar = false,
+  onImageLoad,
+  showLoadingIndicator = false,
 }) => {
   const [failed, setFailed] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -36,25 +40,36 @@ const ImageWithPlaceholder: React.FC<ImageWithPlaceholderProps> = ({
     return (
       <View style={[styles.placeholder, style as ViewStyle]}>
         <Text style={styles.placeholderIcon}>🖼️</Text>
-        {placeholderText ? <Text style={styles.placeholderText}>{placeholderText}</Text> : null}
       </View>
     );
   }
 
   return (
-    <Image
-      source={{uri}}
-      style={style}
-      resizeMode={resizeMode}
-      onLoad={() => {
-        setLoading(false);
-      }}
-      onError={(e) => {
-        console.log(`Image load failed: ${uri}`);
-        setFailed(true);
-        setLoading(false);
-      }}
-    />
+    <View style={style as ViewStyle}>
+      <Image
+        source={{uri}}
+        style={[StyleSheet.absoluteFill, {opacity: loading ? 0 : 1}]}
+        resizeMode={resizeMode}
+        onLoad={(event) => {
+          setLoading(false);
+          // 获取图片实际尺寸并回调
+          if (onImageLoad && event.nativeEvent.source) {
+            const {width, height} = event.nativeEvent.source;
+            onImageLoad({width, height});
+          }
+        }}
+        onError={(e) => {
+          console.log(`Image load failed: ${uri}`);
+          setFailed(true);
+          setLoading(false);
+        }}
+      />
+      {loading && showLoadingIndicator && (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="small" color="#999" />
+        </View>
+      )}
+    </View>
   );
 };
 
@@ -81,6 +96,12 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     color: '#fff',
+  },
+  loadingContainer: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f5f5f5',
   },
 });
 

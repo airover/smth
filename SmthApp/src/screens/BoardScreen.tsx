@@ -155,6 +155,7 @@ const BoardScreen: React.FC = () => {
       setPage(1);
       setHasMore(true);
       setShowChannels(true); // 显示频道列表
+      setLoading(true); // 设置加载状态
     }
   }, [selectedChannel]);
 
@@ -164,6 +165,7 @@ const BoardScreen: React.FC = () => {
       setPage(1);
       setHasMore(true);
       setPosts([]);
+      setLoading(true); // 设置加载状态
       loadPosts(selectedBoard.id, 1);
       setShowChannels(false); // 选择版面后隐藏频道列表
     }
@@ -326,6 +328,8 @@ const BoardScreen: React.FC = () => {
     try {
       if (pageNum > 1) {
         setLoadingChannelPosts(true);
+      } else {
+        setLoading(true);
       }
 
       const timestamp = Date.now();
@@ -375,6 +379,7 @@ const BoardScreen: React.FC = () => {
     } catch (error) {
       console.error('Load channel posts error:', error);
     } finally {
+      setLoading(false);
       if (pageNum > 1) {
         setLoadingChannelPosts(false);
       }
@@ -411,6 +416,8 @@ const BoardScreen: React.FC = () => {
     try {
       if (pageNum > 1) {
         setLoadingMore(true);
+      } else {
+        setLoading(true);
       }
       
       const {topics, tops, totalPages} = await getBoardPosts(boardId, pageNum);
@@ -778,9 +785,11 @@ const BoardScreen: React.FC = () => {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
           ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>暂无帖子</Text>
-            </View>
+            !loading && !refreshing && channelPosts.length === 0 ? (
+              <View style={styles.emptyContainer}>
+                <Text style={styles.emptyText}>暂无帖子</Text>
+              </View>
+            ) : null
           }
           ListFooterComponent={renderFooter}
         />
@@ -795,9 +804,11 @@ const BoardScreen: React.FC = () => {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
           ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>暂无帖子</Text>
-            </View>
+            !loading && !refreshing && posts.length === 0 ? (
+              <View style={styles.emptyContainer}>
+                <Text style={styles.emptyText}>暂无帖子</Text>
+              </View>
+            ) : null
           }
           ListFooterComponent={renderFooter}
         />

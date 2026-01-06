@@ -17,6 +17,7 @@ import {getPostDetail, getTopicReplies} from '../services/api';
 import {Post, Reply, Attachment, Like} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
+import ImageViewer from '../components/ImageViewer';
 import {cacheManager} from '../services/cacheManager';
 
 // 格式化具体时间（用于主帖）
@@ -38,7 +39,7 @@ const formatDateTime = (time: string): string => {
   }
 };
 
-const {width: SCREEN_WIDTH} = Dimensions.get('window');
+const {width: SCREEN_WIDTH, height: SCREEN_HEIGHT} = Dimensions.get('window');
 
 const PostDetailScreen: React.FC = () => {
   const route = useRoute();
@@ -50,6 +51,9 @@ const PostDetailScreen: React.FC = () => {
   const [hasMore, setHasMore] = useState(true);
   const [likesExpanded, setLikesExpanded] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [imageViewerVisible, setImageViewerVisible] = useState(false);
+  const [selectedImageUri, setSelectedImageUri] = useState('');
+  const [imageSizes, setImageSizes] = useState<{[key: string]: {width: number; height: number}}>({});
 
   useEffect(() => {
     loadPostDetail(1);
@@ -188,15 +192,44 @@ const PostDetailScreen: React.FC = () => {
       }
     });
 
-    return segments.map((segment, index) => (
-      <View
-        key={index}
-        style={segment.type === 'quote' ? styles.quoteContainer : styles.textContainer}>
-        <Text style={segment.type === 'quote' ? styles.quoteText : styles.contentText}>
-          {segment.text.trim()}
-        </Text>
-      </View>
-    ));
+    return segments
+      .filter(segment => segment.text.trim()) // 过滤掉空的段落
+      .map((segment, index) => (
+        <View
+          key={index}
+          style={segment.type === 'quote' ? styles.quoteContainer : styles.textContainer}>
+          <Text style={segment.type === 'quote' ? styles.quoteText : styles.contentText}>
+            {segment.text.trim()}
+          </Text>
+        </View>
+      ));
+  };
+
+  const handleImagePress = (imageUri: string) => {
+    setSelectedImageUri(imageUri);
+    setImageViewerVisible(true);
+  };
+
+  // 根据图片实际尺寸计算显示高度
+  const calculateImageHeight = (imageUri: string, imageSize?: {width: number; height: number}) => {
+    if (!imageSize || imageSize.width === 0 || imageSize.height === 0) {
+      return 200; // 默认最小高度
+    }
+
+    const containerWidth = SCREEN_WIDTH;
+    const aspectRatio = imageSize.width / imageSize.height;
+    const calculatedHeight = containerWidth / aspectRatio;
+
+    // 返回计算出的高度，但不设置最大限制，让图片按实际比例显示
+    return Math.max(200, calculatedHeight); // 只设置最小高度200
+  };
+
+  // 处理图片加载完成
+  const handleImageLoad = (imageUri: string, imageSize: {width: number; height: number}) => {
+    setImageSizes(prev => ({
+      ...prev,
+      [imageUri]: imageSize
+    }));
   };
 
   const renderAttachments = (attachments: Attachment[]) => {
@@ -211,16 +244,29 @@ const PostDetailScreen: React.FC = () => {
           const name = item.name;
           
           if (isImage(url, name)) {
+            const imageSize = imageSizes[url];
+            const dynamicHeight = calculateImageHeight(url, imageSize);
+            
             return (
-              <View key={index} style={styles.imageContainer}>
+              <TouchableOpacity 
+                key={index} 
+                style={styles.imageContainer}
+                onPress={() => handleImagePress(url)}
+                activeOpacity={0.9}
+              >
                 <ImageWithPlaceholder
                   uri={url}
-                  style={styles.attachmentImage}
+                  style={[
+                    styles.attachmentImage,
+                    { height: dynamicHeight }
+                  ]}
                   resizeMode="contain"
-                  placeholderText="图片无法加载"
+                  showLoadingIndicator={true}
+                  onImageLoad={(imageSize) => {
+                    handleImageLoad(url, imageSize);
+                  }}
                 />
-                {name && <Text style={styles.attachmentName}>{name}</Text>}
-              </View>
+              </TouchableOpacity>
             );
           } else if (isVideo(url, name)) {
             return (
@@ -452,6 +498,12 @@ const PostDetailScreen: React.FC = () => {
         onEndReachedThreshold={0.3}
         contentContainerStyle={styles.content}
       />
+      
+      <ImageViewer
+        visible={imageViewerVisible}
+        imageUri={selectedImageUri}
+        onClose={() => setImageViewerVisible(false)}
+      />
     </SafeAreaView>
   );
 };
@@ -573,21 +625,16 @@ const styles = StyleSheet.create({
   },
   imageContainer: {
     marginBottom: 16,
+    marginHorizontal: -16,
+    borderRadius: 0,
+    overflow: 'hidden',
+    backgroundColor: '#000',
     alignItems: 'center',
-    backgroundColor: '#f9f9f9',
-    borderRadius: 8,
-    padding: 8,
   },
   attachmentImage: {
-    width: SCREEN_WIDTH - 80,
-    height: 300,
-    borderRadius: 4,
+    width: SCREEN_WIDTH,
+    minHeight: 200,
     backgroundColor: '#eee',
-  },
-  attachmentName: {
-    fontSize: 12,
-    color: '#999',
-    marginTop: 8,
   },
   videoContainer: {
     width: SCREEN_WIDTH - 64,
