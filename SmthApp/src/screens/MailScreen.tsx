@@ -8,39 +8,122 @@ import {
   RefreshControl,
   ActivityIndicator,
   SafeAreaView,
-  Image,
+  Alert,
 } from 'react-native';
-import {useNavigation} from '@react-navigation/native';
+import {useNavigation, useFocusEffect} from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {getMessages} from '../services/api';
 import {Mail} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
-import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 
 const MailScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const [mails, setMails] = useState<Mail[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [dataLoaded, setDataLoaded] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
 
   useEffect(() => {
-    loadMails();
+    checkLoginAndLoadMails();
   }, []);
+
+  // 页面获得焦点时检查登录状态
+  useFocusEffect(
+    React.useCallback(() => {
+      checkLoginStatus();
+    }, [])
+  );
+
+  const checkLoginAndLoadMails = async () => {
+    try {
+      setLoading(true);
+      // 检查登录状态
+      const loginStatus = await AsyncStorage.getItem('isLoggedIn');
+      const loggedIn = loginStatus === 'true';
+      setIsLoggedIn(loggedIn);
+
+      if (!loggedIn) {
+        // 未登录，清空数据
+        setMails([]);
+        setDataLoaded(false);
+        setLoading(false);
+        return;
+      }
+
+      // 已登录，加载信箱
+      await loadMails();
+    } catch (error) {
+      console.error('Check login and load mails error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const checkLoginStatus = async () => {
+    try {
+      const loginStatus = await AsyncStorage.getItem('isLoggedIn');
+      const loggedIn = loginStatus === 'true';
+      const wasLoggedIn = isLoggedIn;
+      
+      setIsLoggedIn(loggedIn);
+      
+      if (!loggedIn) {
+        // 如果退出登录，清空信箱数据
+        setMails([]);
+        setDataLoaded(false);
+      } else if (!wasLoggedIn && loggedIn) {
+        // 如果从未登录变为已登录，自动加载信箱数据
+        console.log('Login status changed from false to true, loading mails...');
+        await loadMails();
+      }
+    } catch (error) {
+      console.error('Check login status error:', error);
+    }
+  };
 
   const loadMails = async () => {
     try {
       const data = await getMessages();
       console.log('Loaded messages:', data.length);
       setMails(data);
-    } catch (error) {
+      setDataLoaded(true);
+    } catch (error: any) {
       console.error('Load mails error:', error);
-    } finally {
-      setLoading(false);
+      
+      // 处理登录过期错误
+      if (error.message === 'NOT_LOGGED_IN' || error.message === 'LOGIN_EXPIRED') {
+        console.log('Login expired, clearing login status');
+        setIsLoggedIn(false);
+        setMails([]);
+        setDataLoaded(false);
+        // 提示用户重新登录
+        Alert.alert(
+          '登录已过期',
+          '请重新登录后查看邮件',
+          [
+            {
+              text: '去登录',
+              onPress: handleLogin,
+            },
+            {
+              text: '取消',
+              style: 'cancel',
+            },
+          ]
+        );
+      }
+      // 接口失败时不设置dataLoaded，避免显示"暂无邮件"
     }
+  };
+
+  const handleLogin = () => {
+    navigation.navigate('Login');
   };
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadMails();
+    await checkLoginAndLoadMails();
     setRefreshing(false);
   };
 
@@ -88,6 +171,20 @@ const MailScreen: React.FC = () => {
     );
   }
 
+  if (!isLoggedIn) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.emptyContainer}>
+          <Text style={styles.emptyTitle}>未登录</Text>
+          <Text style={styles.emptyText}>请先登录以查看信箱</Text>
+          <TouchableOpacity style={styles.loginButton} onPress={handleLogin}>
+            <Text style={styles.loginButtonText}>前往登录</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <FlatList
@@ -98,9 +195,11 @@ const MailScreen: React.FC = () => {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
         ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>暂无邮件</Text>
-          </View>
+          dataLoaded ? (
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>暂无邮件</Text>
+            </View>
+          ) : null
         }
         contentContainerStyle={styles.content}
       />
@@ -186,9 +285,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 60,
   },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
+  },
   emptyText: {
     fontSize: 14,
     color: '#999',
+    marginBottom: 24,
+  },
+  loginButton: {
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 32,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  loginButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
   },
 });
 

@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   SafeAreaView,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import {useRoute, useNavigation, useFocusEffect} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -20,6 +21,7 @@ const BoardListScreen: React.FC = () => {
   const [boards, setBoards] = useState<Board[]>([]);
   const [loading, setLoading] = useState(true);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [dataLoaded, setDataLoaded] = useState(false);
 
   useEffect(() => {
     checkLoginAndLoadBoards();
@@ -72,8 +74,31 @@ const BoardListScreen: React.FC = () => {
     try {
       const data = await getFavoriteBoards();
       setBoards(data);
-    } catch (error) {
+      setDataLoaded(true);
+    } catch (error: any) {
       console.error('Load favorite boards error:', error);
+      
+      // 处理登录过期错误
+      if (error.message === 'NOT_LOGGED_IN' || error.message === 'LOGIN_EXPIRED') {
+        console.log('Login expired, clearing login status');
+        setIsLoggedIn(false);
+        // 提示用户重新登录
+        Alert.alert(
+          '登录已过期',
+          '请重新登录后查看收藏版面',
+          [
+            {
+              text: '去登录',
+              onPress: handleLogin,
+            },
+            {
+              text: '取消',
+              style: 'cancel',
+            },
+          ]
+        );
+      }
+      // 接口失败时不设置dataLoaded，避免显示“暂无收藏版面”
     }
   };
 
@@ -137,9 +162,11 @@ const BoardListScreen: React.FC = () => {
         keyExtractor={item => item.id}
         numColumns={3}
         ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>暂无收藏版面</Text>
-          </View>
+          dataLoaded ? (
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>暂无收藏版面</Text>
+            </View>
+          ) : null
         }
         contentContainerStyle={styles.content}
         columnWrapperStyle={styles.columnWrapper}

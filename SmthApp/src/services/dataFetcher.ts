@@ -4,6 +4,34 @@ import {Mail} from '../types';
 
 const WAP_BASE_URL = 'https://wap.newsmth.net';
 
+// 默认超时时间（毫秒）
+const DEFAULT_TIMEOUT = 10000; // 10秒
+
+// 带超时的 fetch 函数
+const fetchWithTimeout = async (
+  url: string,
+  options: RequestInit = {},
+  timeout: number = DEFAULT_TIMEOUT
+): Promise<Response> => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (error: any) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      throw new Error('请求超时');
+    }
+    throw error;
+  }
+};
+
 // 获取 Cookie
 const getCookies = async (): Promise<string | null> => {
   return await AsyncStorage.getItem('cookies');
@@ -24,14 +52,14 @@ const requestWithCookies = async (
   };
 
   if (cookies) {
-    headers['Cookie'] = cookies;
+    headers.Cookie = cookies;
   }
 
   const fullUrl = url.startsWith('http') ? url : `${WAP_BASE_URL}${url}`;
   
   console.log('Fetching:', fullUrl);
   
-  const response = await fetch(fullUrl, {
+  const response = await fetchWithTimeout(fullUrl, {
     ...options,
     headers,
     credentials: 'include',
@@ -61,10 +89,10 @@ export const getHotPosts = async (
     };
 
     if (cookies) {
-      headers['Cookie'] = cookies;
+      headers.Cookie = cookies;
     }
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       headers,
       credentials: 'include',
     });
@@ -123,10 +151,10 @@ export const getTopTen = async (): Promise<any[]> => {
     };
 
     if (cookies) {
-      headers['Cookie'] = cookies;
+      headers.Cookie = cookies;
     }
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       headers,
       credentials: 'include',
     });
@@ -184,10 +212,10 @@ export const getHotBoards = async (): Promise<any[]> => {
     };
 
     if (cookies) {
-      headers['Cookie'] = cookies;
+      headers.Cookie = cookies;
     }
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       headers,
       credentials: 'include',
     });
@@ -216,6 +244,13 @@ export const getHotBoards = async (): Promise<any[]> => {
 export const getFavoriteBoards = async (): Promise<any[]> => {
   try {
     const cookies = await getCookies();
+    
+    // 严格校验登录态：必须有Cookie才能调用
+    if (!cookies) {
+      console.error('getFavoriteBoards: 未登录，无Cookie');
+      throw new Error('NOT_LOGGED_IN');
+    }
+    
     const timestamp = Date.now();
     const url = `${WAP_BASE_URL}/wap/api/profile/fav/boards?t=${timestamp}`;
     
@@ -226,21 +261,38 @@ export const getFavoriteBoards = async (): Promise<any[]> => {
       'Accept': 'application/json, text/plain, */*',
       'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
       'Authorization': 'Basic Og==',
+      'Cookie': cookies,
     };
 
-    if (cookies) {
-      headers['Cookie'] = cookies;
-    }
-
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       headers,
       credentials: 'include',
     });
+    
+    // 检查HTTP状态码，401/403表示未登录或Cookie过期
+    if (response.status === 401 || response.status === 403) {
+      console.error('getFavoriteBoards: Cookie已过期或无权限，状态码:', response.status);
+      // 清除本地登录状态
+      await AsyncStorage.removeItem('isLoggedIn');
+      await AsyncStorage.removeItem('cookies');
+      throw new Error('LOGIN_EXPIRED');
+    }
 
     const json = await response.json();
     console.log('getFavoriteBoards API response code:', json.code);
+    
+    // 检查API返回码，某些错误码也表示未登录
+    if (json.code !== 1) {
+      console.error('getFavoriteBoards: API返回错误，code:', json.code, 'message:', json.message);
+      if (json.code === 401 || json.code === 403 || json.message?.includes('登录')) {
+        await AsyncStorage.removeItem('isLoggedIn');
+        await AsyncStorage.removeItem('cookies');
+        throw new Error('LOGIN_EXPIRED');
+      }
+      throw new Error(json.message || 'API_ERROR');
+    }
 
-    if (json.code === 1 && json.data?.favBoards) {
+    if (json.data?.favBoards) {
       const allFavBoards: any[] = [];
       
       // 兼容处理：有些 API 返回的是对象格式（带数字键）而非标准数组
@@ -292,8 +344,13 @@ export const getFavoriteBoards = async (): Promise<any[]> => {
     }
     
     return [];
-  } catch (error) {
+  } catch (error: any) {
     console.error('Get favorite boards error:', error);
+    // 登录相关错误需要抛出，让调用方处理
+    if (error.message === 'NOT_LOGGED_IN' || error.message === 'LOGIN_EXPIRED') {
+      throw error;
+    }
+    // 其他错误返回空数组
     return [];
   }
 };
@@ -317,10 +374,10 @@ export const getBoards = async (): Promise<any[]> => {
     };
 
     if (cookies) {
-      headers['Cookie'] = cookies;
+      headers.Cookie = cookies;
     }
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       headers,
       credentials: 'include',
     });
@@ -362,10 +419,10 @@ export const getSubBoards = async (sectionId: string): Promise<any[]> => {
     };
 
     if (cookies) {
-      headers['Cookie'] = cookies;
+      headers.Cookie = cookies;
     }
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       headers,
       credentials: 'include',
     });
@@ -452,10 +509,10 @@ export const getBoardPosts = async (
     };
 
     if (cookies) {
-      headers['Cookie'] = cookies;
+      headers.Cookie = cookies;
     }
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       headers,
       credentials: 'include',
     });
@@ -517,9 +574,9 @@ export const getBoardPosts = async (
 // 获取帖子详情
 // 使用新的 JSON API 获取主题和首贴
 export const getPostDetail = async (
-  board: string,
+  _board: string,
   topicId: string, // 现在传入的是 topicId
-  page: number = 1,
+  _page: number = 1,
 ): Promise<any> => {
   try {
     const cookies = await getCookies();
@@ -537,10 +594,10 @@ export const getPostDetail = async (
     };
 
     if (cookies) {
-      headers['Cookie'] = cookies;
+      headers.Cookie = cookies;
     }
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       headers,
       credentials: 'include',
     });
@@ -562,7 +619,7 @@ export const getPostDetail = async (
       
       const post: any = {
         id: topic.id,
-        board: topic.board?.name || board,
+        board: topic.board?.name || _board,
         boardName: topic.board?.title || '未知版面',
         title: topic.subject?.trim(),
         content: article?.body || '', // 包含 HTML
@@ -670,10 +727,10 @@ export const getTopicReplies = async (
     };
 
     if (cookies) {
-      headers['Cookie'] = cookies;
+      headers.Cookie = cookies;
     }
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       headers,
       credentials: 'include',
     });
@@ -748,23 +805,13 @@ export const getTopicReplies = async (
 export const fetchUserInfo = async (username: string): Promise<any> => {
   try {
     const response = await requestWithCookies(`/user/${username}`);
-    const text = await response.text();
+    await response.text();
     
     const userInfo: any = {
       username: username,
     };
     
-    // 提取用户昵称
-    const nicknameMatch = text.match(/昵称[：:]\s*([^\n<]+)/i);
-    if (nicknameMatch) {
-      userInfo.nickname = nicknameMatch[1].trim();
-    }
-    
-    // 提取用户签名
-    const signatureMatch = text.match(/签名[：:]\s*([^\n<]+)/i);
-    if (signatureMatch) {
-      userInfo.signature = signatureMatch[1].trim();
-    }
+    // TODO: 解析HTML提取用户信息
     
     return userInfo;
   } catch (error) {
@@ -777,26 +824,11 @@ export const fetchUserInfo = async (username: string): Promise<any> => {
 export const searchBoards = async (keyword: string): Promise<any[]> => {
   try {
     const response = await requestWithCookies(`/search/board?q=${encodeURIComponent(keyword)}`);
-    const text = await response.text();
+    await response.text();
     
-    const boards: any[] = [];
-    const boardRegex = /<a[^>]*href="\/board\/([^"\/]+)"[^>]*>([^<]+)<\/a>/gi;
-    let match;
+    // TODO: 解析HTML提取版面信息
     
-    while ((match = boardRegex.exec(text)) !== null) {
-      const boardId = match[1];
-      const name = match[2].trim();
-      
-      if (name) {
-        boards.push({
-          id: boardId,
-          name: boardId,
-          chineseName: name,
-        });
-      }
-    }
-    
-    return boards;
+    return [];
   } catch (error) {
     console.error('Search boards error:', error);
     return [];
@@ -808,6 +840,13 @@ export const searchBoards = async (keyword: string): Promise<any[]> => {
 export const getConversationMessages = async (conversationId: string): Promise<any[]> => {
   try {
     const cookies = await getCookies();
+    
+    // 严格校验登录态：必须有Cookie才能调用
+    if (!cookies) {
+      console.error('getConversationMessages: 未登录，无Cookie');
+      throw new Error('NOT_LOGGED_IN');
+    }
+    
     const timestamp = Date.now();
     const url = `${WAP_BASE_URL}/wap/api/message/conversation/${conversationId}?t=${timestamp}`;
     
@@ -818,21 +857,37 @@ export const getConversationMessages = async (conversationId: string): Promise<a
       'Accept': 'application/json, text/plain, */*',
       'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
       'Authorization': 'Basic Og==',
+      'Cookie': cookies,
     };
 
-    if (cookies) {
-      headers['Cookie'] = cookies;
-    }
-
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       headers,
       credentials: 'include',
     });
+    
+    // 检查HTTP状态码
+    if (response.status === 401 || response.status === 403) {
+      console.error('getConversationMessages: Cookie已过期或无权限，状态码:', response.status);
+      await AsyncStorage.removeItem('isLoggedIn');
+      await AsyncStorage.removeItem('cookies');
+      throw new Error('LOGIN_EXPIRED');
+    }
 
     const json = await response.json();
     console.log('getConversationMessages API response code:', json.code);
+    
+    // 检查API返回码
+    if (json.code !== 1) {
+      console.error('getConversationMessages: API返回错误，code:', json.code, 'message:', json.message);
+      if (json.code === 401 || json.code === 403 || json.message?.includes('登录')) {
+        await AsyncStorage.removeItem('isLoggedIn');
+        await AsyncStorage.removeItem('cookies');
+        throw new Error('LOGIN_EXPIRED');
+      }
+      throw new Error(json.message || 'API_ERROR');
+    }
 
-    if (json.code === 1 && json.data?.messages) {
+    if (json.data?.messages) {
       const messages = json.data.messages;
       const currentUserId = json.data.accountId; // 当前用户ID
       
@@ -858,19 +913,31 @@ export const getConversationMessages = async (conversationId: string): Promise<a
     }
     
     return [];
-  } catch (error) {
+  } catch (error: any) {
     console.error('Get conversation messages error:', error);
+    // 登录相关错误需要抛出，让调用方处理
+    if (error.message === 'NOT_LOGGED_IN' || error.message === 'LOGIN_EXPIRED') {
+      throw error;
+    }
+    // 其他错误返回空数组
     return [];
   }
 };
 
 // 获取站内私信列表
 // API: GET https://wap.newsmth.net/wap/api/message/conversations?t={timestamp}&page={page}
-export const getMessages = async (page: number = 0): Promise<Mail[]> => {
+export const getMessages = async (_page: number = 0): Promise<Mail[]> => {
   try {
     const cookies = await getCookies();
+    
+    // 严格校验登录态：必须有Cookie才能调用
+    if (!cookies) {
+      console.error('getMessages: 未登录，无Cookie');
+      throw new Error('NOT_LOGGED_IN');
+    }
+    
     const timestamp = Date.now();
-    const url = `${WAP_BASE_URL}/wap/api/message/conversations?t=${timestamp}&page=${page}`;
+    const url = `${WAP_BASE_URL}/wap/api/message/conversations?t=${timestamp}&page=${_page}`;
     
     console.log('Fetching messages from API:', url);
     
@@ -879,21 +946,37 @@ export const getMessages = async (page: number = 0): Promise<Mail[]> => {
       'Accept': 'application/json, text/plain, */*',
       'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
       'Authorization': 'Basic Og==',
+      'Cookie': cookies,
     };
 
-    if (cookies) {
-      headers['Cookie'] = cookies;
-    }
-
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       headers,
       credentials: 'include',
     });
+    
+    // 检查HTTP状态码
+    if (response.status === 401 || response.status === 403) {
+      console.error('getMessages: Cookie已过期或无权限，状态码:', response.status);
+      await AsyncStorage.removeItem('isLoggedIn');
+      await AsyncStorage.removeItem('cookies');
+      throw new Error('LOGIN_EXPIRED');
+    }
 
     const json = await response.json();
     console.log('getMessages API response code:', json.code);
+    
+    // 检查API返回码
+    if (json.code !== 1) {
+      console.error('getMessages: API返回错误，code:', json.code, 'message:', json.message);
+      if (json.code === 401 || json.code === 403 || json.message?.includes('登录')) {
+        await AsyncStorage.removeItem('isLoggedIn');
+        await AsyncStorage.removeItem('cookies');
+        throw new Error('LOGIN_EXPIRED');
+      }
+      throw new Error(json.message || 'API_ERROR');
+    }
 
-    if (json.code === 1 && json.data?.conversations && json.data?.lastMessages) {
+    if (json.data?.conversations && json.data?.lastMessages) {
       const conversations = json.data.conversations;
       const lastMessages = json.data.lastMessages;
       
@@ -924,8 +1007,13 @@ export const getMessages = async (page: number = 0): Promise<Mail[]> => {
     }
     
     return [];
-  } catch (error) {
+  } catch (error: any) {
     console.error('Get messages error:', error);
+    // 登录相关错误需要抛出，让调用方处理
+    if (error.message === 'NOT_LOGGED_IN' || error.message === 'LOGIN_EXPIRED') {
+      throw error;
+    }
+    // 其他错误返回空数组
     return [];
   }
 };

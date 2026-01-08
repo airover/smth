@@ -27,6 +27,7 @@ const HomeScreen: React.FC = () => {
   const [hasMoreHotPosts, setHasMoreHotPosts] = useState(true);
   const [loadingMoreHotPosts, setLoadingMoreHotPosts] = useState(false);
   const [readPosts, setReadPosts] = useState<Set<string>>(new Set());
+  const [dataLoaded, setDataLoaded] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -50,7 +51,7 @@ const HomeScreen: React.FC = () => {
         setHotBoards(cachedHotBoards);
         setHotPosts(cachedHotPosts.topics);
         setHotPostsPage(1);
-        setHasMoreHotPosts(1 < cachedHotPosts.totalPages);
+        setHasMoreHotPosts(cachedHotPosts.totalPages > 1);
         setLoading(false);
         
         // 后台异步刷新数据
@@ -93,7 +94,8 @@ const HomeScreen: React.FC = () => {
       setHotPosts(hotPostsResult.topics);
       setHotBoards(hotBoardsData);
       setHotPostsPage(1);
-      setHasMoreHotPosts(1 < hotPostsResult.totalPages);
+      setHasMoreHotPosts(hotPostsResult.totalPages > 1);
+      setDataLoaded(true);
     } catch (error) {
       console.error('Load data from API error:', error);
       if (!isBackground) {
@@ -278,9 +280,9 @@ const HomeScreen: React.FC = () => {
                   keyExtractor={item => item.id}
                   scrollEnabled={false}
                 />
-              ) : (
+              ) : dataLoaded ? (
                 <Text style={styles.emptyText}>暂无数据</Text>
-              )}
+              ) : null}
             </View>
 
             <View style={styles.section}>
@@ -294,9 +296,9 @@ const HomeScreen: React.FC = () => {
                   showsHorizontalScrollIndicator={false}
                   contentContainerStyle={styles.hotBoardsList}
                 />
-              ) : (
+              ) : dataLoaded ? (
                 <Text style={styles.emptyText}>暂无数据</Text>
-              )}
+              ) : null}
             </View>
 
             <View style={styles.section}>
@@ -319,9 +321,9 @@ const HomeScreen: React.FC = () => {
                     ) : null
                   }
                 />
-              ) : (
+              ) : dataLoaded ? (
                 <Text style={styles.emptyText}>暂无热门帖子</Text>
-              )}
+              ) : null}
             </View>
           </View>
         )}

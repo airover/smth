@@ -93,6 +93,8 @@ const BoardScreen: React.FC = () => {
   const [channelPage, setChannelPage] = useState(1);
   const [channelHasMore, setChannelHasMore] = useState(true);
   const [loadingChannelPosts, setLoadingChannelPosts] = useState(false);
+  const [postsDataLoaded, setPostsDataLoaded] = useState(false);
+  const [channelPostsDataLoaded, setChannelPostsDataLoaded] = useState(false);
 
   const modalAnim = useRef(new Animated.Value(0)).current;
 
@@ -156,6 +158,8 @@ const BoardScreen: React.FC = () => {
       setHasMore(true);
       setShowChannels(true); // 显示频道列表
       setLoading(true); // 设置加载状态
+      setPostsDataLoaded(false); // 重置版面数据加载状态
+      setChannelPostsDataLoaded(false); // 重置频道数据加载状态
     }
   }, [selectedChannel]);
 
@@ -166,6 +170,7 @@ const BoardScreen: React.FC = () => {
       setHasMore(true);
       setPosts([]);
       setLoading(true); // 设置加载状态
+      setPostsDataLoaded(false); // 重置数据加载状态
       loadPosts(selectedBoard.id, 1);
       setShowChannels(false); // 选择版面后隐藏频道列表
     }
@@ -375,9 +380,11 @@ const BoardScreen: React.FC = () => {
         // 检查是否还有更多数据
         const totalPages = Math.ceil(pager.items / pager.size);
         setChannelHasMore(pageNum < totalPages);
+        setChannelPostsDataLoaded(true);
       }
     } catch (error) {
       console.error('Load channel posts error:', error);
+      // 接口失败时不设置channelPostsDataLoaded
     } finally {
       setLoading(false);
       if (pageNum > 1) {
@@ -437,8 +444,10 @@ const BoardScreen: React.FC = () => {
       }
       
       setHasMore(pageNum < totalPages);
+      setPostsDataLoaded(true);
     } catch (error) {
       console.error('Load posts error:', error);
+      // 接口失败时不设置postsDataLoaded
     } finally {
       setLoading(false);
       if (pageNum > 1) {
@@ -785,7 +794,7 @@ const BoardScreen: React.FC = () => {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
           ListEmptyComponent={
-            !loading && !refreshing && channelPosts.length === 0 ? (
+            !loading && !refreshing && channelPosts.length === 0 && channelPostsDataLoaded ? (
               <View style={styles.emptyContainer}>
                 <Text style={styles.emptyText}>暂无帖子</Text>
               </View>
@@ -804,7 +813,7 @@ const BoardScreen: React.FC = () => {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
           ListEmptyComponent={
-            !loading && !refreshing && posts.length === 0 ? (
+            !loading && !refreshing && posts.length === 0 && postsDataLoaded ? (
               <View style={styles.emptyContainer}>
                 <Text style={styles.emptyText}>暂无帖子</Text>
               </View>

@@ -4,6 +4,35 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const BASE_URL = 'https://wap.newsmth.net';
 const WAP_BASE_URL = 'https://wap.newsmth.net';
 
+// 默认超时时间（毫秒）
+const DEFAULT_TIMEOUT = 10000; // 10秒
+const LOGIN_TIMEOUT = 15000; // 登录接口15秒
+
+// 带超时的 fetch 函数
+const fetchWithTimeout = async (
+  url: string,
+  options: RequestInit = {},
+  timeout: number = DEFAULT_TIMEOUT
+): Promise<Response> => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (error: any) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      throw new Error('请求超时');
+    }
+    throw error;
+  }
+};
+
 // 存储 Cookie
 const storeCookies = async (cookies: string) => {
   await AsyncStorage.setItem('cookies', cookies);
@@ -27,7 +56,7 @@ const request = async (
     ...(cookies ? {Cookie: cookies} : {}),
   };
 
-  const response = await fetch(`${BASE_URL}${url}`, {
+  const response = await fetchWithTimeout(`${BASE_URL}${url}`, {
     ...options,
     headers,
   });
@@ -93,19 +122,19 @@ export const login = async (
     };
     
     if (cookies) {
-      headers['Cookie'] = cookies;
+      headers.Cookie = cookies;
     }
     
     // 根据抓包数据，使用正确的正式登录接口
     const loginUrl = BASE_URL + '/wap/authorize/sign-in';
     console.log('发送登录请求到:', loginUrl);
     
-    const response = await fetch(loginUrl, {
+    const response = await fetchWithTimeout(loginUrl, {
       method: 'POST',
       headers,
       body: formData.toString(),
       credentials: 'include',
-    });
+    }, LOGIN_TIMEOUT);
 
     console.log('登录响应状态:', response.status);
     console.log('登录响应 Content-Type:', response.headers.get('content-type'));
@@ -183,7 +212,7 @@ export {getTopTen, getHotPosts, getHotBoards, getBoards, getSubBoards, getBoardP
 // export const getFavoriteBoards = async (): Promise<any[]> => { ... };
 
 // 保存收藏版面（暂不支持在线保存，此处仅作占位）
-export const saveFavoriteBoard = async (board: any) => {
+export const saveFavoriteBoard = async (_board: any) => {
   console.log('Save favorite board not implemented for online API yet');
 };
 
@@ -193,8 +222,8 @@ export const saveFavoriteBoard = async (board: any) => {
 export const getMails = async (): Promise<any[]> => {
   try {
     const response = await request('/nForum/mail');
-    const text = await response.text();
-    // 解析HTML获取信箱
+    await response.text();
+    // TODO: 解析HTML获取信箱
     return [];
   } catch (error) {
     console.error('Get mails error:', error);
@@ -202,10 +231,16 @@ export const getMails = async (): Promise<any[]> => {
   }
 };
 
-// 从 wap API 获取用户信息
-// API: POST https://wap.newsmth.net/wap/api/profile
-// 响应: {code: 1, data: {account: {name, nick, avatar, ...}}}
-export const getUserInfo = async (): Promise<any> => {
+// 用户信息缓存（内存缓存）
+let userInfoCache: {data: any; timestamp: number} | null = null;
+const USER_INFO_CACHE_DURATION = 60 * 1000; // 1分钟缓存
+
+// 用户信息持久化存储的key
+const USER_INFO_STORAGE_KEY = 'userInfo';
+const USER_INFO_TIMESTAMP_KEY = 'userInfoTimestamp';
+
+// 从服务器获取用户信息（内部函数）
+const fetchUserInfoFromServer = async (): Promise<any> => {
   try {
     const cookies = await getCookies();
     
@@ -224,7 +259,7 @@ export const getUserInfo = async (): Promise<any> => {
       'Cookie': cookies,
     };
     
-    const response = await fetch(`${WAP_BASE_URL}/wap/api/profile`, {
+    const response = await fetchWithTimeout(`${WAP_BASE_URL}/wap/api/profile`, {
       method: 'POST',
       headers,
       credentials: 'include',
@@ -272,6 +307,23 @@ export const getUserInfo = async (): Promise<any> => {
         await AsyncStorage.setItem('username', account.name);
       }
       
+      const now = Date.now();
+      
+      // 更新内存缓存
+      userInfoCache = {
+        data: userInfo,
+        timestamp: now,
+      };
+      
+      // 持久化用户信息到AsyncStorage
+      try {
+        await AsyncStorage.setItem(USER_INFO_STORAGE_KEY, JSON.stringify(userInfo));
+        await AsyncStorage.setItem(USER_INFO_TIMESTAMP_KEY, now.toString());
+        console.log('用户信息已持久化到本地存储');
+      } catch (error) {
+        console.error('持久化用户信息失败:', error);
+      }
+      
       return userInfo;
     }
     
@@ -281,7 +333,7 @@ export const getUserInfo = async (): Promise<any> => {
     if (storedUsername) {
       return {
         username: storedUsername,
-        isLoggedIn: false, // 标记为可能未登录
+        // 不返回 isLoggedIn 字段，让调用方保持本地状态
       };
     }
     
@@ -293,13 +345,86 @@ export const getUserInfo = async (): Promise<any> => {
     if (storedUsername) {
       return {
         username: storedUsername,
-        isLoggedIn: false, // 标记为可能未登录
+        // 不返回 isLoggedIn 字段，让调用方保持本地状态
       };
     }
     return null;
   }
 };
 
+// 从 wap API 获取用户信息（带持久化缓存）
+// API: POST https://wap.newsmth.net/wap/api/profile
+// 响应: {code: 1, data: {account: {name, nick, avatar, ...}}}
+// 缓存策略：
+// 1. 优先使用内存缓存（1分钟有效期）
+// 2. 内存缓存失效时，使用持久化缓存（AsyncStorage）
+// 3. 持久化缓存过期时，异步更新
+// 4. 无任何缓存时，同步获取
+export const getUserInfo = async (): Promise<any> => {
+  const now = Date.now();
+  
+  // 第一层：检查内存缓存（最快）
+  if (userInfoCache && (now - userInfoCache.timestamp) < USER_INFO_CACHE_DURATION) {
+    console.log('getUserInfo: 使用内存缓存，剩余有效期:', Math.floor((USER_INFO_CACHE_DURATION - (now - userInfoCache.timestamp)) / 1000), '秒');
+    return userInfoCache.data;
+  }
+  
+  // 第二层：检查持久化缓存
+  try {
+    const storedUserInfo = await AsyncStorage.getItem(USER_INFO_STORAGE_KEY);
+    const storedTimestamp = await AsyncStorage.getItem(USER_INFO_TIMESTAMP_KEY);
+    
+    if (storedUserInfo && storedTimestamp) {
+      const userInfo = JSON.parse(storedUserInfo);
+      const timestamp = parseInt(storedTimestamp, 10);
+      const age = now - timestamp;
+      
+      // 如果持久化缓存未过期（1分钟内），恢复内存缓存并返回
+      if (age < USER_INFO_CACHE_DURATION) {
+        console.log('getUserInfo: 使用持久化缓存，剩余有效期:', Math.floor((USER_INFO_CACHE_DURATION - age) / 1000), '秒');
+        // 恢复内存缓存（使用原始时间戳）
+        userInfoCache = {
+          data: userInfo,
+          timestamp: timestamp,
+        };
+        return userInfo;
+      }
+      
+      // 持久化缓存已过期，返回旧数据并异步更新
+      console.log('getUserInfo: 持久化缓存已过期（', Math.floor(age / 1000), '秒前），返回旧数据并异步更新');
+      
+      // 异步更新（fetchUserInfoFromServer 会自动更新内存缓存和持久化缓存，使用新的时间戳）
+      fetchUserInfoFromServer().catch(error => {
+        console.error('getUserInfo: 异步更新缓存失败:', error);
+      });
+      
+      // 立即返回旧数据（不恢复内存缓存，避免使用旧时间戳）
+      // 下次调用时，如果异步更新已完成，会使用新的缓存（新时间戳）
+      return userInfo;
+    }
+  } catch (error) {
+    console.error('getUserInfo: 读取持久化缓存失败:', error);
+  }
+  
+  // 第三层：无任何缓存，同步获取
+  console.log('getUserInfo: 无缓存，同步从服务器获取');
+  return await fetchUserInfoFromServer();
+};
+
+// 清除用户信息缓存（用于登出等场景）
+export const clearUserInfoCache = async () => {
+  console.log('clearUserInfoCache: 清除用户信息缓存');
+  // 清除内存缓存
+  userInfoCache = null;
+  // 清除持久化缓存
+  try {
+    await AsyncStorage.removeItem(USER_INFO_STORAGE_KEY);
+    await AsyncStorage.removeItem(USER_INFO_TIMESTAMP_KEY);
+    console.log('用户信息持久化缓存已清除');
+  } catch (error) {
+    console.error('清除用户信息持久化缓存失败:', error);
+  }
+};
 
 // 检查登录状态
 // 通过调用 profile API 来验证当前 Cookie 是否有效
@@ -324,6 +449,9 @@ export const logout = async () => {
   
   // 清除所有内存缓存
   clearCache();
+  
+  // 清除用户信息缓存（包括持久化缓存）
+  await clearUserInfoCache();
   
   console.log('Logout completed, all data cleared');
 };

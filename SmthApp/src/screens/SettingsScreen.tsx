@@ -7,7 +7,6 @@ import {
   ActivityIndicator,
   SafeAreaView,
   ScrollView,
-  Image,
   Alert,
   RefreshControl,
 } from 'react-native';
@@ -38,14 +37,19 @@ const SettingsScreen: React.FC = () => {
 
   const loadUserInfo = async () => {
     try {
-      // 检查登录状态
+      // 先从本地存储读取登录状态和用户名
       const loginStatus = await AsyncStorage.getItem('isLoggedIn');
-      setIsLoggedIn(loginStatus === 'true');
-      
-      // 获取存储的用户名
       const storedUsername = await AsyncStorage.getItem('username');
+      const isStoredLoggedIn = loginStatus === 'true';
+      
+      // 立即设置本地存储的状态，避免显示未登录
+      setIsLoggedIn(isStoredLoggedIn);
       if (storedUsername) {
         setUsername(storedUsername);
+        // 如果有本地用户名，先显示基本信息
+        setUser({
+          username: storedUsername,
+        });
       }
       
       // 尝试从服务器获取用户信息
@@ -53,23 +57,29 @@ const SettingsScreen: React.FC = () => {
       console.log('SettingsScreen getUserInfo result:', userInfo);
       
       if (userInfo && userInfo.username) {
-        setUser(userInfo);
-        setUsername(userInfo.username);
-        setIsLoggedIn(userInfo.isLoggedIn !== false);
-      } else if (storedUsername) {
-        // 使用存储的用户名创建基本用户信息
-        setUser({
-          username: storedUsername,
-        });
+        // 只有当 API 明确返回 isLoggedIn 为 true 时才更新为已登录
+        // 如果 API 返回 isLoggedIn 为 false，保持本地存储的状态
+        if (userInfo.isLoggedIn === true) {
+          setUser(userInfo);
+          setUsername(userInfo.username);
+          setIsLoggedIn(true);
+        } else if (userInfo.isLoggedIn === false) {
+          // API 明确返回未登录，可能是 Cookie 过期
+          setIsLoggedIn(false);
+          // 但仍然显示用户名
+          setUser({
+            username: userInfo.username,
+          });
+        } else {
+          // isLoggedIn 未定义，保持本地状态不变
+          setUser(userInfo);
+          setUsername(userInfo.username);
+        }
       }
+      // 如果 API 返回 null，保持本地存储的状态不变
     } catch (error) {
       console.error('Load user info error:', error);
-      // 出错时仍然尝试显示本地存储的信息
-      const storedUsername = await AsyncStorage.getItem('username');
-      if (storedUsername) {
-        setUsername(storedUsername);
-        setUser({username: storedUsername});
-      }
+      // 出错时保持本地存储的状态不变，不要清除登录状态
     } finally {
       setLoading(false);
     }
