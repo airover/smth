@@ -272,6 +272,12 @@ const BoardScreen: React.FC = () => {
           tension: 50,
           friction: 7,
         }).start();
+        
+        // 延迟重置拖动状态，避免拖动结束时立即触发点击事件
+        // 使用 setTimeout 确保 onPress 事件能够正确检测到拖动状态
+        setTimeout(() => {
+          isDragging.current = false;
+        }, 100);
       },
     })
   ).current;

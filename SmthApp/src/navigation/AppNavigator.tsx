@@ -2,28 +2,21 @@ import React from 'react';
 import {NavigationContainer} from '@react-navigation/native';
 import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
-import {Text, View} from 'react-native';
+import {Text} from 'react-native';
 
 // Screens
 import HomeScreen from '../screens/HomeScreen';
 import BoardScreen from '../screens/BoardScreen';
 import MailScreen from '../screens/MailScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+import SettingsDetailScreen from '../screens/SettingsDetailScreen';
+import AccountSwitchScreen from '../screens/AccountSwitchScreen';
 import PostDetailScreen from '../screens/PostDetailScreen';
 import BoardListScreen from '../screens/BoardListScreen';
 import CacheManagementScreen from '../screens/CacheManagementScreen';
 import LoginScreen from '../screens/LoginScreen';
 import UserProfileScreen from '../screens/UserProfileScreen';
 import MailDetailScreen from '../screens/MailDetailScreen';
-
-// 尝试导入图标，如果失败则使用文本
-let Icon: any = null;
-try {
-  Icon = require('react-native-vector-icons/MaterialIcons').default;
-} catch (e) {
-  // 图标库未安装，使用文本代替
-  console.log('react-native-vector-icons not installed, using text icons');
-}
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -65,20 +58,10 @@ const MainTabs = () => {
         }}
       />
       <Tab.Screen
-        name="Mail"
-        component={MailScreen}
-        options={{
-          title: '信箱',
-          tabBarIcon: ({color}) => (
-            <Text style={{color, fontSize: 24}}>✉️</Text>
-          ),
-        }}
-      />
-      <Tab.Screen
         name="Settings"
         component={SettingsScreen}
         options={{
-          title: '设置',
+          title: '我',
           tabBarIcon: ({color}) => (
             <Text style={{color, fontSize: 24}}>⚙️</Text>
           ),
@@ -120,6 +103,30 @@ const AppNavigator = () => {
           component={BoardListScreen}
           options={{
             title: '收藏版面',
+            headerBackTitle: '返回',
+          }}
+        />
+        <Stack.Screen
+          name="Mail"
+          component={MailScreen}
+          options={{
+            title: '站内邮箱',
+            headerBackTitle: '返回',
+          }}
+        />
+        <Stack.Screen
+          name="SettingsDetail"
+          component={SettingsDetailScreen}
+          options={{
+            title: '设置',
+            headerBackTitle: '返回',
+          }}
+        />
+        <Stack.Screen
+          name="AccountSwitch"
+          component={AccountSwitchScreen}
+          options={{
+            title: '切换帐号',
             headerBackTitle: '返回',
           }}
         />

@@ -92,26 +92,6 @@ const SettingsScreen: React.FC = () => {
     setRefreshing(false);
   }, []);
 
-  const handleLogout = () => {
-    Alert.alert('确认', '确定要退出登录吗？', [
-      {
-        text: '取消',
-        style: 'cancel',
-      },
-      {
-        text: '确定',
-        style: 'destructive',
-        onPress: async () => {
-          await logout();
-          // 清除所有本地状态
-          setUser(null);
-          setUsername('');
-          setIsLoggedIn(false);
-        },
-      },
-    ]);
-  };
-
   const handleLogin = () => {
     navigation.navigate('Login');
   };
@@ -140,106 +120,149 @@ const SettingsScreen: React.FC = () => {
           />
         }
       >
-        {/* 个人信息 */}
-        <View style={styles.profileSection}>
-          {user?.avatar ? (
-            <ImageWithPlaceholder
-              uri={user.avatar}
-              style={styles.avatar}
-              resizeMode="cover"
-              isAvatar={true}
-            />
-          ) : (
-            <View style={styles.avatarPlaceholder}>
-              <Text style={styles.avatarText}>
-                {user?.username?.charAt(0).toUpperCase() || username?.charAt(0).toUpperCase() || 'U'}
-              </Text>
+        {/* 个人信息卡片 - 微信风格 */}
+        <View style={styles.firstSection}>
+          <TouchableOpacity 
+            style={styles.profileCard}
+            onPress={() => {
+              if (isLoggedIn && (user?.username || username)) {
+                navigation.navigate('UserProfile', { username: user?.username || username });
+              } else if (!isLoggedIn) {
+                handleLogin();
+              }
+            }}
+            activeOpacity={0.8}
+          >
+            <View style={styles.profileLeft}>
+              {user?.avatar ? (
+                <ImageWithPlaceholder
+                  uri={user.avatar}
+                  style={styles.avatar}
+                  resizeMode="cover"
+                  isAvatar={true}
+                />
+              ) : (
+                <View style={styles.avatarPlaceholder}>
+                  <Text style={styles.avatarText}>
+                    {user?.username?.charAt(0).toUpperCase() || username?.charAt(0).toUpperCase() || 'U'}
+                  </Text>
+                </View>
+              )}
+              <View style={styles.profileInfo}>
+                <Text style={styles.username}>
+                  {user?.nickname || user?.username || username || '未登录'}
+                </Text>
+                {(user?.username || username) && (
+                  <Text style={styles.userId}>水木社区ID: {user?.username || username}</Text>
+                )}
+              </View>
             </View>
-          )}
-          <Text style={styles.username}>
-            {user?.nickname || user?.username || username || '未登录'}
-          </Text>
-          {(user?.username || username) && (
-            <Text style={styles.userId}>@{user?.username || username}</Text>
-          )}
-          <View style={styles.loginStatusContainer}>
-            <View style={[styles.statusDot, isLoggedIn ? styles.statusOnline : styles.statusOffline]} />
-            <Text style={styles.loginStatusText}>
-              {isLoggedIn ? '已登录' : '未登录'}
-            </Text>
-          </View>
+            <Text style={styles.chevron}>›</Text>
+          </TouchableOpacity>
         </View>
 
-        {/* 个人资料 */}
-        {isLoggedIn && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>账号</Text>
-            <View style={styles.card}>
-              <TouchableOpacity 
-                style={styles.menuItem}
-                onPress={() => navigation.navigate('UserProfile', { username: user?.username || username })}>
-                <View style={styles.menuItemLeft}>
-                  <Text style={styles.menuIcon}>👤</Text>
-                  <View>
-                    <Text style={styles.menuItemText}>个人资料</Text>
-                    <Text style={styles.menuItemDesc}>查看详细信息</Text>
-                  </View>
-                </View>
-                <Text style={styles.chevron}>›</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-
-        {/* 数据与隐私 */}
+        {/* 个人内容 */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>数据与隐私</Text>
           <View style={styles.card}>
             <TouchableOpacity 
               style={styles.menuItem}
-              onPress={() => navigation.navigate('CacheManagement')}>
+              onPress={() => Alert.alert('提示', '浏览历史功能开发中')}>
               <View style={styles.menuItemLeft}>
-                <Text style={styles.menuIcon}>🗂</Text>
-                <View>
-                  <Text style={styles.menuItemText}>缓存管理</Text>
-                  <Text style={styles.menuItemDesc}>清理缓存、查看统计</Text>
-                </View>
+                <Text style={styles.menuIcon}>📜</Text>
+                <Text style={styles.menuItemText}>浏览历史</Text>
+              </View>
+              <Text style={styles.chevron}>›</Text>
+            </TouchableOpacity>
+            <View style={styles.divider} />
+            <TouchableOpacity 
+              style={styles.menuItem}
+              onPress={() => Alert.alert('提示', '我的收藏功能开发中')}>
+              <View style={styles.menuItemLeft}>
+                <Text style={styles.menuIcon}>⭐</Text>
+                <Text style={styles.menuItemText}>我的收藏</Text>
+              </View>
+              <Text style={styles.chevron}>›</Text>
+            </TouchableOpacity>
+            <View style={styles.divider} />
+            <TouchableOpacity 
+              style={styles.menuItem}
+              onPress={() => Alert.alert('提示', '我的文章功能开发中')}>
+              <View style={styles.menuItemLeft}>
+                <Text style={styles.menuIcon}>📝</Text>
+                <Text style={styles.menuItemText}>我的文章</Text>
               </View>
               <Text style={styles.chevron}>›</Text>
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* 账号操作 */}
+        {/* 社交关系 */}
         <View style={styles.section}>
           <View style={styles.card}>
-            {isLoggedIn ? (
-              <TouchableOpacity style={styles.actionButton} onPress={handleLogout}>
-                <Text style={[styles.actionButtonText, styles.dangerText]}>退出登录</Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity style={styles.actionButton} onPress={handleLogin}>
-                <Text style={[styles.actionButtonText, styles.primaryText]}>登录</Text>
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity 
+              style={styles.menuItem}
+              onPress={() => Alert.alert('提示', '我的关注功能开发中')}>
+              <View style={styles.menuItemLeft}>
+                <Text style={styles.menuIcon}>👥</Text>
+                <Text style={styles.menuItemText}>我的关注</Text>
+              </View>
+              <Text style={styles.chevron}>›</Text>
+            </TouchableOpacity>
+            <View style={styles.divider} />
+            <TouchableOpacity 
+              style={styles.menuItem}
+              onPress={() => Alert.alert('提示', '我的粉丝功能开发中')}>
+              <View style={styles.menuItemLeft}>
+                <Text style={styles.menuIcon}>👤</Text>
+                <Text style={styles.menuItemText}>我的粉丝</Text>
+              </View>
+              <Text style={styles.chevron}>›</Text>
+            </TouchableOpacity>
+            <View style={styles.divider} />
+            <TouchableOpacity 
+              style={styles.menuItem}
+              onPress={() => Alert.alert('提示', '黑名单功能开发中')}>
+              <View style={styles.menuItemLeft}>
+                <Text style={styles.menuIcon}>🚫</Text>
+                <Text style={styles.menuItemText}>黑名单</Text>
+              </View>
+              <Text style={styles.chevron}>›</Text>
+            </TouchableOpacity>
           </View>
         </View>
 
-        {/* 关于 */}
+        {/* 站内邮箱 */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>关于</Text>
           <View style={styles.card}>
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>应用版本</Text>
-              <Text style={styles.infoValue}>1.0.0</Text>
-            </View>
-            <View style={styles.divider} />
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>缓存策略</Text>
-              <Text style={styles.infoValue}>1分钟自动过期</Text>
-            </View>
+            <TouchableOpacity 
+              style={styles.menuItem}
+              onPress={() => navigation.navigate('Mail')}>
+              <View style={styles.menuItemLeft}>
+                <Text style={styles.menuIcon}>✉️</Text>
+                <Text style={styles.menuItemText}>站内邮箱</Text>
+              </View>
+              <Text style={styles.chevron}>›</Text>
+            </TouchableOpacity>
           </View>
         </View>
+
+        {/* 设置 */}
+        <View style={styles.section}>
+          <View style={styles.card}>
+            <TouchableOpacity 
+              style={styles.menuItem}
+              onPress={() => navigation.navigate('SettingsDetail')}>
+              <View style={styles.menuItemLeft}>
+                <Text style={styles.menuIcon}>⚙️</Text>
+                <Text style={styles.menuItemText}>设置</Text>
+              </View>
+              <Text style={styles.chevron}>›</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* 底部留白 */}
+        <View style={{height: 40}} />
       </ScrollView>
     </SafeAreaView>
   );
@@ -248,7 +271,7 @@ const SettingsScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#EDEDED',
   },
   loadingContainer: {
     flex: 1,
@@ -258,110 +281,73 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
   },
-  profileSection: {
+  firstSection: {
+    marginTop: 12,
+    paddingHorizontal: 12,
+  },
+  section: {
+    marginTop: 16,
+    paddingHorizontal: 12,
+  },
+  // 个人信息卡片 - 微信风格
+  profileCard: {
     backgroundColor: '#fff',
-    paddingVertical: 32,
+    borderRadius: 8,
+    padding: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+  },
+  profileLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
   },
   avatar: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    marginBottom: 16,
+    width: 64,
+    height: 64,
+    borderRadius: 6,
   },
   avatarPlaceholder: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 64,
+    height: 64,
+    borderRadius: 6,
     backgroundColor: '#007AFF',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 16,
   },
   avatarText: {
-    fontSize: 32,
+    fontSize: 28,
     fontWeight: '600',
     color: '#fff',
   },
+  profileInfo: {
+    marginLeft: 16,
+    flex: 1,
+  },
   username: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '600',
     color: '#000',
     marginBottom: 4,
   },
   userId: {
     fontSize: 14,
-    color: '#666',
-    marginBottom: 12,
+    color: '#888',
   },
-  loginStatusContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 6,
-  },
-  statusOnline: {
-    backgroundColor: '#34C759',
-  },
-  statusOffline: {
-    backgroundColor: '#8E8E93',
-  },
-  loginStatusText: {
-    fontSize: 13,
-    color: '#666',
-  },
-  section: {
-    marginTop: 20,
-    paddingHorizontal: 16,
-  },
-  sectionTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#8E8E93',
-    marginBottom: 8,
-    textTransform: 'uppercase',
-  },
+  // 功能卡片
   card: {
     backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 1},
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  infoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
-  },
-  infoLabel: {
-    fontSize: 15,
-    color: '#000',
-  },
-  infoValue: {
-    fontSize: 15,
-    color: '#8E8E93',
-  },
-  textGreen: {
-    color: '#34C759',
-  },
-  textRed: {
-    color: '#FF3B30',
+    borderRadius: 8,
+    overflow: 'hidden',
   },
   menuItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: '#fff',
   },
   menuItemLeft: {
     flexDirection: 'row',
@@ -369,42 +355,40 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   menuIcon: {
-    fontSize: 24,
-    marginRight: 12,
+    fontSize: 22,
+    marginRight: 14,
+    width: 28,
+    textAlign: 'center',
   },
   menuItemText: {
-    fontSize: 16,
+    fontSize: 17,
     color: '#000',
-    fontWeight: '500',
-    marginBottom: 2,
-  },
-  menuItemDesc: {
-    fontSize: 13,
-    color: '#8E8E93',
   },
   chevron: {
-    fontSize: 24,
+    fontSize: 20,
     color: '#C7C7CC',
     fontWeight: '300',
   },
-  dangerText: {
-    color: '#FF3B30',
-  },
-  primaryText: {
-    color: '#007AFF',
-  },
-  actionButton: {
-    paddingVertical: 14,
+  // 信息行
+  infoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
   },
-  actionButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
+  infoLabel: {
+    fontSize: 17,
+    color: '#000',
+  },
+  infoValue: {
+    fontSize: 17,
+    color: '#888',
   },
   divider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: '#f0f0f0',
-    marginVertical: 8,
+    backgroundColor: '#E5E5E5',
+    marginLeft: 16,
   },
 });
 

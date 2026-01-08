@@ -459,6 +459,45 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess}) => {
           await AsyncStorage.setItem('username', accountName);
         }
         
+        // 保存账号到多账号列表
+        try {
+          const cookies = await AsyncStorage.getItem('cookies');
+          if (cookies && accountName) {
+            const savedAccountsJson = await AsyncStorage.getItem('savedAccounts');
+            let savedAccounts = savedAccountsJson ? JSON.parse(savedAccountsJson) : [];
+            
+            // 检查账号是否已存在
+            const existingIndex = savedAccounts.findIndex((acc: any) => acc.username === accountName);
+            
+            const accountInfo = {
+              username: accountName,
+              nickname: message.data.account?.nickname,
+              avatar: message.data.account?.avatar,
+              cookies: cookies,
+              isCurrent: true,
+            };
+            
+            if (existingIndex >= 0) {
+              // 更新现有账号
+              savedAccounts[existingIndex] = accountInfo;
+            } else {
+              // 添加新账号
+              savedAccounts.push(accountInfo);
+            }
+            
+            // 将其他账号标记为非当前
+            savedAccounts = savedAccounts.map((acc: any) => ({
+              ...acc,
+              isCurrent: acc.username === accountName,
+            }));
+            
+            await AsyncStorage.setItem('savedAccounts', JSON.stringify(savedAccounts));
+            console.log('账号已保存到多账号列表');
+          }
+        } catch (error) {
+          console.error('保存账号到多账号列表失败:', error);
+        }
+        
         console.log('登录成功!', {
           username: accountName,
           message: message.data.message
