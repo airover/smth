@@ -492,12 +492,13 @@ export const getSubBoards = async (sectionId: string): Promise<any[]> => {
 export const getBoardPosts = async (
   boardId: string, // 现在传入的是版面 hash ID
   page: number = 1,
+  isOrderByFlushTime: number = 0, // 0: 按发布时间排序, 1: 按回复时间排序
 ): Promise<{topics: any[], tops: any[], totalPages: number}> => {
   try {
     const cookies = await getCookies();
     const timestamp = Date.now();
     // API: https://wap.newsmth.net/wap/api/board/topic/list?t=:t&id=:id&isOrderByFlushTime=0&page=:page
-    const url = `${WAP_BASE_URL}/wap/api/board/topic/list?t=${timestamp}&id=${boardId}&isOrderByFlushTime=0&page=${page}`;
+    const url = `${WAP_BASE_URL}/wap/api/board/topic/list?t=${timestamp}&id=${boardId}&isOrderByFlushTime=${isOrderByFlushTime}&page=${page}`;
     
     console.log('Fetching Board Posts from API:', url);
     
@@ -1015,5 +1016,144 @@ export const getMessages = async (_page: number = 0): Promise<Mail[]> => {
     }
     // 其他错误返回空数组
     return [];
+  }
+};
+
+// 检查版面是否已收藏
+export const checkBoardFavorite = async (boardId: string): Promise<boolean> => {
+  try {
+    const cookies = await getCookies();
+    
+    if (!cookies) {
+      console.log('checkBoardFavorite: 未登录，无Cookie');
+      return false;
+    }
+    
+    const timestamp = Date.now();
+    const url = `${WAP_BASE_URL}/wap/api/profile/isFavorite?t=${timestamp}&id=${boardId}`;
+    
+    console.log('Checking board favorite status:', url);
+    
+    const headers: Record<string, string> = {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
+      'Accept': 'application/json, text/plain, */*',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+      'Authorization': 'Basic Og==',
+      'Cookie': cookies,
+    };
+
+    const response = await fetchWithTimeout(url, {
+      headers,
+      credentials: 'include',
+    }, 5000); // 5秒超时
+
+    const json = await response.json();
+    console.log('checkBoardFavorite API response:', json);
+
+    if (json.code === 1 && json.data) {
+      return json.data.isFavorite === 1;
+    }
+    
+    return false;
+  } catch (error) {
+    console.error('Check board favorite error:', error);
+    return false;
+  }
+};
+
+// 添加版面到收藏
+export const addBoardFavorite = async (boardId: string): Promise<{success: boolean, message?: string}> => {
+  try {
+    const cookies = await getCookies();
+    
+    if (!cookies) {
+      console.log('addBoardFavorite: 未登录，无Cookie');
+      return {success: false, message: '请先登录'};
+    }
+    
+    const timestamp = Date.now();
+    const url = `${WAP_BASE_URL}/wap/api/profile/addFavorite`;
+    
+    console.log('Adding board to favorites:', boardId);
+    
+    const headers: Record<string, string> = {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
+      'Accept': 'application/json, text/plain, */*',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+      'Authorization': 'Basic Og==',
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Cookie': cookies,
+    };
+
+    const body = `id=${boardId}&t=${timestamp}`;
+
+    const response = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers,
+      body,
+      credentials: 'include',
+    }, 10000); // 10秒超时
+
+    const json = await response.json();
+    console.log('addBoardFavorite API response:', json);
+
+    if (json.code === 1) {
+      return {success: true, message: json.message || '收藏成功'};
+    }
+    
+    return {success: false, message: json.message || '收藏失败'};
+  } catch (error: any) {
+    console.error('Add board favorite error:', error);
+    if (error.message === '请求超时') {
+      return {success: false, message: '请求超时，请重试'};
+    }
+    return {success: false, message: '收藏失败'};
+  }
+};
+
+// 取消版面收藏
+export const removeBoardFavorite = async (boardId: string): Promise<{success: boolean, message?: string}> => {
+  try {
+    const cookies = await getCookies();
+    
+    if (!cookies) {
+      console.log('removeBoardFavorite: 未登录，无Cookie');
+      return {success: false, message: '请先登录'};
+    }
+    
+    const url = `${WAP_BASE_URL}/wap/api/profile/favorite/boards/${boardId}/0`;
+    
+    console.log('Removing board from favorites:', boardId);
+    
+    const headers: Record<string, string> = {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
+      'Accept': 'application/json, text/plain, */*',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+      'Authorization': 'Basic Og==',
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Content-Length': '0',
+      'Cookie': cookies,
+    };
+
+    const response = await fetchWithTimeout(url, {
+      method: 'DELETE',
+      headers,
+      credentials: 'include',
+    }, 10000); // 10秒超时
+
+    const json = await response.json();
+    console.log('removeBoardFavorite API response:', json);
+
+    if (json.code === 1) {
+      return {success: true, message: json.message || '取消收藏成功'};
+    }
+    
+    return {success: false, message: json.message || '取消收藏失败'};
+  } catch (error: any) {
+    console.error('Remove board favorite error:', error);
+    if (error.message === '请求超时') {
+      return {success: false, message: '请求超时，请重试'};
+    }
+    return {success: false, message: '取消收藏失败'};
   }
 };

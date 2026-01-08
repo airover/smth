@@ -14,10 +14,11 @@ import {
   Dimensions,
   TouchableWithoutFeedback,
   RefreshControl,
+  PanResponder,
 } from 'react-native';
 import {useNavigation, useRoute} from '@react-navigation/native';
 import {getBoards, getFavoriteBoards, getBoardPosts} from '../services/api';
-import {getSubBoards} from '../services/dataFetcher';
+import {getSubBoards, checkBoardFavorite, addBoardFavorite, removeBoardFavorite} from '../services/dataFetcher';
 import {Board, Post} from '../types';
 import {getCache, setCache} from '../services/cacheManager';
 import {formatRelativeTime} from '../utils/timeFormat';
@@ -95,8 +96,15 @@ const BoardScreen: React.FC = () => {
   const [loadingChannelPosts, setLoadingChannelPosts] = useState(false);
   const [postsDataLoaded, setPostsDataLoaded] = useState(false);
   const [channelPostsDataLoaded, setChannelPostsDataLoaded] = useState(false);
+  const [sortByReplyTime, setSortByReplyTime] = useState(false); // false: 按发布时间, true: 按回复时间
+  const [showFabMenu, setShowFabMenu] = useState(false); // 浮动按钮菜单显示状态
+  const [sortRefreshing, setSortRefreshing] = useState(false); // 排序刷新状态
+  const [isBoardFavorited, setIsBoardFavorited] = useState(false); // 当前版面是否已收藏
+  const [checkingFavorite, setCheckingFavorite] = useState(false); // 正在检查收藏状态
 
   const modalAnim = useRef(new Animated.Value(0)).current;
+  const fabMenuAnim = useRef(new Animated.Value(0)).current; // 浮动菜单动画
+  const fabPosition = useRef(new Animated.ValueXY({x: 0, y: 0})).current; // 浮动按钮位置偏移量
 
   useEffect(() => {
     if (showBoardList) {
@@ -115,6 +123,7 @@ const BoardScreen: React.FC = () => {
         useNativeDriver: true,
       }).start();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showBoardList]);
 
   const closeDrawer = () => {
@@ -149,6 +158,17 @@ const BoardScreen: React.FC = () => {
     loadChannels();
   }, []);
 
+  // 监听页面失去焦点，在后台默默关闭菜单
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('blur', () => {
+      // 直接设置动画值为0和状态为false，在后台关闭菜单
+      fabMenuAnim.setValue(0);
+      setShowFabMenu(false);
+    });
+
+    return unsubscribe;
+  }, [navigation]);
+
   useEffect(() => {
     if (selectedChannel) {
       // 选择频道时清理版面相关状态
@@ -171,15 +191,93 @@ const BoardScreen: React.FC = () => {
       setPosts([]);
       setLoading(true); // 设置加载状态
       setPostsDataLoaded(false); // 重置数据加载状态
-      loadPosts(selectedBoard.id, 1);
+      loadPosts(selectedBoard.id, 1, sortByReplyTime ? 1 : 0);
       setShowChannels(false); // 选择版面后隐藏频道列表
+      // 检查版面是否已收藏
+      checkBoardFavoriteStatus(selectedBoard.id);
     }
   }, [selectedBoard]);
 
+  // 排序方式变化时重新加载
+  useEffect(() => {
+    if (selectedBoard) {
+      setPage(1);
+      setHasMore(true);
+      setPosts([]);
+      setSortRefreshing(true); // 使用独立的排序刷新状态
+      setPostsDataLoaded(false);
+      loadPosts(selectedBoard.id, 1, sortByReplyTime ? 1 : 0);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortByReplyTime]);
+
+  // 浮动菜单动画
+  useEffect(() => {
+    Animated.spring(fabMenuAnim, {
+      toValue: showFabMenu ? 1 : 0,
+      useNativeDriver: false, // 必须为false，因为fabPosition使用false，不能混用
+      tension: 50,
+      friction: 7,
+    }).start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showFabMenu]);
+
+  // 浮动按钮拖动手势
+  const isDragging = useRef(false);
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gesture) => {
+        // 只有移动距离超过5px才认为是拖动
+        return Math.abs(gesture.dx) > 5 || Math.abs(gesture.dy) > 5;
+      },
+      onPanResponderGrant: () => {
+        isDragging.current = false;
+        fabPosition.setOffset({
+          x: (fabPosition.x as any)._value,
+          y: (fabPosition.y as any)._value,
+        });
+        fabPosition.setValue({x: 0, y: 0});
+      },
+      onPanResponderMove: (event, gestureState) => {
+        // 如果移动距离超过5px，标记为拖动
+        if (Math.abs(gestureState.dx) > 5 || Math.abs(gestureState.dy) > 5) {
+          isDragging.current = true;
+        }
+        // 手动更新位置
+        fabPosition.setValue({
+          x: gestureState.dx,
+          y: gestureState.dy,
+        });
+      },
+      onPanResponderRelease: () => {
+        fabPosition.flattenOffset();
+        
+        // 边界检测，确保按钮不会超出屏幕
+        const screenWidth = Dimensions.get('window').width;
+        const screenHeight = Dimensions.get('window').height;
+        const buttonSize = 56;
+        const padding = 20;
+        
+        // 计算边界限制（相对于右下角的偏移）
+        const maxX = screenWidth - buttonSize - padding * 2; // 最大向左偏移
+        const maxY = screenHeight - buttonSize - padding * 2 - 100; // 最大向上偏移（减去底部安全区域）
+        
+        Animated.spring(fabPosition, {
+          toValue: {
+            x: Math.max(-maxX, Math.min((fabPosition.x as any)._value, 0)), // 限制在屏幕内
+            y: Math.max(-maxY, Math.min((fabPosition.y as any)._value, 0)),
+          },
+          useNativeDriver: false,
+          tension: 50,
+          friction: 7,
+        }).start();
+      },
+    })
+  ).current;
+
   // 动态更新导航栏
   useEffect(() => {
-    const shouldShowSearch = !selectedBoard && !selectedChannel;
-    
     navigation.setOptions({
       headerTitle: () => {
         if (selectedBoard) {
@@ -231,7 +329,7 @@ const BoardScreen: React.FC = () => {
         </TouchableOpacity>
       ),
     });
-  }, [selectedBoard, selectedChannel, searchText]);
+  }, [selectedBoard, selectedChannel, searchText, navigation]);
 
   const loadBoards = async () => {
     try {
@@ -284,6 +382,51 @@ const BoardScreen: React.FC = () => {
       setFavoriteBoards(data);
     } catch (error) {
       console.error('Load favorite boards error:', error);
+    }
+  };
+
+  // 检查版面收藏状态
+  const checkBoardFavoriteStatus = async (boardId: string) => {
+    try {
+      setCheckingFavorite(true);
+      const isFavorited = await checkBoardFavorite(boardId);
+      setIsBoardFavorited(isFavorited);
+    } catch (error) {
+      console.error('Check board favorite status error:', error);
+      setIsBoardFavorited(false);
+    } finally {
+      setCheckingFavorite(false);
+    }
+  };
+
+  // 切换版面收藏状态
+  const handleToggleBoardFavorite = async () => {
+    if (!selectedBoard) return;
+    
+    setShowFabMenu(false); // 立即关闭菜单
+    
+    try {
+      if (isBoardFavorited) {
+        // 取消收藏
+        const result = await removeBoardFavorite(selectedBoard.id);
+        if (result.success) {
+          setIsBoardFavorited(false);
+          console.log('取消收藏成功');
+        } else {
+          console.error('取消收藏失败:', result.message);
+        }
+      } else {
+        // 添加收藏
+        const result = await addBoardFavorite(selectedBoard.id);
+        if (result.success) {
+          setIsBoardFavorited(true);
+          console.log('收藏成功');
+        } else {
+          console.error('收藏失败:', result.message);
+        }
+      }
+    } catch (error) {
+      console.error('Toggle board favorite error:', error);
     }
   };
 
@@ -419,15 +562,16 @@ const BoardScreen: React.FC = () => {
     }
   };
 
-  const loadPosts = async (boardId: string, pageNum: number) => {
+  const loadPosts = async (boardId: string, pageNum: number, orderByFlushTime: number = 0) => {
     try {
       if (pageNum > 1) {
         setLoadingMore(true);
-      } else {
+      } else if (!sortRefreshing) {
+        // 只有非排序刷新时才设置loading
         setLoading(true);
       }
       
-      const {topics, tops, totalPages} = await getBoardPosts(boardId, pageNum);
+      const {topics, tops, totalPages} = await getBoardPosts(boardId, pageNum, orderByFlushTime);
       
       if (pageNum === 1) {
         // 第一页时，如果有置顶帖且不是加载更多，则合并
@@ -450,6 +594,7 @@ const BoardScreen: React.FC = () => {
       // 接口失败时不设置postsDataLoaded
     } finally {
       setLoading(false);
+      setSortRefreshing(false); // 清除排序刷新状态
       if (pageNum > 1) {
         setLoadingMore(false);
       }
@@ -469,7 +614,7 @@ const BoardScreen: React.FC = () => {
       if (hasMore && !loadingMore) {
         const nextPage = page + 1;
         setPage(nextPage);
-        loadPosts(selectedBoard.id, nextPage);
+        loadPosts(selectedBoard.id, nextPage, sortByReplyTime ? 1 : 0);
       }
     }
   };
@@ -484,7 +629,7 @@ const BoardScreen: React.FC = () => {
       } else if (selectedBoard) {
         setPage(1);
         setHasMore(true);
-        await loadPosts(selectedBoard.id, 1);
+        await loadPosts(selectedBoard.id, 1, sortByReplyTime ? 1 : 0);
       } else {
         await loadChannels();
       }
@@ -699,7 +844,7 @@ const BoardScreen: React.FC = () => {
         </View>
         <View style={styles.postStats}>
           <Text style={styles.metaText}>{item.replyCount} 回复</Text>
-          <Text style={styles.statsText}>{formatRelativeTime(item.postTime)}</Text>
+          <Text style={styles.statsText}>{formatRelativeTime(sortByReplyTime ? item.lastReplyTime : item.postTime)}</Text>
         </View>
       </View>
     </TouchableOpacity>
@@ -739,7 +884,7 @@ const BoardScreen: React.FC = () => {
           </View>
           <View style={styles.postStats}>
             <Text style={styles.metaText}>{item.availables} 回复</Text>
-            <Text style={styles.statsText}>{formatRelativeTime(item.lastPostTime)}</Text>
+            <Text style={styles.statsText}>{formatRelativeTime(sortByReplyTime ? item.lastPostTime : item.postTime)}</Text>
           </View>
         </View>
         <View style={styles.channelPostBoard}>
@@ -777,6 +922,148 @@ const BoardScreen: React.FC = () => {
           </TouchableOpacity>
         )}
       </View>
+    );
+  };
+
+  // 浮动按钮菜单项配置
+  const fabMenuItems = [
+    {
+      icon: sortByReplyTime ? '📅' : '💬',
+      label: sortByReplyTime ? '按发布' : '按回复',
+      onPress: () => {
+        setShowFabMenu(false); // 立即关闭菜单
+        // 等待菜单缩回动画完成后再切换排序，避免刷新时菜单残留
+        setTimeout(() => {
+          setSortByReplyTime(!sortByReplyTime);
+        }, 300);
+      },
+      show: selectedBoard !== null,
+      disabled: false,
+    },
+    {
+      icon: '✏️',
+      label: '发帖',
+      onPress: () => {
+        setShowFabMenu(false); // 立即关闭菜单
+        // TODO: 跳转到发帖页面
+        console.log('发帖');
+      },
+      show: selectedBoard !== null,
+      disabled: false,
+    },
+    {
+      icon: '⭐',
+      label: isBoardFavorited ? '已收藏' : '收藏',
+      onPress: () => {
+        if (selectedBoard) {
+          handleToggleBoardFavorite();
+        } else {
+          setShowFabMenu(false); // 立即关闭菜单
+          navigation.navigate('BoardList', {favorites: true});
+        }
+      },
+      show: true,
+      disabled: false, // 不再置灰，始终可点击
+    },
+  ].filter(item => item.show);
+
+  // 渲染浮动按钮菜单
+  const renderFabMenu = () => {
+    if (!selectedBoard && !selectedChannel) return null;
+
+    return (
+      <>
+        {/* 菜单项 - 只在菜单展开时可交互 */}
+        {fabMenuItems.map((item, index) => {
+          // 计算角度：向左上方扇形展开
+          // 在React Native中，Y轴向下为正，所以需要调整角度
+          // 我们希望菜单从左边（180度）到上边（270度）展开
+          const totalAngle = Math.PI / 2; // 90度扇形范围
+          const startAngle = Math.PI; // 180度（正左方）
+          const angle = startAngle + (totalAngle / Math.max(fabMenuItems.length - 1, 1)) * index;
+          const radius = 100;
+          const menuTranslateX = fabMenuAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0, Math.cos(angle) * radius], // 180度到270度，cos为负，向左
+          });
+          const menuTranslateY = fabMenuAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0, Math.sin(angle) * radius], // 180度到270度，sin为负，向上
+          });
+
+          return (
+            <Animated.View
+              key={index}
+              pointerEvents={showFabMenu ? 'auto' : 'none'}
+              style={[
+                styles.fabMenuItem,
+                {
+                  opacity: fabMenuAnim,
+                  transform: [
+                    {translateX: fabPosition.x},
+                    {translateY: fabPosition.y},
+                    {translateX: menuTranslateX},
+                    {translateY: menuTranslateY},
+                    {
+                      scale: fabMenuAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, 1],
+                      }),
+                    },
+                  ],
+                },
+              ]}>
+              <TouchableOpacity
+                style={styles.fabMenuButton}
+                onPress={item.onPress}
+                activeOpacity={0.8}>
+                <Text style={styles.fabMenuIcon}>{item.icon}</Text>
+              </TouchableOpacity>
+              <Text style={styles.fabMenuLabel}>{item.label}</Text>
+            </Animated.View>
+          );
+        })}
+
+        {/* 主浮动按钮 */}
+        <Animated.View
+          {...panResponder.panHandlers}
+          style={[
+            styles.fabButton,
+            {
+              transform: [
+                {translateX: fabPosition.x},
+                {translateY: fabPosition.y},
+              ],
+            },
+          ]}>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() => {
+              // 只有在非拖动状态下才切换菜单
+              if (!isDragging.current) {
+                setShowFabMenu(!showFabMenu);
+              }
+            }}
+            style={styles.fabButtonTouchable}>
+            <Animated.Text
+              style={[
+                styles.fabIcon,
+                {
+                  transform: [
+                    {
+                      rotate: fabMenuAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: ['0deg', '45deg'],
+                      }),
+                    },
+                  ],
+                },
+              ]}>
+              +
+            </Animated.Text>
+          </TouchableOpacity>
+        </Animated.View>
+      </>
     );
   };
 
@@ -886,6 +1173,9 @@ const BoardScreen: React.FC = () => {
           </Animated.View>
         </View>
       </Modal>
+
+      {/* 浮动按钮菜单 */}
+      {renderFabMenu()}
     </SafeAreaView>
   );
 };
@@ -1194,6 +1484,79 @@ const styles = StyleSheet.create({
   },
   subBoardsContainer: {
     backgroundColor: '#fff',
+  },
+  fabButton: {
+    position: 'absolute',
+    right: 20,
+    bottom: 20,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 122, 255, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 4},
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  fabIcon: {
+    fontSize: 32,
+    color: '#007AFF',
+    fontWeight: '200',
+    lineHeight: 32,
+  },
+  fabMenuItem: {
+    position: 'absolute',
+    right: 20,
+    bottom: 20,
+    alignItems: 'center',
+  },
+  fabMenuButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255, 255, 255, 0.35)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 122, 255, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 3},
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 6,
+  },
+  fabMenuIcon: {
+    fontSize: 20,
+    color: '#007AFF',
+  },
+  fabMenuLabel: {
+    marginTop: 6,
+    fontSize: 12,
+    color: '#007AFF',
+    fontWeight: '600',
+    backgroundColor: 'rgba(255, 255, 255, 0.4)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 122, 255, 0.4)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    elevation: 3,
+    overflow: 'hidden',
+  },
+  fabButtonTouchable: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
 
