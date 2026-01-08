@@ -35,6 +35,33 @@ interface Channel {
   value: string;
 }
 
+// 图览附件类型
+interface AlbumAttachment {
+  cdnUrl: string;
+  name: string;
+  size: number;
+  type: string;
+}
+
+// 图览文章类型
+interface AlbumArticle {
+  id: string;
+  subject: string;
+  body: string;
+  attachments: AlbumAttachment[];
+  account: {
+    name: string;
+    nick: string;
+    avatarUrl?: string;
+  };
+  board: {
+    name: string;
+    title: string;
+  };
+  postTime: number;
+  topicId: string;
+}
+
 // 频道帖子类型定义
 interface ChannelTopic {
   id: string;
@@ -70,6 +97,10 @@ interface ChannelTopic {
     name: string;
     title: string;
   };
+  // 图览专用字段
+  topicId?: string;
+  postTime?: number;
+  attachments?: AlbumAttachment[];
 }
 
 const BoardScreen: React.FC = () => {
@@ -294,15 +325,8 @@ const BoardScreen: React.FC = () => {
               </Text>
             </View>
           );
-        } else if (selectedChannel) {
-          return (
-            <View style={styles.headerTitleContainer}>
-              <Text style={styles.headerTitleText} numberOfLines={1}>
-                {selectedChannel.name}
-              </Text>
-            </View>
-          );
         } else {
+          // 频道和未选择状态都显示搜索框
           return (
             <View style={styles.headerContainer}>
               <TextInput
@@ -441,7 +465,21 @@ const BoardScreen: React.FC = () => {
       // 检查缓存
       const cachedChannels = getCache<Channel[]>('channels');
       if (cachedChannels) {
-        setChannels(cachedChannels);
+        console.log('缓存频道数据:', cachedChannels.map(c => c.name));
+        // 过滤掉"热贴"频道（包括"热帖"的不同写法）
+        const filteredChannels = cachedChannels.filter(channel => 
+          channel.name !== '热贴' && channel.name !== '热帖'
+        );
+        console.log('过滤后频道:', filteredChannels.map(c => c.name));
+        setChannels(filteredChannels);
+        // 初次进入时默认选中"图览"
+        if (!selectedChannel && filteredChannels.length > 0) {
+          const albumChannel = filteredChannels.find(c => c.name === '图览');
+          if (albumChannel) {
+            setSelectedChannel(albumChannel);
+            loadAlbumPosts(1);
+          }
+        }
         return;
       }
 
@@ -469,12 +507,130 @@ const BoardScreen: React.FC = () => {
       const result = await response.json();
       if (result.code === 1 && result.data && result.data.data) {
         const channelsData = result.data.data;
-        setChannels(channelsData);
-        // 缓存频道数据
-        setCache('channels', undefined, channelsData);
+        console.log('原始频道数据:', channelsData.map((c: Channel) => c.name));
+        // 过滤掉"热贴"频道（包括"热帖"的不同写法）
+        const filteredChannels = channelsData.filter((channel: Channel) => 
+          channel.name !== '热贴' && channel.name !== '热帖'
+        );
+        console.log('过滤后频道:', filteredChannels.map((c: Channel) => c.name));
+        setChannels(filteredChannels);
+        // 缓存频道数据（过滤后的）
+        setCache('channels', undefined, filteredChannels);
+        
+        // 初次进入时默认选中"图览"
+        if (!selectedChannel && filteredChannels.length > 0) {
+          const albumChannel = filteredChannels.find((c: Channel) => c.name === '图览');
+          if (albumChannel) {
+            setSelectedChannel(albumChannel);
+            loadAlbumPosts(1);
+          }
+        }
       }
     } catch (error) {
       console.error('Load channels error:', error);
+    }
+  };
+
+  const loadAlbumPosts = async (pageNum: number = 1) => {
+    try {
+      if (pageNum > 1) {
+        setLoadingChannelPosts(true);
+      } else {
+        setLoading(true);
+      }
+
+      const timestamp = Date.now();
+      const url = `https://wap.newsmth.net/wap/api/album/load/global?t=${timestamp}&page=${pageNum}&size=20`;
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'accept': 'application/json, text/plain, */*',
+          'accept-language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+          'access-control-allow-origin': '*',
+          'authorization': 'Basic Og==',
+          'cache-control': 'no-cache',
+          'pragma': 'no-cache',
+          'priority': 'u=1, i',
+          'sec-ch-ua': '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
+          'sec-ch-ua-mobile': '?0',
+          'sec-ch-ua-platform': '"macOS"',
+          'sec-fetch-dest': 'empty',
+          'sec-fetch-mode': 'cors',
+          'sec-fetch-site': 'same-origin',
+          'test-uin-only': '1',
+          'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
+        }
+      });
+
+      const result = await response.json();
+      if (result.code === 1 && result.data) {
+        const { articles, pager } = result.data;
+        
+        // 转换图览数据为频道帖子格式
+        const convertedTopics: ChannelTopic[] = (articles || []).map((article: AlbumArticle) => ({
+          id: article.id,
+          subject: article.subject,
+          availables: 0, // 图览没有回复数
+          firstArticleId: article.id,
+          likeAvailables: 0,
+          flushTime: article.postTime,
+          lastPostTime: article.postTime,
+          lastArticleOrder: 0,
+          boardId: article.board.name,
+          fav: false,
+          lastArticleId: article.id,
+          status: 0,
+          article: {
+            id: article.id,
+            subject: article.subject,
+            body: article.body,
+            postTime: article.postTime,
+            editTime: 0,
+            account: {
+              id: article.account.name,
+              name: article.account.name,
+              nick: article.account.nick,
+              gender: 0,
+              level: 0,
+              levelTitle: '',
+              avatarUrl: article.account.avatarUrl,
+            },
+          },
+          board: {
+            id: article.board.name,
+            name: article.board.name,
+            title: article.board.title,
+          },
+          topicId: article.topicId, // 图览的主题ID
+          postTime: article.postTime,
+          // 添加图片信息，用于后续渲染
+          attachments: article.attachments,
+        } as any));
+        
+        if (pageNum === 1) {
+          setChannelPosts(convertedTopics);
+          setChannelPage(1);
+        } else {
+          setChannelPosts(prev => {
+            const existingIds = new Set(prev.map(p => p.id));
+            const newPosts = convertedTopics.filter(p => !existingIds.has(p.id));
+            return [...prev, ...newPosts];
+          });
+        }
+        
+        // 检查是否还有更多数据
+        const totalPages = Math.ceil(pager.items / pager.size);
+        setChannelHasMore(pageNum < totalPages);
+        setChannelPostsDataLoaded(true);
+      }
+    } catch (error) {
+      console.error('Load album posts error:', error);
+    } finally {
+      setLoading(false);
+      if (pageNum > 1) {
+        setLoadingChannelPosts(false);
+      }
     }
   };
 
@@ -613,7 +769,12 @@ const BoardScreen: React.FC = () => {
       if (channelHasMore && !loadingChannelPosts) {
         const nextPage = channelPage + 1;
         setChannelPage(nextPage);
-        loadChannelPosts(selectedChannel.id, nextPage);
+        // 判断是否是图览频道
+        if (selectedChannel.name === '图览') {
+          loadAlbumPosts(nextPage);
+        } else {
+          loadChannelPosts(selectedChannel.id, nextPage);
+        }
       }
     } else if (selectedBoard) {
       // 版面帖子加载更多
@@ -631,7 +792,12 @@ const BoardScreen: React.FC = () => {
       if (selectedChannel) {
         setChannelPage(1);
         setChannelHasMore(true);
-        await loadChannelPosts(selectedChannel.id, 1);
+        // 判断是否是图览频道
+        if (selectedChannel.name === '图览') {
+          await loadAlbumPosts(1);
+        } else {
+          await loadChannelPosts(selectedChannel.id, 1);
+        }
       } else if (selectedBoard) {
         setPage(1);
         setHasMore(true);
@@ -658,7 +824,12 @@ const BoardScreen: React.FC = () => {
         setChannelPage(1);
         setChannelHasMore(true);
         setChannelPosts([]);
-        loadChannelPosts(item.id, 1);
+        // 判断是否是图览频道
+        if (item.name === '图览') {
+          loadAlbumPosts(1);
+        } else {
+          loadChannelPosts(item.id, 1);
+        }
         console.log('选择频道:', item);
       }}>
       <Text style={[
@@ -865,7 +1036,7 @@ const BoardScreen: React.FC = () => {
           markAsRead(item.id);
           navigation.navigate('PostDetail', {
             board: item.board.name,
-            postId: item.id, // 使用topicId
+            postId: item.topicId || item.id, // 图览使用topicId，普通频道使用id
           });
         }}>
         <View style={styles.postHeader}>
@@ -1180,8 +1351,8 @@ const BoardScreen: React.FC = () => {
         </View>
       </Modal>
 
-      {/* 浮动按钮菜单 */}
-      {renderFabMenu()}
+      {/* 浮动按钮菜单 - 仅在查看版面帖子时显示，查看频道时隐藏 */}
+      {!selectedChannel && renderFabMenu()}
     </SafeAreaView>
   );
 };
