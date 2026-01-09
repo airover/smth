@@ -42,14 +42,22 @@ const SettingsScreen: React.FC = () => {
       const storedUsername = await AsyncStorage.getItem('username');
       const isStoredLoggedIn = loginStatus === 'true';
       
-      // 立即设置本地存储的状态，避免显示未登录
+      // 立即设置本地存储的状态
       setIsLoggedIn(isStoredLoggedIn);
-      if (storedUsername) {
+      
+      if (isStoredLoggedIn && storedUsername) {
         setUsername(storedUsername);
         // 如果有本地用户名，先显示基本信息
         setUser({
           username: storedUsername,
         });
+      } else {
+        // 如果未登录，清除状态
+        setUsername('');
+        setUser(null);
+        // 如果明确未登录，就不需要继续请求API了
+        setLoading(false);
+        return;
       }
       
       // 尝试从服务器获取用户信息
@@ -66,10 +74,9 @@ const SettingsScreen: React.FC = () => {
         } else if (userInfo.isLoggedIn === false) {
           // API 明确返回未登录，可能是 Cookie 过期
           setIsLoggedIn(false);
-          // 但仍然显示用户名
-          setUser({
-            username: userInfo.username,
-          });
+          // 清除显示
+          setUser(null);
+          setUsername('');
         } else {
           // isLoggedIn 未定义，保持本地状态不变
           setUser(userInfo);

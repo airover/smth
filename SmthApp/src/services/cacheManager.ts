@@ -27,6 +27,8 @@ interface CacheStore {
   
   // 频道相关缓存
   channels?: CacheItem<any[]>;
+  channelPosts: {[key: string]: CacheItem<any>}; // 新增：频道帖子缓存
+  albumPosts: {[key: string]: CacheItem<any>};   // 新增：图览帖子缓存
 }
 
 class CacheManager {
@@ -41,6 +43,8 @@ class CacheManager {
       hotPosts: {},
       postDetail: {},
       topicReplies: {},
+      channelPosts: {},
+      albumPosts: {},
     };
   }
 
@@ -106,6 +110,33 @@ class CacheManager {
   }
 
   /**
+   * 获取缓存（包含时间戳，不检查过期）
+   */
+  getWithTimestamp<T>(category: keyof CacheStore, key?: string): {data: T, timestamp: number} | null {
+    try {
+      if (key) {
+        // 带 key 的缓存
+        const categoryCache = this.cache[category] as {[key: string]: CacheItem<T>};
+        if (typeof categoryCache === 'object' && !Array.isArray(categoryCache)) {
+          const item = categoryCache[key];
+          if (item) {
+            return {data: item.data, timestamp: item.timestamp};
+          }
+        }
+      } else {
+        // 不带 key 的缓存
+        const item = (this.cache as any)[category] as CacheItem<T> | undefined;
+        if (item) {
+          return {data: item.data, timestamp: item.timestamp};
+        }
+      }
+    } catch (error) {
+      console.error(`[Cache] GetWithTimestamp error for ${category}${key ? `[${key}]` : ''}:`, error);
+    }
+    return null;
+  }
+
+  /**
    * 清除指定分类的缓存
    */
   clearCategory(category: keyof CacheStore): void {
@@ -127,6 +158,8 @@ class CacheManager {
       hotPosts: {},
       postDetail: {},
       topicReplies: {},
+      channelPosts: {},
+      albumPosts: {},
     };
     console.log('[Cache] Cleared all caches');
   }
@@ -178,12 +211,14 @@ class CacheManager {
     let cleaned = 0;
 
     // 清理字典类型的缓存
-    const dictCategories: Array<'subBoards' | 'boardPosts' | 'hotPosts' | 'postDetail' | 'topicReplies'> = [
+    const dictCategories: Array<'subBoards' | 'boardPosts' | 'hotPosts' | 'postDetail' | 'topicReplies' | 'channelPosts' | 'albumPosts'> = [
       'subBoards',
       'boardPosts',
       'hotPosts',
       'postDetail',
       'topicReplies',
+      'channelPosts',
+      'albumPosts',
     ];
 
     for (const category of dictCategories) {
@@ -230,6 +265,10 @@ export const getCache = <T>(category: keyof CacheStore, key?: string, duration?:
   return cacheManager.get<T>(category, key, duration);
 };
 
+export const getCacheWithTimestamp = <T>(category: keyof CacheStore, key?: string): {data: T, timestamp: number} | null => {
+  return cacheManager.getWithTimestamp<T>(category, key);
+};
+
 export const clearCache = (category?: keyof CacheStore) => {
   if (category) {
     cacheManager.clearCategory(category);
@@ -245,7 +284,3 @@ export const getCacheStats = () => {
 export const cleanExpiredCache = (duration?: number) => {
   return cacheManager.cleanExpired(duration);
 };
-
-
-
-

@@ -22,7 +22,7 @@ import {useNavigation, useRoute} from '@react-navigation/native';
 import {getBoards, getFavoriteBoards, getBoardPosts} from '../services/api';
 import {getSubBoards, checkBoardFavorite, addBoardFavorite, removeBoardFavorite} from '../services/dataFetcher';
 import {Board, Post} from '../types';
-import {getCache, setCache} from '../services/cacheManager';
+import {getCache, setCache, getCacheWithTimestamp} from '../services/cacheManager';
 import {formatRelativeTime} from '../utils/timeFormat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -145,6 +145,76 @@ const BoardScreen: React.FC = () => {
   const [isBoardFavorited, setIsBoardFavorited] = useState(false); // 当前版面是否已收藏
   const [checkingFavorite, setCheckingFavorite] = useState(false); // 正在检查收藏状态
 
+  // 使用Ref来追踪最新的状态，解决闭包问题
+  const selectedBoardRef = useRef(selectedBoard);
+  const selectedChannelRef = useRef(selectedChannel);
+  const channelsRef = useRef(channels);
+  const channelsListRef = useRef<FlatList>(null);
+
+  useEffect(() => {
+    selectedBoardRef.current = selectedBoard;
+  }, [selectedBoard]);
+
+  useEffect(() => {
+    selectedChannelRef.current = selectedChannel;
+  }, [selectedChannel]);
+
+  useEffect(() => {
+    channelsRef.current = channels;
+  }, [channels]);
+
+  const switchToChannel = (index: number) => {
+    const currentChannels = channelsRef.current;
+    if (index >= 0 && index < currentChannels.length) {
+      const targetChannel = currentChannels[index];
+      setSelectedChannel(targetChannel);
+      // 滚动频道列表以显示选中的频道
+      // 稍微延迟一下，确保状态更新后再滚动
+      setTimeout(() => {
+        channelsListRef.current?.scrollToIndex({
+          index,
+          animated: true,
+          viewPosition: 0.5,
+        });
+      }, 0);
+    }
+  };
+
+  // 频道切换手势
+  const channelSwipeResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (evt, gestureState) => {
+        // 只有在显示频道列表且没有选中具体版面时才启用
+        // 且必须是水平滑动，且水平距离大于垂直距离
+        // 且水平距离超过一定阈值
+        if (!selectedChannelRef.current || selectedBoardRef.current) return false;
+        
+        const isHorizontal = Math.abs(gestureState.dx) > Math.abs(gestureState.dy);
+        return isHorizontal && Math.abs(gestureState.dx) > 20;
+      },
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderRelease: (evt, gestureState) => {
+        if (Math.abs(gestureState.dx) > 50) { // 滑动距离超过 50 才触发切换
+          const currentChannels = channelsRef.current;
+          const currentIndex = currentChannels.findIndex(c => c.id === selectedChannelRef.current?.id);
+          if (currentIndex === -1) return;
+
+          if (gestureState.dx > 0) {
+            // 向右滑动，切换到上一个频道
+            if (currentIndex > 0) {
+              switchToChannel(currentIndex - 1);
+            }
+          } else {
+            // 向左滑动，切换到下一个频道
+            if (currentIndex < currentChannels.length - 1) {
+              switchToChannel(currentIndex + 1);
+            }
+          }
+        }
+      },
+    })
+  ).current;
+
   const modalAnim = useRef(new Animated.Value(0)).current;
   const fabMenuAnim = useRef(new Animated.Value(0)).current; // 浮动菜单动画
   const fabPosition = useRef(new Animated.ValueXY({x: 0, y: 0})).current; // 浮动按钮位置偏移量
@@ -179,9 +249,35 @@ const BoardScreen: React.FC = () => {
 
   // 处理从其他页面（如收藏页）传来的版面参数
   useEffect(() => {
-    const params = route.params as {board?: string, boardName?: string};
-    if (params?.board) {
-      // 清理频道状态，确保从其他页面进入版面时状态正确
+    const params = route.params as {board?: string, boardName?: string, source?: string, resetToHome?: boolean};
+    
+    // 处理重置到首页的情况
+    if (params?.resetToHome) {
+      setSelectedBoard(null);
+      setSelectedChannel(null);
+      setPosts([]);
+      setChannelPosts([]);
+      setPage(1);
+      setChannelPage(1);
+      setShowChannels(true);
+      setShowFabMenu(false);
+      
+      // 选中图览频道
+      if (channels.length > 0) {
+        const albumChannel = channels.find(c => c.name === '图览');
+        if (albumChannel) {
+          setSelectedChannel(albumChannel);
+        }
+      }
+      
+      // 清除参数
+      navigation.setParams({resetToHome: undefined});
+      return;
+    }
+    
+    // 处理从链接进入版面的情况
+    if (params?.board && params?.source === 'link') {
+      // 清理频道状态，确保从链接进入版面时状态正确
       setSelectedChannel(null);
       setChannelPosts([]);
       setShowChannels(false);
@@ -191,6 +287,16 @@ const BoardScreen: React.FC = () => {
         name: params.boardName || params.board,
         chineseName: params.boardName,
       });
+      
+      // 清除参数，避免重复处理
+      navigation.setParams({board: undefined, boardName: undefined, source: undefined});
+    }
+    
+    // 处理从Tab点击进入的情况（显示频道列表）
+    if (params?.source === 'tab') {
+      setShowChannels(true);
+      // 清除参数
+      navigation.setParams({source: undefined});
     }
   }, [route.params]);
 
@@ -212,6 +318,38 @@ const BoardScreen: React.FC = () => {
     return unsubscribe;
   }, [navigation]);
 
+  // 监听Tab重复点击事件，返回版面首页（显示频道列表）
+  useEffect(() => {
+    const params = route.params as {resetToHome?: number};
+    if (params?.resetToHome) {
+      // 如果当前在查看某个版面或频道，则重置到首页状态
+      if (selectedBoard || selectedChannel) {
+        // 重置所有状态到初始状态
+        setSelectedBoard(null);
+        setPosts([]);
+        setChannelPosts([]);
+        setPage(1);
+        setChannelPage(1);
+        setHasMore(true);
+        setChannelHasMore(true);
+        setShowChannels(true); // 显示频道列表
+        setPostsDataLoaded(false);
+        setChannelPostsDataLoaded(false);
+        // 关闭浮动菜单
+        fabMenuAnim.setValue(0);
+        setShowFabMenu(false);
+        
+        // 默认选中"图览"频道
+        const albumChannel = channels.find(c => c.name === '图览');
+        if (albumChannel) {
+          setSelectedChannel(albumChannel);
+        } else {
+          setSelectedChannel(null);
+        }
+      }
+    }
+  }, [route.params, channels, selectedBoard, selectedChannel]);
+
   useEffect(() => {
     if (selectedChannel) {
       // 选择频道时清理版面相关状态
@@ -223,6 +361,16 @@ const BoardScreen: React.FC = () => {
       setLoading(true); // 设置加载状态
       setPostsDataLoaded(false); // 重置版面数据加载状态
       setChannelPostsDataLoaded(false); // 重置频道数据加载状态
+      
+      // 自动加载对应频道的帖子
+      setChannelPage(1);
+      setChannelHasMore(true);
+      setChannelPosts([]);
+      if (selectedChannel.name === '图览') {
+        loadAlbumPosts(1);
+      } else {
+        loadChannelPosts(selectedChannel.id, 1);
+      }
     }
   }, [selectedChannel]);
 
@@ -338,20 +486,9 @@ const BoardScreen: React.FC = () => {
             </View>
           );
         } else {
-          // 频道和未选择状态都显示搜索框
           return (
-            <View style={styles.headerContainer}>
-              <TextInput
-                style={styles.searchInput}
-                placeholder="搜索版面或帖子"
-                value={searchText}
-                onChangeText={setSearchText}
-                returnKeyType="search"
-                onSubmitEditing={() => {
-                  // TODO: 实现搜索功能
-                  console.log('搜索:', searchText);
-                }}
-              />
+            <View style={styles.headerTitleContainer}>
+              <Text style={styles.headerTitleText}>版面</Text>
             </View>
           );
         }
@@ -371,7 +508,7 @@ const BoardScreen: React.FC = () => {
         </TouchableOpacity>
       ),
     });
-  }, [selectedBoard, selectedChannel, searchText, navigation]);
+  }, [selectedBoard, selectedChannel, navigation]);
 
   const loadBoards = async () => {
     try {
@@ -477,15 +614,24 @@ const BoardScreen: React.FC = () => {
       // 检查缓存
       const cachedChannels = getCache<Channel[]>('channels');
       if (cachedChannels) {
-        console.log('缓存频道数据:', cachedChannels.map(c => c.name));
         // 过滤掉"热贴"频道（包括"热帖"的不同写法）
         const filteredChannels = cachedChannels.filter(channel => 
           channel.name !== '热贴' && channel.name !== '热帖'
         );
-        console.log('过滤后频道:', filteredChannels.map(c => c.name));
+        // 将"图览"频道移到最左边
+        const albumIndex = filteredChannels.findIndex(c => c.name === '图览');
+        if (albumIndex > 0) {
+          const albumChannel = filteredChannels.splice(albumIndex, 1)[0];
+          filteredChannels.unshift(albumChannel);
+        }
         setChannels(filteredChannels);
-        // 初次进入时默认选中"图览"
-        if (!selectedChannel && filteredChannels.length > 0) {
+        // 初次进入时默认选中"图览"（仅当没有选中版面时）
+        // 使用Ref和route.params来判断，避免闭包导致的旧状态问题
+        const params = route.params as {board?: string, source?: string} | undefined;
+        const isNavigatingFromLink = params?.board && params?.source === 'link';
+        const hasSelectedBoard = selectedBoardRef.current || isNavigatingFromLink;
+        
+        if (!selectedChannelRef.current && !hasSelectedBoard && filteredChannels.length > 0) {
           const albumChannel = filteredChannels.find(c => c.name === '图览');
           if (albumChannel) {
             setSelectedChannel(albumChannel);
@@ -519,18 +665,27 @@ const BoardScreen: React.FC = () => {
       const result = await response.json();
       if (result.code === 1 && result.data && result.data.data) {
         const channelsData = result.data.data;
-        console.log('原始频道数据:', channelsData.map((c: Channel) => c.name));
         // 过滤掉"热贴"频道（包括"热帖"的不同写法）
         const filteredChannels = channelsData.filter((channel: Channel) => 
           channel.name !== '热贴' && channel.name !== '热帖'
         );
-        console.log('过滤后频道:', filteredChannels.map((c: Channel) => c.name));
+        // 将"图览"频道移到最左边
+        const albumIndex = filteredChannels.findIndex((c: Channel) => c.name === '图览');
+        if (albumIndex > 0) {
+          const albumChannel = filteredChannels.splice(albumIndex, 1)[0];
+          filteredChannels.unshift(albumChannel);
+        }
         setChannels(filteredChannels);
         // 缓存频道数据（过滤后的）
         setCache('channels', undefined, filteredChannels);
         
-        // 初次进入时默认选中"图览"
-        if (!selectedChannel && filteredChannels.length > 0) {
+        // 初次进入时默认选中"图览"（仅当没有选中版面时）
+        // 使用Ref和route.params来判断，避免闭包导致的旧状态问题
+        const params = route.params as {board?: string, source?: string} | undefined;
+        const isNavigatingFromLink = params?.board && params?.source === 'link';
+        const hasSelectedBoard = selectedBoardRef.current || isNavigatingFromLink;
+
+        if (!selectedChannelRef.current && !hasSelectedBoard && filteredChannels.length > 0) {
           const albumChannel = filteredChannels.find((c: Channel) => c.name === '图览');
           if (albumChannel) {
             setSelectedChannel(albumChannel);
@@ -543,11 +698,38 @@ const BoardScreen: React.FC = () => {
     }
   };
 
-  const loadAlbumPosts = async (pageNum: number = 1) => {
+  const loadAlbumPosts = async (pageNum: number = 1, forceRefresh: boolean = false) => {
     try {
+      let shouldUseCache = false;
+      const cacheKey = `global`;
+
+      if (pageNum === 1 && !forceRefresh) {
+        try {
+          const cached = getCacheWithTimestamp<any>('albumPosts', cacheKey);
+          if (cached) {
+            const { timestamp, data } = cached;
+            const { data: topics, pager } = data;
+            if (topics && topics.length > 0) {
+              setChannelPosts(topics);
+              setChannelPage(1);
+              const totalPages = Math.ceil(pager.items / pager.size);
+              setChannelHasMore(1 < totalPages);
+              setChannelPostsDataLoaded(true);
+
+              if (Date.now() - timestamp < 60 * 1000) {
+                return;
+              }
+              shouldUseCache = true;
+            }
+          }
+        } catch (e) {
+          console.error('Failed to load album cache:', e);
+        }
+      }
+
       if (pageNum > 1) {
         setLoadingChannelPosts(true);
-      } else {
+      } else if (!shouldUseCache && !forceRefresh) {
         setLoading(true);
       }
 
@@ -652,6 +834,17 @@ const BoardScreen: React.FC = () => {
         if (pageNum === 1) {
           setChannelPosts(convertedTopics);
           setChannelPage(1);
+          
+          // Save cache
+          try {
+            const cacheData = {
+              data: convertedTopics,
+              pager: pager
+            };
+            setCache('albumPosts', cacheKey, cacheData);
+          } catch (e) {
+            console.error('Failed to save album cache:', e);
+          }
         } else {
           setChannelPosts(prev => {
             const existingIds = new Set(prev.map(p => p.id));
@@ -675,11 +868,39 @@ const BoardScreen: React.FC = () => {
     }
   };
 
-  const loadChannelPosts = async (channelId: string, pageNum: number = 1) => {
+  const loadChannelPosts = async (channelId: string, pageNum: number = 1, forceRefresh: boolean = false) => {
     try {
+      let shouldUseCache = false;
+      // const cacheKey = `cache_channel_${channelId}`;
+
+      if (pageNum === 1 && !forceRefresh) {
+        try {
+          // const cachedData = await AsyncStorage.getItem(cacheKey);
+          const cached = getCacheWithTimestamp<any>('channelPosts', channelId);
+          if (cached) {
+            const { timestamp, data } = cached;
+            const { data: topics, pager } = data;
+            if (topics && topics.length > 0) {
+              setChannelPosts(topics);
+              setChannelPage(1);
+              const totalPages = Math.ceil(pager.items / pager.size);
+              setChannelHasMore(1 < totalPages);
+              setChannelPostsDataLoaded(true);
+
+              if (Date.now() - timestamp < 60 * 1000) {
+                return;
+              }
+              shouldUseCache = true;
+            }
+          }
+        } catch (e) {
+          console.error('Failed to load channel cache:', e);
+        }
+      }
+
       if (pageNum > 1) {
         setLoadingChannelPosts(true);
-      } else {
+      } else if (!shouldUseCache && !forceRefresh) {
         setLoading(true);
       }
 
@@ -714,6 +935,17 @@ const BoardScreen: React.FC = () => {
         if (pageNum === 1) {
           setChannelPosts(topics || []);
           setChannelPage(1);
+          
+          // Save cache
+          try {
+            const cacheData = {
+              data: topics || [],
+              pager: pager
+            };
+            setCache('channelPosts', channelId, cacheData);
+          } catch (e) {
+            console.error('Failed to save channel cache:', e);
+          }
         } else {
           // 使用Set来去重，确保不会有重复的id
           setChannelPosts(prev => {
@@ -765,11 +997,38 @@ const BoardScreen: React.FC = () => {
     }
   };
 
-  const loadPosts = async (boardId: string, pageNum: number, orderByFlushTime: number = 0) => {
+  const loadPosts = async (boardId: string, pageNum: number, orderByFlushTime: number = 0, forceRefresh: boolean = false) => {
     try {
+      let shouldUseCache = false;
+      const cacheKey = `${boardId}_${orderByFlushTime}`;
+
+      if (pageNum === 1 && !forceRefresh) {
+        try {
+          const cached = getCacheWithTimestamp<any>('boardPosts', cacheKey);
+          if (cached) {
+            const { timestamp, data } = cached;
+            const { data: topics, tops, totalPages } = data;
+            if (topics && topics.length > 0) {
+              const combinedPosts = [...(tops || []), ...topics];
+              setPosts(combinedPosts);
+              setPage(1);
+              setHasMore(true);
+              setPostsDataLoaded(true);
+              
+              if (Date.now() - timestamp < 60 * 1000) {
+                return;
+              }
+              shouldUseCache = true;
+            }
+          }
+        } catch (e) {
+          console.error('Failed to load cache:', e);
+        }
+      }
+
       if (pageNum > 1) {
         setLoadingMore(true);
-      } else if (!sortRefreshing) {
+      } else if (!sortRefreshing && !shouldUseCache && !forceRefresh) {
         // 只有非排序刷新时才设置loading
         setLoading(true);
       }
@@ -781,6 +1040,18 @@ const BoardScreen: React.FC = () => {
         const combinedPosts = [...tops, ...topics];
         setPosts(combinedPosts);
         setPage(1);
+        
+        // Save cache
+        try {
+          const cacheData = {
+            data: topics,
+            tops: tops,
+            totalPages: totalPages
+          };
+          setCache('boardPosts', cacheKey, cacheData);
+        } catch (e) {
+          console.error('Failed to save cache:', e);
+        }
       } else {
         // 使用Set来去重，确保不会有重复的id
         setPosts(prev => {
@@ -835,14 +1106,14 @@ const BoardScreen: React.FC = () => {
         setChannelHasMore(true);
         // 判断是否是图览频道
         if (selectedChannel.name === '图览') {
-          await loadAlbumPosts(1);
+          await loadAlbumPosts(1, true);
         } else {
-          await loadChannelPosts(selectedChannel.id, 1);
+          await loadChannelPosts(selectedChannel.id, 1, true);
         }
       } else if (selectedBoard) {
         setPage(1);
         setHasMore(true);
-        await loadPosts(selectedBoard.id, 1, sortByReplyTime ? 1 : 0);
+        await loadPosts(selectedBoard.id, 1, sortByReplyTime ? 1 : 0, true);
       } else {
         await loadChannels();
       }
@@ -860,18 +1131,10 @@ const BoardScreen: React.FC = () => {
         selectedChannel?.id === item.id && styles.selectedChannelItem
       ]}
       onPress={() => {
+        console.log('点击频道:', item.name);
         setSelectedChannel(item);
-        setSelectedBoard(null); // 清除版面选择
-        setChannelPage(1);
-        setChannelHasMore(true);
-        setChannelPosts([]);
-        // 判断是否是图览频道
-        if (item.name === '图览') {
-          loadAlbumPosts(1);
-        } else {
-          loadChannelPosts(item.id, 1);
-        }
-        console.log('选择频道:', item);
+        // 注意：不需要在这里调用loadAlbumPosts或loadChannelPosts
+        // 因为useEffect会监听selectedChannel的变化并自动加载
       }}>
       <Text style={[
         styles.channelText,
@@ -888,12 +1151,41 @@ const BoardScreen: React.FC = () => {
     return (
       <View style={styles.channelsContainer}>
         <FlatList
+          ref={channelsListRef}
           data={channels}
           renderItem={renderChannelItem}
           keyExtractor={item => item.id}
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.channelsList}
+          onScrollToIndexFailed={(info) => {
+            // 处理滚动失败的情况
+            const wait = new Promise<void>(resolve => setTimeout(() => resolve(), 500));
+            wait.then(() => {
+              channelsListRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.5 });
+            });
+          }}
+        />
+      </View>
+    );
+  };
+
+  // 渲染搜索框
+  const renderSearchBar = () => {
+    return (
+      <View style={styles.searchBarContainer}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="搜索文章"
+          value={searchText}
+          onChangeText={setSearchText}
+          returnKeyType="search"
+          onSubmitEditing={() => {
+            if (searchText.trim()) {
+              navigation.navigate('Search', {keyword: searchText.trim()});
+              setSearchText(''); // 清空搜索框
+            }
+          }}
         />
       </View>
     );
@@ -1229,7 +1521,18 @@ const BoardScreen: React.FC = () => {
           </View>
         </View>
         <View style={styles.channelPostBoard}>
-          <Text style={styles.boardNameText}>📋 {item.board.title}</Text>
+          <TouchableOpacity
+            onPress={(e) => {
+              e.stopPropagation();
+              setSelectedBoard({
+                id: item.board.id,
+                name: item.board.name,
+                chineseName: item.board.title,
+              } as Board);
+              setSelectedChannel(null);
+            }}>
+            <Text style={styles.boardNameText}>📋 {item.board.title}</Text>
+          </TouchableOpacity>
         </View>
       </TouchableOpacity>
     );
@@ -1411,56 +1714,59 @@ const BoardScreen: React.FC = () => {
   return (
     <SafeAreaView style={styles.container}>
       {renderChannelsList()}
-      {selectedChannel ? (
-        <FlatList
-          data={channelPosts}
-          renderItem={selectedChannel.name === '图览' ? renderAlbumPostItem : renderChannelPostItem}
-          keyExtractor={(item, index) => `${item.id}-${index}`}
-          onEndReached={loadMore}
-          onEndReachedThreshold={0.3}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-          }
-          ListEmptyComponent={
-            !loading && !refreshing && channelPosts.length === 0 && channelPostsDataLoaded ? (
-              <View style={styles.emptyContainer}>
-                <Text style={styles.emptyText}>暂无帖子</Text>
-              </View>
-            ) : null
-          }
-          ListFooterComponent={renderFooter}
-        />
-      ) : selectedBoard ? (
-        <FlatList
-          data={posts}
-          renderItem={renderPostItem}
-          keyExtractor={(item, index) => `${item.id}-${index}`}
-          onEndReached={loadMore}
-          onEndReachedThreshold={0.3}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-          }
-          ListEmptyComponent={
-            !loading && !refreshing && posts.length === 0 && postsDataLoaded ? (
-              <View style={styles.emptyContainer}>
-                <Text style={styles.emptyText}>暂无帖子</Text>
-              </View>
-            ) : null
-          }
-          ListFooterComponent={renderFooter}
-        />
-      ) : (
-        <ScrollView
-          style={styles.container}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-          }>
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>请选择版面或频道</Text>
-            <Text style={styles.hintText}>点击左上角菜单选择版面，或使用上方频道快速浏览</Text>
-          </View>
-        </ScrollView>
-      )}
+      {renderSearchBar()}
+      <View style={{flex: 1}} {...channelSwipeResponder.panHandlers}>
+        {selectedChannel ? (
+          <FlatList
+            data={channelPosts}
+            renderItem={selectedChannel.name === '图览' ? renderAlbumPostItem : renderChannelPostItem}
+            keyExtractor={(item, index) => `${item.id}-${index}`}
+            onEndReached={loadMore}
+            onEndReachedThreshold={0.3}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+            }
+            ListEmptyComponent={
+              !loading && !refreshing && channelPosts.length === 0 && channelPostsDataLoaded ? (
+                <View style={styles.emptyContainer}>
+                  <Text style={styles.emptyText}>暂无帖子</Text>
+                </View>
+              ) : null
+            }
+            ListFooterComponent={renderFooter}
+          />
+        ) : selectedBoard ? (
+          <FlatList
+            data={posts}
+            renderItem={renderPostItem}
+            keyExtractor={(item, index) => `${item.id}-${index}`}
+            onEndReached={loadMore}
+            onEndReachedThreshold={0.3}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+            }
+            ListEmptyComponent={
+              !loading && !refreshing && posts.length === 0 && postsDataLoaded ? (
+                <View style={styles.emptyContainer}>
+                  <Text style={styles.emptyText}>暂无帖子</Text>
+                </View>
+              ) : null
+            }
+            ListFooterComponent={renderFooter}
+          />
+        ) : (
+          <ScrollView
+            style={styles.container}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+            }>
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>请选择版面或频道</Text>
+              <Text style={styles.hintText}>点击左上角菜单选择版面，或使用上方频道快速浏览</Text>
+            </View>
+          </ScrollView>
+        )}
+      </View>
 
       <Modal
         visible={showBoardList}
@@ -1529,6 +1835,13 @@ const styles = StyleSheet.create({
   headerContainer: {
     flex: 1,
     marginHorizontal: 16,
+  },
+  searchBarContainer: {
+    backgroundColor: '#fff',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
   },
   searchInput: {
     height: 36,
@@ -1663,7 +1976,7 @@ const styles = StyleSheet.create({
   },
   boardNameText: {
     fontSize: 12,
-    color: '#666',
+    color: '#1890ff',
   },
   // 图览频道专用样式
   albumPostItem: {

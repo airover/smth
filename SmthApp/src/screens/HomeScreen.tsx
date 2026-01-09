@@ -220,6 +220,7 @@ const HomeScreen: React.FC = () => {
               navigation.navigate('Board', {
                 board: item.board,
                 boardName: item.boardName || item.board,
+                source: 'link',
               });
             }}
             hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
@@ -241,6 +242,7 @@ const HomeScreen: React.FC = () => {
         navigation.navigate('Board', {
           board: item.id,
           boardName: item.chineseName || item.name,
+          source: 'link',
         });
       }}>
       <Text style={styles.hotBoardName}>

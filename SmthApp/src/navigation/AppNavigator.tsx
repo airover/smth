@@ -18,6 +18,7 @@ import LoginScreen from '../screens/LoginScreen';
 import UserProfileScreen from '../screens/UserProfileScreen';
 import MailDetailScreen from '../screens/MailDetailScreen';
 import BrowsingHistoryScreen from '../screens/BrowsingHistoryScreen';
+import SearchScreen from '../screens/SearchScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -57,6 +58,26 @@ const MainTabs = () => {
             <Text style={{color, fontSize: 24}}>📋</Text>
           ),
         }}
+        listeners={({navigation, route}) => ({
+          tabPress: (e) => {
+            // 获取当前导航状态
+            const state = navigation.getState();
+            const currentRoute = state.routes[state.index];
+            
+            // 如果当前已经在Board Tab中，则触发返回首页
+            if (currentRoute.name === 'Board') {
+              // 通过setParams触发状态重置，传递一个时间戳确保每次都能触发
+              navigation.setParams({
+                resetToHome: Date.now(),
+              } as any);
+            } else {
+              // 如果是从其他Tab切换过来，标记为Tab点击进入
+              navigation.setParams({
+                source: 'tab',
+              } as any);
+            }
+          },
+        })}
       />
       <Tab.Screen
         name="Settings"
@@ -160,6 +181,14 @@ const AppNavigator = () => {
           component={BrowsingHistoryScreen}
           options={{
             title: '浏览历史',
+            headerBackTitle: '返回',
+          }}
+        />
+        <Stack.Screen
+          name="Search"
+          component={SearchScreen}
+          options={{
+            title: '搜索',
             headerBackTitle: '返回',
           }}
         />

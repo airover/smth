@@ -7,6 +7,12 @@ const WAP_BASE_URL = 'https://wap.newsmth.net';
 // 默认超时时间（毫秒）
 const DEFAULT_TIMEOUT = 10000; // 10秒
 const LOGIN_TIMEOUT = 15000; // 登录接口15秒
+const SEARCH_TIMEOUT = 20000; // 搜索接口20秒
+
+// 搜索相关常量
+const DEFAULT_PAGE = 1; // 默认页码
+const DEFAULT_PAGE_SIZE = 20; // 默认每页数量
+const DEFAULT_SEARCH_STATUS = 0; // 默认搜索状态
 
 // 带超时的 fetch 函数
 const fetchWithTimeout = async (
@@ -423,6 +429,228 @@ export const clearUserInfoCache = async () => {
     console.log('用户信息持久化缓存已清除');
   } catch (error) {
     console.error('清除用户信息持久化缓存失败:', error);
+  }
+};
+
+// 搜索文章
+// API: GET https://wap.newsmth.net/wap/api/search/article?t=xxx&keyword=xxx&count=20&start=0&original=true&earliest=&boards=&status=0
+// 参数说明：
+// - keyword: 搜索关键词（必填）
+// - count: 每页数量，默认20
+// - start: 起始位置，默认0（分页用：第2页start=20，第3页start=40）
+// - original: 是否只搜索原创，默认true
+// - earliest: 最早时间，格式：YYYY-MM-DD，默认空（不限制）
+// - boards: 限定版面，多个用逗号分隔，默认空（全站搜索）
+// - status: 状态，默认0
+export const searchArticles = async (
+  keyword: string,
+  page: number = DEFAULT_PAGE,
+  pageSize: number = DEFAULT_PAGE_SIZE,
+  options?: {
+    original?: boolean;
+    earliest?: string;
+    boards?: string;
+    status?: number;
+  }
+): Promise<{
+  articles: any[];
+  total: number;
+  hasMore: boolean;
+}> => {
+  try {
+    const start = (page - 1) * pageSize;
+    const timestamp = Date.now();
+    
+    const params = new URLSearchParams({
+      t: timestamp.toString(),
+      keyword: keyword,
+      count: pageSize.toString(),
+      start: start.toString(),
+      original: (options?.original !== false).toString(),
+      earliest: options?.earliest || '',
+      boards: options?.boards || '',
+      status: (options?.status ?? DEFAULT_SEARCH_STATUS).toString(),
+    });
+    
+    const cookies = await getCookies();
+    const headers: Record<string, string> = {
+      'accept': 'application/json, text/plain, */*',
+      'accept-language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+      'access-control-allow-origin': '*',
+      'authorization': 'Basic Og==',
+      'cache-control': 'no-cache',
+      'pragma': 'no-cache',
+      'priority': 'u=1, i',
+      'sec-ch-ua': '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"macOS"',
+      'sec-fetch-dest': 'empty',
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-site': 'same-origin',
+      'test-uin-only': '1',
+      'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
+    };
+    
+    if (cookies) {
+      headers['cookie'] = cookies;
+    }
+    
+    const url = `${WAP_BASE_URL}/wap/api/search/article?${params.toString()}`;
+    const response = await fetchWithTimeout(url, {
+      method: 'GET',
+      headers,
+    }, SEARCH_TIMEOUT);
+    
+    const json = await response.json();
+    
+    if (json.code === 1 && json.data) {
+      const articles = json.data.articles || [];
+      const total = json.data.total || 0;
+      const hasMore = start + articles.length < total;
+      
+      return {
+        articles,
+        total,
+        hasMore,
+      };
+    }
+    
+    return {
+      articles: [],
+      total: 0,
+      hasMore: false,
+    };
+  } catch (error) {
+    console.error('Search articles error:', error);
+    throw error;
+  }
+};
+
+// 搜索版面
+export const searchBoards = async (
+  keyword: string
+): Promise<any[]> => {
+  try {
+    const timestamp = Date.now();
+    const params = new URLSearchParams({
+      t: timestamp.toString(),
+      keyword: keyword,
+    });
+    
+    const cookies = await getCookies();
+    const headers: Record<string, string> = {
+      'accept': 'application/json, text/plain, */*',
+      'accept-language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+      'access-control-allow-origin': '*',
+      'authorization': 'Basic Og==',
+      'cache-control': 'no-cache',
+      'pragma': 'no-cache',
+      'priority': 'u=1, i',
+      'sec-ch-ua': '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"macOS"',
+      'sec-fetch-dest': 'empty',
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-site': 'same-origin',
+      'test-uin-only': '1',
+      'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
+    };
+    
+    if (cookies) {
+      headers['cookie'] = cookies;
+    }
+    
+    const url = `${WAP_BASE_URL}/wap/api/search/board?${params.toString()}`;
+    const response = await fetchWithTimeout(url, {
+      method: 'GET',
+      headers,
+    }, SEARCH_TIMEOUT);
+    
+    const json = await response.json();
+    
+    if (json.code === 1 && json.data) {
+      return json.data || [];
+    }
+    
+    return [];
+  } catch (error) {
+    console.error('Search boards error:', error);
+    throw error;
+  }
+};
+
+// 搜索用户
+export const searchAccounts = async (
+  keyword: string,
+  page: number = DEFAULT_PAGE,
+  pageSize: number = DEFAULT_PAGE_SIZE
+): Promise<{
+  accounts: any[];
+  total: number;
+  hasMore: boolean;
+}> => {
+  try {
+    const start = (page - 1) * pageSize;
+    const timestamp = Date.now();
+    
+    const params = new URLSearchParams({
+      t: timestamp.toString(),
+      keyword: keyword,
+      count: pageSize.toString(),
+      start: start.toString(),
+    });
+    
+    const cookies = await getCookies();
+    const headers: Record<string, string> = {
+      'accept': 'application/json, text/plain, */*',
+      'accept-language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+      'access-control-allow-origin': '*',
+      'authorization': 'Basic Og==',
+      'cache-control': 'no-cache',
+      'pragma': 'no-cache',
+      'priority': 'u=1, i',
+      'sec-ch-ua': '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"macOS"',
+      'sec-fetch-dest': 'empty',
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-site': 'same-origin',
+      'test-uin-only': '1',
+      'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
+    };
+    
+    if (cookies) {
+      headers['cookie'] = cookies;
+    }
+    
+    const url = `${WAP_BASE_URL}/wap/api/search/account?${params.toString()}`;
+    const response = await fetchWithTimeout(url, {
+      method: 'GET',
+      headers,
+    }, SEARCH_TIMEOUT);
+    
+    const json = await response.json();
+    
+    if (json.code === 1 && json.data) {
+      const accounts = json.data.accounts || [];
+      const total = json.data.total || 0;
+      const hasMore = start + accounts.length < total;
+      
+      return {
+        accounts,
+        total,
+        hasMore,
+      };
+    }
+    
+    return {
+      accounts: [],
+      total: 0,
+      hasMore: false,
+    };
+  } catch (error) {
+    console.error('Search accounts error:', error);
+    throw error;
   }
 };
 
