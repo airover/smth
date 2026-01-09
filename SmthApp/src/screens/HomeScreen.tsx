@@ -47,11 +47,11 @@ const HomeScreen: React.FC = () => {
       // 如果有缓存且不是强制刷新，先显示缓存数据
       if (!forceRefresh && cachedTopTen && cachedHotBoards && cachedHotPosts) {
         console.log('Using cached data');
-        setTopTen(cachedTopTen);
-        setHotBoards(cachedHotBoards);
-        setHotPosts(cachedHotPosts.topics);
+        setTopTen(cachedTopTen as TopTenItem[]);
+        setHotBoards(cachedHotBoards as Board[]);
+        setHotPosts((cachedHotPosts as {topics: TopTenItem[], totalPages: number}).topics);
         setHotPostsPage(1);
-        setHasMoreHotPosts(cachedHotPosts.totalPages > 1);
+        setHasMoreHotPosts((cachedHotPosts as {topics: TopTenItem[], totalPages: number}).totalPages > 1);
         setLoading(false);
         
         // 后台异步刷新数据
@@ -123,17 +123,17 @@ const HomeScreen: React.FC = () => {
         cacheManager.set('hotPosts', cacheKey, cachedResult);
       }
       
-      console.log('Loaded more hot posts:', cachedResult.topics.length, 'items, total pages:', cachedResult.totalPages);
+      console.log('Loaded more hot posts:', (cachedResult as {topics: TopTenItem[], totalPages: number}).topics.length, 'items, total pages:', (cachedResult as {topics: TopTenItem[], totalPages: number}).totalPages);
       
-      if (cachedResult.topics.length > 0) {
+      if ((cachedResult as {topics: TopTenItem[], totalPages: number}).topics.length > 0) {
         // 使用Set来去重，确保不会有重复的id
         setHotPosts(prev => {
           const existingIds = new Set(prev.map(p => p.id));
-          const newPosts = cachedResult.topics.filter(p => !existingIds.has(p.id));
+          const newPosts = (cachedResult as {topics: TopTenItem[], totalPages: number}).topics.filter((p: TopTenItem) => !existingIds.has(p.id));
           return [...prev, ...newPosts];
         });
         setHotPostsPage(nextPage);
-        setHasMoreHotPosts(nextPage < cachedResult.totalPages);
+        setHasMoreHotPosts(nextPage < (cachedResult as {topics: TopTenItem[], totalPages: number}).totalPages);
       } else {
         setHasMoreHotPosts(false);
       }

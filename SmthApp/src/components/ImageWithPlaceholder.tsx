@@ -1,10 +1,10 @@
 import React, {useState} from 'react';
-import {Image, View, Text, StyleSheet, ImageStyle, StyleProp, ViewStyle, ActivityIndicator} from 'react-native';
+import {Image, View, Text, StyleSheet, ImageStyle, StyleProp, ViewStyle, ActivityIndicator, ImageResizeMode} from 'react-native';
 
 interface ImageWithPlaceholderProps {
   uri: string;
   style?: StyleProp<ImageStyle>;
-  resizeMode?: 'cover' | 'contain' | 'stretch' | 'repeat' | 'center';
+  resizeMode?: ImageResizeMode;
   placeholderText?: string;
   isAvatar?: boolean; // 是否是头像，如果是则显示为圆形占位符
   onImageLoad?: (imageSize: {width: number; height: number}) => void; // 图片加载完成回调

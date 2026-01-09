@@ -181,7 +181,7 @@ const CaptchaScreen: React.FC<CaptchaScreenProps> = ({
 
   return (
     <View style={styles.container}>
-          <WebView
+      <WebView
             ref={webViewRef}
             source={{html: captchaHtml, baseUrl: 'https://wap.newsmth.net'}}
             style={styles.webview}
@@ -189,9 +189,6 @@ const CaptchaScreen: React.FC<CaptchaScreenProps> = ({
             javaScriptEnabled={true}
             domStorageEnabled={true}
             onMessage={handleMessage}
-        backgroundColor="transparent"
-        transparent={true}
-        opaque={false}
         scrollEnabled={false}
       />
       {loading && (

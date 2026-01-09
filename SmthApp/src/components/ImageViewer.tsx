@@ -58,7 +58,6 @@ const ImageViewer: React.FC<ImageViewerProps> = ({visible, imageUri, onClose}) =
 
   return (
     <ImageView
-      key={viewerKey}
       images={images}
       imageIndex={0}
       visible={visible}

@@ -96,15 +96,15 @@ const PostDetailScreen: React.FC = () => {
         }
 
         if (detailData) {
-          setPost(detailData);
+          setPost(detailData as any);
         }
 
         if (repliesData) {
           // 过滤掉第一层（主贴），因为已经在 ListHeaderComponent 中显示了
-          const filteredReplies = repliesData.replies.filter(r => r.floor !== 1);
+          const filteredReplies = (repliesData as {replies: any[], totalItems: number}).replies.filter((r: any) => r.floor !== 1);
           setReplies(filteredReplies);
           setPage(1);
-          setHasMore(repliesData.replies.length >= 20); // 假设 pageSize 为 20
+          setHasMore((repliesData as {replies: any[], totalItems: number}).replies.length >= 20); // 假设 pageSize 为 20
         }
       } else {
         // 后续页：检查缓存并获取回复列表
@@ -121,14 +121,15 @@ const PostDetailScreen: React.FC = () => {
           console.log(`[PostDetail] Cache hit for page ${pageNum}, using cached data`);
         }
         
-        if (repliesData && repliesData.replies.length > 0) {
+        if (repliesData && (repliesData as {replies: any[], totalItems: number}).replies.length > 0) {
           // 使用Set来去重，确保不会有重复的id
           setReplies(prev => {
             const existingIds = new Set(prev.map(r => r.id));
-            const newReplies = repliesData.replies.filter(r => !existingIds.has(r.id));
+            const newReplies = (repliesData as {replies: any[], totalItems: number}).replies.filter((r: any) => !existingIds.has(r.id));
             return [...prev, ...newReplies];
           });
-          setHasMore(repliesData.replies.length >= 20);
+          setPage(pageNum);
+          setHasMore((repliesData as {replies: any[], totalItems: number}).replies.length >= 20);
         } else {
           setHasMore(false);
         }

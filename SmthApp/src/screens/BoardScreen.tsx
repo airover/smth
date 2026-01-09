@@ -1061,7 +1061,7 @@ const BoardScreen: React.FC = () => {
           </View>
           <View style={styles.postStats}>
             <Text style={styles.metaText}>{item.availables} 回复</Text>
-            <Text style={styles.statsText}>{formatRelativeTime(sortByReplyTime ? item.lastPostTime : item.postTime)}</Text>
+            <Text style={styles.statsText}>{formatRelativeTime(sortByReplyTime ? item.lastPostTime : item.flushTime)}</Text>
           </View>
         </View>
         <View style={styles.channelPostBoard}>

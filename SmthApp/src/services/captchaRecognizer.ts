@@ -4,8 +4,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // 使用百度 OCR API 进行验证码识别
 // 注意：需要替换为你的 API Key 和 Secret Key
 // 获取方式：https://ai.baidu.com/ai-doc/OCR/zk3h7xz52
-const BAIDU_OCR_API_KEY = process.env.BAIDU_OCR_API_KEY || 'YOUR_API_KEY';
-const BAIDU_OCR_SECRET_KEY = process.env.BAIDU_OCR_SECRET_KEY || 'YOUR_SECRET_KEY';
+const BAIDU_OCR_API_KEY = 'YOUR_API_KEY';
+const BAIDU_OCR_SECRET_KEY = 'YOUR_SECRET_KEY';
 const BAIDU_OCR_ACCESS_TOKEN_URL = 'https://aip.baidubce.com/oauth/2.0/token';
 const BAIDU_OCR_API_URL = 'https://aip.baidubce.com/rest/2.0/ocr/v1/general_basic';
 

@@ -24,6 +24,9 @@ interface CacheStore {
   hotPosts: {[key: string]: CacheItem<any>};
   postDetail: {[key: string]: CacheItem<any>};
   topicReplies: {[key: string]: CacheItem<any[]>};
+  
+  // 频道相关缓存
+  channels?: CacheItem<any[]>;
 }
 
 class CacheManager {
