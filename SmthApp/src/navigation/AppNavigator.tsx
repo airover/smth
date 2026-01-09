@@ -17,6 +17,7 @@ import CacheManagementScreen from '../screens/CacheManagementScreen';
 import LoginScreen from '../screens/LoginScreen';
 import UserProfileScreen from '../screens/UserProfileScreen';
 import MailDetailScreen from '../screens/MailDetailScreen';
+import BrowsingHistoryScreen from '../screens/BrowsingHistoryScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -153,6 +154,14 @@ const AppNavigator = () => {
             title: (route.params as any)?.mail?.fromNickname || '私信详情',
             headerBackTitle: '返回',
           })}
+        />
+        <Stack.Screen
+          name="BrowsingHistory"
+          component={BrowsingHistoryScreen}
+          options={{
+            title: '浏览历史',
+            headerBackTitle: '返回',
+          }}
         />
         <Stack.Screen
           name="Login"

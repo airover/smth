@@ -46,12 +46,14 @@ const CacheManagementScreen: React.FC = () => {
           const size = value.length;
           totalSize += size;
 
-          if (key === 'read_posts_ids') {
-            try {
-              const ids = JSON.parse(value);
-              readPostsCount = Array.isArray(ids) ? ids.length : 0;
-            } catch (e) {
-              readPostsCount = 0;
+          if (key === 'read_posts_ids' || key === 'read_posts_details') {
+            if (key === 'read_posts_ids') {
+              try {
+                const ids = JSON.parse(value);
+                readPostsCount = Array.isArray(ids) ? ids.length : 0;
+              } catch (e) {
+                readPostsCount = 0;
+              }
             }
             readPostsSize += size;
           }
@@ -103,6 +105,7 @@ const CacheManagementScreen: React.FC = () => {
   const handleClearReadPosts = async () => {
     try {
       await AsyncStorage.removeItem('read_posts_ids');
+      await AsyncStorage.removeItem('read_posts_details');
       loadStats();
       Alert.alert('成功', '已清除已读记录');
     } catch (error) {

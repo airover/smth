@@ -12,6 +12,7 @@ import {
 import {useRoute, useNavigation, useFocusEffect} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {getFavoriteBoards} from '../services/api';
+import {removeBoardFavorite} from '../services/dataFetcher';
 import {Board} from '../types';
 
 const BoardListScreen: React.FC = () => {
@@ -106,6 +107,38 @@ const BoardListScreen: React.FC = () => {
     navigation.navigate('Login');
   };
 
+  const handleRemoveFavorite = (board: Board) => {
+    Alert.alert(
+      '取消收藏',
+      `确定要取消收藏 "${board.chineseName || board.name}" 吗？`,
+      [
+        {
+          text: '取消',
+          style: 'cancel',
+        },
+        {
+          text: '确定',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const result = await removeBoardFavorite(board.id);
+              if (result.success) {
+                // 从列表中移除该版面
+                setBoards(prevBoards => prevBoards.filter(b => b.id !== board.id));
+                Alert.alert('成功', '已取消收藏');
+              } else {
+                Alert.alert('失败', result.message || '取消收藏失败');
+              }
+            } catch (error) {
+              console.error('Remove favorite error:', error);
+              Alert.alert('错误', '取消收藏时发生错误');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const renderBoardItem = ({item}: {item: Board}) => (
     <TouchableOpacity
       style={styles.boardItem}
@@ -118,7 +151,8 @@ const BoardListScreen: React.FC = () => {
             boardName: item.chineseName || item.name,
           },
         });
-      }}>
+      }}
+      onLongPress={() => handleRemoveFavorite(item)}>
       <Text style={styles.boardName}>
         {item.chineseName || item.name}
       </Text>

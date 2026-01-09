@@ -19,6 +19,7 @@ import {formatRelativeTime} from '../utils/timeFormat';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import ImageViewer from '../components/ImageViewer';
 import {cacheManager} from '../services/cacheManager';
+import {saveBrowsingHistory} from './BrowsingHistoryScreen';
 
 // 格式化具体时间（用于主帖）
 const formatDateTime = (time: string): string => {
@@ -97,6 +98,16 @@ const PostDetailScreen: React.FC = () => {
 
         if (detailData) {
           setPost(detailData as any);
+          
+          // 保存到浏览历史
+          saveBrowsingHistory({
+            postId,
+            board,
+            title: (detailData as any).title,
+            author: (detailData as any).author,
+            boardName: (detailData as any).boardName || board,
+            replyCount: (detailData as any).replyCount,
+          });
         }
 
         if (repliesData) {

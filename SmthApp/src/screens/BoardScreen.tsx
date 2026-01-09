@@ -15,7 +15,9 @@ import {
   TouchableWithoutFeedback,
   RefreshControl,
   PanResponder,
+  Image,
 } from 'react-native';
+import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {useNavigation, useRoute} from '@react-navigation/native';
 import {getBoards, getFavoriteBoards, getBoardPosts} from '../services/api';
 import {getSubBoards, checkBoardFavorite, addBoardFavorite, removeBoardFavorite} from '../services/dataFetcher';
@@ -55,8 +57,18 @@ interface AlbumArticle {
     avatarUrl?: string;
   };
   board: {
-    name: string;
-    title: string;
+    id: string; // 版面hash ID
+    name: string; // 版面英文名
+    title: string; // 版面中文名
+    groupId: string;
+    sectionId: string;
+    type: number;
+    status: number;
+    isFavorite: number;
+    accessScore?: number;
+    readOnly?: boolean;
+    todayPostCount?: number;
+    forbiddenReply?: boolean;
   };
   postTime: number;
   topicId: string;
@@ -567,8 +579,37 @@ const BoardScreen: React.FC = () => {
       if (result.code === 1 && result.data) {
         const { articles, pager } = result.data;
         
+        // 调试：打印第一篇文章的数据结构
+        if (articles && articles.length > 0) {
+          console.log('图览第一篇文章数据:', JSON.stringify(articles[0], null, 2));
+          console.log('图览第一篇文章的attachments:', articles[0].attachments);
+        }
+        
         // 转换图览数据为频道帖子格式
-        const convertedTopics: ChannelTopic[] = (articles || []).map((article: AlbumArticle) => ({
+        const convertedTopics: ChannelTopic[] = (articles || []).map((article: AlbumArticle) => {
+          // 处理附件URL
+          const processedAttachments = (article.attachments || []).map((att: any) => {
+            // 优先使用 ks3Url，然后是 cdnUrl，最后是 url
+            let url = att.ks3Url || att.cdnUrl || att.url || '';
+            
+            if (url && url.startsWith('http:')) {
+              url = url.replace('http:', 'https:');
+            }
+            
+            if (url && !url.startsWith('http')) {
+              url = `https://file.mysmth.net/${url}`;
+            } else if (!url && att.id) {
+              // 如果没有 url 但有 id，尝试构建下载链接
+              url = `https://wap.newsmth.net/wap/api/attachment/download/${att.id}`;
+            }
+            
+            return {
+              ...att,
+              cdnUrl: url, // 统一使用cdnUrl字段
+            };
+          });
+          
+          return {
           id: article.id,
           subject: article.subject,
           availables: 0, // 图览没有回复数
@@ -598,16 +639,16 @@ const BoardScreen: React.FC = () => {
             },
           },
           board: {
-            id: article.board.name,
+            id: article.board.id, // 直接使用API返回的版面hash ID
             name: article.board.name,
             title: article.board.title,
           },
           topicId: article.topicId, // 图览的主题ID
           postTime: article.postTime,
-          // 添加图片信息，用于后续渲染
-          attachments: article.attachments,
-        } as any));
-        
+          // 添加处理后的图片信息
+          attachments: processedAttachments,
+        } as any;
+        });
         if (pageNum === 1) {
           setChannelPosts(convertedTopics);
           setChannelPage(1);
@@ -1027,6 +1068,129 @@ const BoardScreen: React.FC = () => {
     </TouchableOpacity>
   )};
 
+  // 图览频道专用渲染函数 - 图片外显效果
+  const renderAlbumPostItem = ({item}: {item: ChannelTopic}) => {
+    const isRead = readPosts.has(item.id);
+    const images = item.attachments || [];
+    
+    // 调试：打印图片信息
+    if (images.length > 0) {
+      console.log(`帖子 ${item.subject} 的图片数量:`, images.length);
+      console.log(`第一张图片URL:`, images[0]?.cdnUrl);
+    }
+    
+    // 计算图片网格布局
+    const getImageLayout = (count: number) => {
+      if (count === 0) return [];
+      if (count === 1) return [{width: SCREEN_WIDTH - 32, height: 300}];
+      if (count === 2) return Array(2).fill({width: (SCREEN_WIDTH - 40) / 2, height: 200});
+      if (count === 3) return Array(3).fill({width: (SCREEN_WIDTH - 48) / 3, height: 120});
+      if (count === 4) return Array(4).fill({width: (SCREEN_WIDTH - 40) / 2, height: 150});
+      // 5张及以上，显示前4张，第4张显示"+N"遮罩
+      return Array(4).fill({width: (SCREEN_WIDTH - 40) / 2, height: 150});
+    };
+
+    const imageLayout = getImageLayout(images.length);
+    const displayImages = images.slice(0, 4);
+    const remainingCount = images.length > 4 ? images.length - 4 : 0;
+
+    return (
+      <TouchableOpacity
+        style={styles.albumPostItem}
+        onPress={() => {
+          markAsRead(item.id);
+          navigation.navigate('PostDetail', {
+            board: item.board.name,
+            postId: item.topicId || item.id,
+          });
+        }}>
+        {/* 用户信息 */}
+        <View style={styles.albumPostHeader}>
+          <View style={styles.albumUserInfo}>
+            {item.article.account.avatarUrl ? (
+              <ImageWithPlaceholder
+                uri={item.article.account.avatarUrl}
+                style={styles.albumAvatar}
+                isAvatar={true}
+              />
+            ) : (
+              <View style={styles.albumAvatarPlaceholder}>
+                <Text style={styles.albumAvatarText}>
+                  {item.article.account.nick?.charAt(0) || '?'}
+                </Text>
+              </View>
+            )}
+            <View style={styles.albumUserDetails}>
+              <Text style={styles.albumUserName}>{item.article.account.nick}</Text>
+              <Text style={styles.albumPostTime}>{formatRelativeTime(item.postTime || item.flushTime)}</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* 帖子标题 */}
+        <Text 
+          style={[
+            styles.albumPostTitle,
+            isRead && styles.readPostTitle
+          ]} 
+          numberOfLines={3}
+        >
+          {item.subject}
+        </Text>
+
+        {/* 图片网格 */}
+        {displayImages.length > 0 && (
+          <View style={styles.albumImagesGrid}>
+            {displayImages.map((img, index) => (
+              <View 
+                key={index} 
+                style={[
+                  styles.albumImageWrapper,
+                  imageLayout[index] && {
+                    width: imageLayout[index].width,
+                    height: imageLayout[index].height,
+                  }
+                ]}
+              >
+                <ImageWithPlaceholder
+                  uri={img.cdnUrl}
+                  style={styles.albumImage}
+                  resizeMode="cover"
+                  showLoadingIndicator={true}
+                />
+                {/* 显示剩余图片数量 */}
+                {index === 3 && remainingCount > 0 && (
+                  <View style={styles.albumImageOverlay}>
+                    <Text style={styles.albumImageOverlayText}>+{remainingCount}</Text>
+                  </View>
+                )}
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* 版面信息 */}
+        <View style={styles.albumPostFooter}>
+          <TouchableOpacity
+            onPress={(e) => {
+              e.stopPropagation(); // 阻止事件冒泡，避免触发外层的帖子点击
+              // 直接使用API返回的版面信息
+              setSelectedBoard({
+                id: item.board.id,
+                name: item.board.name,
+                chineseName: item.board.title,
+              } as Board);
+              setSelectedChannel(null); // 清除频道选择
+            }}
+          >
+            <Text style={styles.albumBoardName}>📋 {item.board.title}</Text>
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  // 普通频道渲染函数
   const renderChannelPostItem = ({item}: {item: ChannelTopic}) => {
     const isRead = readPosts.has(item.id);
     return (
@@ -1250,7 +1414,7 @@ const BoardScreen: React.FC = () => {
       {selectedChannel ? (
         <FlatList
           data={channelPosts}
-          renderItem={renderChannelPostItem}
+          renderItem={selectedChannel.name === '图览' ? renderAlbumPostItem : renderChannelPostItem}
           keyExtractor={(item, index) => `${item.id}-${index}`}
           onEndReached={loadMore}
           onEndReachedThreshold={0.3}
@@ -1500,7 +1664,96 @@ const styles = StyleSheet.create({
   boardNameText: {
     fontSize: 12,
     color: '#666',
-    fontWeight: '500',
+  },
+  // 图览频道专用样式
+  albumPostItem: {
+    backgroundColor: '#fff',
+    padding: 16,
+    marginBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  albumPostHeader: {
+    marginBottom: 12,
+  },
+  albumUserInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  albumAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#f0f0f0',
+  },
+  albumAvatarPlaceholder: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#E1E1E1',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  albumAvatarText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  albumUserDetails: {
+    marginLeft: 12,
+    flex: 1,
+  },
+  albumUserName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#000',
+    marginBottom: 2,
+  },
+  albumPostTime: {
+    fontSize: 12,
+    color: '#999',
+  },
+  albumPostTitle: {
+    fontSize: 16,
+    color: '#000',
+    lineHeight: 22,
+    marginBottom: 12,
+  },
+  albumImagesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    marginBottom: 12,
+  },
+  albumImageWrapper: {
+    position: 'relative',
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#f5f5f5',
+  },
+  albumImage: {
+    width: '100%',
+    height: '100%',
+  },
+  albumImageOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  albumImageOverlayText: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  albumPostFooter: {
+    paddingTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#f0f0f0',
+  },
+  albumBoardName: {
+    fontSize: 12,
+    color: '#1890ff', // 改为蓝色，表示可点击
   },
   headerTitleContainer: {
     flex: 1,
