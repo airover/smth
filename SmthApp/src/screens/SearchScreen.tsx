@@ -14,6 +14,7 @@ import {useNavigation, useRoute} from '@react-navigation/native';
 import {searchArticles, searchBoards, searchAccounts} from '../services/api';
 import {formatRelativeTime} from '../utils/timeFormat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 
 // 搜索相关常量
 const DEFAULT_PAGE = 1; // 默认页码
@@ -319,10 +320,13 @@ const SearchScreen: React.FC = () => {
           <TouchableOpacity
             onPress={(e) => {
               e.stopPropagation();
-              navigation.navigate('Board', {
-                board: item.board.id,
-                boardName: item.board.title,
-                source: 'link',
+              navigation.navigate('MainTabs', {
+                screen: 'Board',
+                params: {
+                  board: item.board.id,
+                  boardName: item.board.title,
+                  source: 'search',
+                },
               });
             }}>
             <Text style={styles.boardNameText}>📋 {item.board.title}</Text>
@@ -341,10 +345,13 @@ const SearchScreen: React.FC = () => {
       <TouchableOpacity
         style={styles.boardItem}
         onPress={() => {
-          navigation.navigate('Board', {
-            board: item.id,
-            boardName: cleanTitle,
-            source: 'search',
+          navigation.navigate('MainTabs', {
+            screen: 'Board',
+            params: {
+              board: item.id,
+              boardName: cleanTitle,
+              source: 'search',
+            },
           });
         }}>
         <View style={styles.boardHeader}>
@@ -371,23 +378,43 @@ const SearchScreen: React.FC = () => {
       <TouchableOpacity
         style={styles.accountItem}
         onPress={() => {
-          // TODO: 跳转到用户详情页
-          console.log('Navigate to user profile:', cleanName);
+          navigation.navigate('UserProfile', { username: cleanName });
         }}>
-        <View style={styles.accountHeader}>
-          <View style={styles.accountInfo}>
-            <Text style={styles.accountNick}>
-              {cleanNick} {genderIcon}
-            </Text>
-            <Text style={styles.accountName}>@{cleanName}</Text>
-          </View>
-          {cleanLevelTitle && (
-            <Text style={styles.accountLevel}>{cleanLevelTitle}</Text>
+        <View style={styles.accountContainer}>
+          {/* 用户头像 */}
+          {item.avatarUrl ? (
+            <ImageWithPlaceholder
+              uri={item.avatarUrl}
+              style={styles.accountAvatar}
+              resizeMode="cover"
+              isAvatar={true}
+            />
+          ) : (
+            <View style={styles.accountAvatarPlaceholder}>
+              <Text style={styles.accountAvatarText}>
+                {cleanNick.charAt(0) || cleanName.charAt(0) || '?'}
+              </Text>
+            </View>
           )}
-        </View>
-        <View style={styles.accountMeta}>
-          <Text style={styles.accountMetaText}>积分: {item.score}</Text>
-          <Text style={styles.accountMetaText}>等级: {item.level}</Text>
+          
+          {/* 用户信息 */}
+          <View style={styles.accountContent}>
+            <View style={styles.accountHeader}>
+              <View style={styles.accountInfo}>
+                <Text style={styles.accountNick}>
+                  {cleanNick} {genderIcon}
+                </Text>
+                <Text style={styles.accountName}>@{cleanName}</Text>
+              </View>
+              {cleanLevelTitle && (
+                <Text style={styles.accountLevel}>{cleanLevelTitle}</Text>
+              )}
+            </View>
+            <View style={styles.accountMeta}>
+              <Text style={styles.accountMetaText}>积分: {item.score}</Text>
+              <Text style={styles.accountMetaText}>等级: {item.level}</Text>
+            </View>
+          </View>
         </View>
       </TouchableOpacity>
     );
@@ -664,6 +691,34 @@ const styles = StyleSheet.create({
     padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
+  },
+  accountContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  accountAvatar: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    marginRight: 12,
+    backgroundColor: '#f0f0f0',
+  },
+  accountAvatarPlaceholder: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    marginRight: 12,
+    backgroundColor: '#007AFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  accountAvatarText: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  accountContent: {
+    flex: 1,
   },
   accountHeader: {
     flexDirection: 'row',

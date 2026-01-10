@@ -135,7 +135,7 @@ export const getHotPosts = async (
 
 // 获取当日十大
 // 使用新的 JSON API 获取
-export const getTopTen = async (): Promise<any[]> => {
+export const getTopTen = async (): Promise<any[] | null> => {
   try {
     const cookies = await getCookies();
     const timestamp = Date.now();
@@ -148,6 +148,7 @@ export const getTopTen = async (): Promise<any[]> => {
       'Accept': 'application/json, text/plain, */*',
       'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
       'Authorization': 'Basic Og==',
+      'access-control-allow-origin': '*',
     };
 
     if (cookies) {
@@ -160,7 +161,7 @@ export const getTopTen = async (): Promise<any[]> => {
     });
 
     const text = await response.text();
-    console.log('getTopTen raw response:', text.substring(0, 200));
+    console.log('getTopTen raw response:', text.substring(0, 500));
     
     let json;
     try {
@@ -172,11 +173,20 @@ export const getTopTen = async (): Promise<any[]> => {
     }
     
     console.log('getTopTen API response code:', json.code);
-    console.log('getTopTen API response data:', JSON.stringify(json.data).substring(0, 300));
+    console.log('getTopTen API response keys:', json.data ? Object.keys(json.data) : 'no data');
+    console.log('getTopTen API response data:', JSON.stringify(json.data).substring(0, 500));
 
-    if (json.code === 1 && json.data?.topics) {
-      console.log('getTopTen found topics:', json.data.topics.length);
-      return json.data.topics.map((topic: any) => ({
+    if (json.code === 1 && json.data) {
+      const topics = json.data.topics || [];
+      console.log('getTopTen found topics:', topics.length);
+      
+      if (topics.length === 0) {
+        console.log('getTopTen: API返回空数据，保留本地缓存');
+        // 返回 null 表示API返回空，调用方应保留原有数据
+        return null;
+      }
+      
+      return topics.map((topic: any) => ({
         id: topic.id, // 使用主题 ID (topicId)，用于详情接口
         title: topic.subject?.trim(),
         author: topic.article?.account?.name || topic.article?.user?.name || '',
@@ -188,10 +198,11 @@ export const getTopTen = async (): Promise<any[]> => {
       }));
     }
     
-    return [];
+    console.log('getTopTen: API请求失败，保留本地缓存');
+    return null;
   } catch (error) {
     console.error('Get top ten error:', error);
-    return [];
+    return null;
   }
 };
 
@@ -805,16 +816,86 @@ export const getTopicReplies = async (
 // 获取用户信息
 export const fetchUserInfo = async (username: string): Promise<any> => {
   try {
-    const response = await requestWithCookies(`/user/${username}`);
-    await response.text();
+    const cookies = await getCookies();
+    const timestamp = Date.now();
+    const url = `${WAP_BASE_URL}/wap/api/account/${username}/mixlogs?t=${timestamp}&page=1`;
     
-    const userInfo: any = {
-      username: username,
+    console.log('Fetching user info from API:', url);
+    
+    const headers: Record<string, string> = {
+      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15',
+      'Accept': 'application/json, text/plain, */*',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      'Authorization': 'Basic Og==',
+      'access-control-allow-origin': '*',
     };
+
+    if (cookies) {
+      headers.Cookie = cookies;
+    }
+
+    const response = await fetchWithTimeout(url, {
+      headers,
+      credentials: 'include',
+    });
+
+    const text = await response.text();
+    console.log('fetchUserInfo raw response:', text.substring(0, 300));
     
-    // TODO: 解析HTML提取用户信息
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch (e) {
+      console.error('fetchUserInfo JSON parse error:', e);
+      return null;
+    }
     
-    return userInfo;
+    console.log('fetchUserInfo API response code:', json.code);
+
+    if (json.code === 1 && json.data && json.data.account) {
+      const account = json.data.account;
+      const content = json.data.content || [];
+      
+      console.log('fetchUserInfo content count:', content.length);
+      
+      const userInfo = {
+        id: account.id,
+        username: account.name || username,
+        nickname: account.nick,
+        avatar: account.avatarUrl || (account.avatar ? `https://file.mysmth.net/${account.avatar}` : undefined),
+        gender: account.gender,
+        level: account.level,
+        levelTitle: account.levelTitle,
+        title: account.title || '',
+        score: account.score,
+        postCount: account.articleCount,
+        loginTime: account.loginTime,
+        createTime: account.createTime,
+        fansCount: account.fansCount,
+        friendCount: account.friendCount,
+        isFollowing: account.isFriend, // 是否已关注
+        isBlack: account.isBlack, // 是否已拉黑
+        isFans: account.isFans, // 是否为粉丝
+        suicide: account.suicide, // 是否已注销
+        recentPosts: content.slice(0, 10).map((item: any) => ({
+          id: item.id,
+          subject: item.subject,
+          body: item.body,
+          boardName: item.board?.name,
+          boardTitle: item.board?.title,
+          postTime: item.postTime,
+          replyCount: item.topic?.availables || 0,
+          topicId: item.topicId,
+          boardId: item.boardId,
+        })),
+      };
+      
+      console.log('fetchUserInfo parsed user:', userInfo.username, 'posts:', userInfo.recentPosts.length);
+      return userInfo;
+    }
+    
+    console.log('fetchUserInfo: API returned failure, code:', json.code, 'message:', json.message);
+    return null;
   } catch (error) {
     console.error('Fetch user info error:', error);
     return null;

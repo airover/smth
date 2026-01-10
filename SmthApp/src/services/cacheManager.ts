@@ -35,6 +35,18 @@ class CacheManager {
   private static instance: CacheManager;
   private cache: CacheStore;
   private readonly DEFAULT_DURATION = 60 * 1000; // 默认1分钟
+  
+  // 针对不同数据类型的缓存时长配置
+  private readonly CACHE_DURATIONS: {[key: string]: number} = {
+    topTen: 5 * 60 * 1000,        // 5分钟（今日十大变化较慢）
+    hotBoards: 10 * 60 * 1000,     // 10分钟（热门版面更稳定）
+    hotPosts: 2 * 60 * 1000,       // 2分钟（热帖变化较快）
+    boardPosts: 60 * 1000,         // 1分钟（版面帖子实时性要求高）
+    channelPosts: 60 * 1000,       // 1分钟（频道帖子实时性要求高）
+    albumPosts: 60 * 1000,         // 1分钟（图览帖子实时性要求高）
+    postDetail: 5 * 60 * 1000,     // 5分钟（帖子详情相对稳定）
+    topicReplies: 60 * 1000,       // 1分钟（回复实时性要求高）
+  };
 
   private constructor() {
     this.cache = {
@@ -80,7 +92,8 @@ class CacheManager {
    */
   get<T>(category: keyof CacheStore, key?: string, duration?: number): T | null {
     const now = Date.now();
-    const cacheDuration = duration || this.DEFAULT_DURATION;
+    // 使用配置的缓存时长，如果没有配置则使用默认时长
+    const cacheDuration = duration || this.CACHE_DURATIONS[category as string] || this.DEFAULT_DURATION;
 
     try {
       if (key) {
@@ -89,7 +102,7 @@ class CacheManager {
         if (typeof categoryCache === 'object' && !Array.isArray(categoryCache)) {
           const item = categoryCache[key];
           if (item && now - item.timestamp < cacheDuration) {
-            console.log(`[Cache] Hit ${category}[${key}]`);
+            console.log(`[Cache] Hit ${category}[${key}], age: ${Math.floor((now - item.timestamp) / 1000)}s`);
             return item.data;
           }
         }
@@ -97,7 +110,7 @@ class CacheManager {
         // 不带 key 的缓存
         const item = (this.cache as any)[category] as CacheItem<T> | undefined;
         if (item && now - item.timestamp < cacheDuration) {
-          console.log(`[Cache] Hit ${category}`);
+          console.log(`[Cache] Hit ${category}, age: ${Math.floor((now - item.timestamp) / 1000)}s`);
           return item.data;
         }
       }

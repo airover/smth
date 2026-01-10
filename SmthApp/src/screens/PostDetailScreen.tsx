@@ -11,7 +11,7 @@ import {
   ScrollView,
   Dimensions,
 } from 'react-native';
-import {useRoute} from '@react-navigation/native';
+import {useRoute, useNavigation} from '@react-navigation/native';
 import {WebView} from 'react-native-webview';
 import {getPostDetail, getTopicReplies} from '../services/api';
 import {Post, Reply, Attachment, Like} from '../types';
@@ -44,6 +44,7 @@ const {width: SCREEN_WIDTH, height: SCREEN_HEIGHT} = Dimensions.get('window');
 
 const PostDetailScreen: React.FC = () => {
   const route = useRoute();
+  const navigation = useNavigation<any>();
   const {board, postId} = route.params as {board: string; postId: string};
   const [post, setPost] = useState<Post | null>(null);
   const [replies, setReplies] = useState<Reply[]>([]);
@@ -323,20 +324,27 @@ const PostDetailScreen: React.FC = () => {
         {displayedLikes.map((like, index) => (
           <View key={like.id || index} style={styles.likeItem}>
             <View style={styles.likeUserInfo}>
-              {like.avatar ? (
-                <ImageWithPlaceholder
-                  uri={like.avatar}
-                  style={styles.likeAvatar}
-                  resizeMode="cover"
-                  isAvatar={true}
-                />
-              ) : (
-                <View style={[styles.likeAvatar, styles.likeAvatarPlaceholder]}>
-                  <Text style={styles.likeAvatarText}>
-                    {like.author.charAt(0).toUpperCase()}
-                  </Text>
-                </View>
-              )}
+              <TouchableOpacity
+                onPress={() => {
+                  navigation.navigate('UserProfile', { username: like.author });
+                }}
+                activeOpacity={0.7}
+              >
+                {like.avatar ? (
+                  <ImageWithPlaceholder
+                    uri={like.avatar}
+                    style={styles.likeAvatar}
+                    resizeMode="cover"
+                    isAvatar={true}
+                  />
+                ) : (
+                  <View style={[styles.likeAvatar, styles.likeAvatarPlaceholder]}>
+                    <Text style={styles.likeAvatarText}>
+                      {like.author.charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
               <View style={styles.likeTextContainer}>
                 <View style={styles.likeUserRow}>
                   <Text style={styles.likeAuthor}>
@@ -371,14 +379,27 @@ const PostDetailScreen: React.FC = () => {
     <View style={styles.replyContainer}>
       <View style={styles.replyHeader}>
         <View style={styles.replyAuthorInfo}>
-          {item.avatar && (
+          <TouchableOpacity
+            onPress={() => {
+              navigation.navigate('UserProfile', { username: item.author });
+            }}
+            activeOpacity={0.7}
+          >
+            {item.avatar ? (
               <ImageWithPlaceholder
                 uri={item.avatar}
                 style={styles.avatar}
                 resizeMode="cover"
                 isAvatar={true}
               />
-          )}
+            ) : (
+              <View style={styles.authorAvatarPlaceholder}>
+                <Text style={styles.authorAvatarText}>
+                  {item.author.charAt(0).toUpperCase()}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
           <View style={styles.authorText}>
               <View style={styles.authorNameRow}>
             <Text style={styles.authorName}>
@@ -468,20 +489,27 @@ const PostDetailScreen: React.FC = () => {
             <View style={styles.authorContainer}>
               {post.author && (
                 <View style={styles.authorInfo}>
-                  {post.avatar ? (
-                    <ImageWithPlaceholder
-                      uri={post.avatar}
-                      style={styles.avatar}
-                      resizeMode="cover"
-                      isAvatar={true}
-                    />
-                  ) : (
-                  <View style={styles.authorAvatarPlaceholder}>
-                    <Text style={styles.authorAvatarText}>
-                      {post.author.charAt(0).toUpperCase()}
-                    </Text>
-                  </View>
-                  )}
+                  <TouchableOpacity
+                    onPress={() => {
+                      navigation.navigate('UserProfile', { username: post.author });
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    {post.avatar ? (
+                      <ImageWithPlaceholder
+                        uri={post.avatar}
+                        style={styles.avatar}
+                        resizeMode="cover"
+                        isAvatar={true}
+                      />
+                    ) : (
+                    <View style={styles.authorAvatarPlaceholder}>
+                      <Text style={styles.authorAvatarText}>
+                        {post.author.charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                    )}
+                  </TouchableOpacity>
                   <View style={styles.authorDetails}>
                     <Text style={styles.authorName}>
                       {post.nick ? `${post.nick} (${post.author})` : post.author}

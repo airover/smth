@@ -212,7 +212,7 @@ export const getCaptchaImage = async (): Promise<string | null> => {
 };
 
 // 重新导出数据获取函数（使用新的实现）
-export {getTopTen, getHotPosts, getHotBoards, getBoards, getSubBoards, getBoardPosts, getPostDetail, getTopicReplies, getFavoriteBoards, getMessages, getConversationMessages} from './dataFetcher';
+export {getTopTen, getHotPosts, getHotBoards, getBoards, getSubBoards, getBoardPosts, getPostDetail, getTopicReplies, getFavoriteBoards, getMessages, getConversationMessages, fetchUserInfo} from './dataFetcher';
 
 // 获取收藏版面（已移至 dataFetcher，此处保留类型定义兼容性，如果需要的话可以删除）
 // export const getFavoriteBoards = async (): Promise<any[]> => { ... };

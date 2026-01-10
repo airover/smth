@@ -275,8 +275,8 @@ const BoardScreen: React.FC = () => {
       return;
     }
     
-    // 处理从链接进入版面的情况
-    if (params?.board && params?.source === 'link') {
+    // 处理从外部链接进入版面的情况（收藏页、搜索页、首页等）
+    if (params?.board && params?.source && params.source !== 'tab') {
       // 清理频道状态，确保从链接进入版面时状态正确
       setSelectedChannel(null);
       setChannelPosts([]);
@@ -628,7 +628,7 @@ const BoardScreen: React.FC = () => {
         // 初次进入时默认选中"图览"（仅当没有选中版面时）
         // 使用Ref和route.params来判断，避免闭包导致的旧状态问题
         const params = route.params as {board?: string, source?: string} | undefined;
-        const isNavigatingFromLink = params?.board && params?.source === 'link';
+        const isNavigatingFromLink = params?.board && params?.source && params.source !== 'tab';
         const hasSelectedBoard = selectedBoardRef.current || isNavigatingFromLink;
         
         if (!selectedChannelRef.current && !hasSelectedBoard && filteredChannels.length > 0) {
@@ -682,7 +682,7 @@ const BoardScreen: React.FC = () => {
         // 初次进入时默认选中"图览"（仅当没有选中版面时）
         // 使用Ref和route.params来判断，避免闭包导致的旧状态问题
         const params = route.params as {board?: string, source?: string} | undefined;
-        const isNavigatingFromLink = params?.board && params?.source === 'link';
+        const isNavigatingFromLink = params?.board && params?.source && params.source !== 'tab';
         const hasSelectedBoard = selectedBoardRef.current || isNavigatingFromLink;
 
         if (!selectedChannelRef.current && !hasSelectedBoard && filteredChannels.length > 0) {

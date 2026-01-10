@@ -164,8 +164,7 @@ const AppNavigator = () => {
           name="UserProfile"
           component={UserProfileScreen}
           options={{
-            title: '个人资料',
-            headerBackTitle: '返回',
+            headerShown: false, // 隐藏顶部导航栏
           }}
         />
         <Stack.Screen

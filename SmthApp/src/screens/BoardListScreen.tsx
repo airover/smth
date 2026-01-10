@@ -149,6 +149,7 @@ const BoardListScreen: React.FC = () => {
           params: {
             board: item.id,
             boardName: item.chineseName || item.name,
+            source: 'link', // 标记为从链接进入，避免被当作Tab点击
           },
         });
       }}

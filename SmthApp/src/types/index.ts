@@ -16,7 +16,20 @@ export interface User {
   postCount?: number;
   loginTime?: number; // 最后登录时间戳
   createTime?: number; // 注册时间戳
+  friendCount?: number; // 关注数
+  fansCount?: number; // 粉丝数
   isLoggedIn?: boolean;
+  recentPosts?: Array<{
+    id: string;
+    subject: string;
+    body?: string;
+    boardName?: string;
+    boardTitle?: string;
+    postTime?: number;
+    replyCount?: number;
+    topicId?: string;
+    boardId?: string;
+  }>;
 }
 
 export interface Board {

@@ -35,31 +35,105 @@ const HomeScreen: React.FC = () => {
   }, []);
 
   const loadData = async (forceRefresh = false) => {
-    setLoading(true);
     try {
       console.log('Loading home data...', forceRefresh ? '(force refresh)' : '');
       
-      // 尝试从缓存获取数据
-      const cachedTopTen = cacheManager.get('topTen');
-      const cachedHotBoards = cacheManager.get('hotBoards');
-      const cachedHotPosts = cacheManager.get('hotPosts', 'page-1'); // 第一页数据
-      
-      // 如果有缓存且不是强制刷新，先显示缓存数据
-      if (!forceRefresh && cachedTopTen && cachedHotBoards && cachedHotPosts) {
-        console.log('Using cached data');
-        setTopTen(cachedTopTen as TopTenItem[]);
-        setHotBoards(cachedHotBoards as Board[]);
-        setHotPosts((cachedHotPosts as {topics: TopTenItem[], totalPages: number}).topics);
-        setHotPostsPage(1);
-        setHasMoreHotPosts((cachedHotPosts as {topics: TopTenItem[], totalPages: number}).totalPages > 1);
-        setLoading(false);
-        
-        // 后台异步刷新数据
-        loadDataFromAPI(true);
-        return;
+      // 1. 尝试从AsyncStorage获取持久化缓存
+      if (!forceRefresh) {
+        try {
+          const [topTenCache, hotBoardsCache, hotPostsCache] = await Promise.all([
+            AsyncStorage.getItem('topTen_cache'),
+            AsyncStorage.getItem('hotBoards_cache'),
+            AsyncStorage.getItem('hotPosts_page1_cache'),
+          ]);
+          
+          let hasValidCache = false;
+          const now = Date.now();
+          
+          // 解析今日十大缓存
+          if (topTenCache) {
+            const parsed = JSON.parse(topTenCache);
+            const age = now - parsed.timestamp;
+            
+            // 5分钟内的缓存立即显示
+            if (age < 5 * 60 * 1000 && parsed.version === '1.0.0') {
+              setTopTen(parsed.data);
+              // 只有数据不为空时才标记为有效缓存
+              if (parsed.data && parsed.data.length > 0) {
+                hasValidCache = true;
+              }
+              console.log(`[Cache] Using topTen cache, age: ${Math.floor(age / 1000)}s, items: ${parsed.data?.length || 0}`);
+              
+              // 超过1分钟的缓存，标记需要后台刷新
+              if (age > 60 * 1000) {
+                console.log('[Cache] topTen cache needs background refresh');
+              }
+            }
+          }
+          
+          // 解析热门版面缓存
+          if (hotBoardsCache) {
+            const parsed = JSON.parse(hotBoardsCache);
+            const age = now - parsed.timestamp;
+            
+            // 10分钟内的缓存立即显示
+            if (age < 10 * 60 * 1000 && parsed.version === '1.0.0') {
+              setHotBoards(parsed.data);
+              console.log(`[Cache] Using hotBoards cache, age: ${Math.floor(age / 1000)}s, items: ${parsed.data?.length || 0}`);
+            }
+          }
+          
+          // 解析热帖缓存
+          if (hotPostsCache) {
+            const parsed = JSON.parse(hotPostsCache);
+            const age = now - parsed.timestamp;
+            
+            // 2分钟内的缓存立即显示
+            if (age < 2 * 60 * 1000 && parsed.version === '1.0.0') {
+              setHotPosts(parsed.data.topics);
+              setHotPostsPage(1);
+              setHasMoreHotPosts(parsed.data.totalPages > 1);
+              console.log(`[Cache] Using hotPosts cache, age: ${Math.floor(age / 1000)}s, items: ${parsed.data.topics?.length || 0}`);
+            }
+          }
+          
+          // 如果有有效缓存，先显示缓存
+          if (hasValidCache) {
+            setLoading(false);
+            setDataLoaded(true);
+            
+            // 检查是否需要后台刷新
+            let needsRefresh = false;
+            
+            if (topTenCache) {
+              const parsed = JSON.parse(topTenCache);
+              if (now - parsed.timestamp > 60 * 1000) {
+                needsRefresh = true;
+              }
+            }
+            
+            if (hotPostsCache) {
+              const parsed = JSON.parse(hotPostsCache);
+              if (now - parsed.timestamp > 60 * 1000) {
+                needsRefresh = true;
+              }
+            }
+            
+            // 如果需要刷新，后台异步更新
+            if (needsRefresh) {
+              console.log('[Cache] Background refresh triggered');
+              loadDataFromAPI(true);
+            }
+            
+            return;
+          }
+        } catch (e) {
+          console.error('[Cache] Failed to load persistent cache:', e);
+        }
       }
       
-      // 没有缓存或强制刷新，直接从API获取
+      // 2. 没有缓存或强制刷新，同步加载
+      setLoading(true);
       await loadDataFromAPI(false);
     } catch (error) {
       console.error('Load data error:', error);
@@ -78,19 +152,60 @@ const HomeScreen: React.FC = () => {
       ]);
       
       console.log('API data loaded:', {
-        topTen: topTenData.length,
+        topTen: topTenData ? topTenData.length : 'null (保留缓存)',
         hotPosts: hotPostsResult.topics.length,
         hotBoards: hotBoardsData.length,
         totalPages: hotPostsResult.totalPages
       });
       
-      // 缓存数据
-      cacheManager.set('topTen', undefined, topTenData);
-      cacheManager.set('hotBoards', undefined, hotBoardsData);
-      cacheManager.set('hotPosts', 'page-1', hotPostsResult); // 第一页数据
+      const now = Date.now();
+      const version = '1.0.0';
       
-      // 更新状态
-      setTopTen(topTenData);
+      // 只有在数据非空时才更新缓存和状态
+      if (topTenData !== null) {
+        // 保存到内存缓存
+        cacheManager.set('topTen', undefined, topTenData);
+        
+        // 保存到持久化缓存（AsyncStorage）
+        try {
+          await AsyncStorage.setItem('topTen_cache', JSON.stringify({
+            version,
+            data: topTenData,
+            timestamp: now,
+          }));
+          console.log('[Cache] Saved topTen to AsyncStorage');
+        } catch (e) {
+          console.error('[Cache] Failed to save topTen to AsyncStorage:', e);
+        }
+        
+        // 更新状态
+        setTopTen(topTenData);
+      } else {
+        console.log('[Cache] topTen返回空，保留本地缓存数据');
+      }
+      
+      // 热门版面和热帖始终更新
+      cacheManager.set('hotBoards', undefined, hotBoardsData);
+      cacheManager.set('hotPosts', 'page-1', hotPostsResult);
+      
+      // 保存到持久化缓存（AsyncStorage）
+      try {
+        await Promise.all([
+          AsyncStorage.setItem('hotBoards_cache', JSON.stringify({
+            version,
+            data: hotBoardsData,
+            timestamp: now,
+          })),
+          AsyncStorage.setItem('hotPosts_page1_cache', JSON.stringify({
+            version,
+            data: hotPostsResult,
+            timestamp: now,
+          })),
+        ]);
+        console.log('[Cache] Saved hotBoards and hotPosts to AsyncStorage');
+      } catch (e) {
+        console.error('[Cache] Failed to save to AsyncStorage:', e);
+      }
       setHotPosts(hotPostsResult.topics);
       setHotBoards(hotBoardsData);
       setHotPostsPage(1);
@@ -112,28 +227,54 @@ const HomeScreen: React.FC = () => {
       const nextPage = hotPostsPage + 1;
       console.log('Loading more hot posts, page:', nextPage);
       
-      // 尝试从缓存获取分页数据
-      const cacheKey = `page-${nextPage}`;
-      let cachedResult = cacheManager.get('hotPosts', cacheKey);
+      // 尝试从AsyncStorage获取分页缓存
+      const cacheKey = `hotPosts_page${nextPage}_cache`;
+      let cachedResult: {topics: TopTenItem[], totalPages: number} | null = null;
       
-      if (!cachedResult) {
-        // 缓存未命中，从API获取
-        cachedResult = await getHotPosts(nextPage, 20);
-        // 缓存分页数据
-        cacheManager.set('hotPosts', cacheKey, cachedResult);
+      try {
+        const cached = await AsyncStorage.getItem(cacheKey);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          const age = Date.now() - parsed.timestamp;
+          
+          // 2分钟内的缓存有效
+          if (age < 2 * 60 * 1000 && parsed.version === '1.0.0') {
+            cachedResult = parsed.data;
+            console.log(`[Cache] Using hotPosts page ${nextPage} cache, age: ${Math.floor(age / 1000)}s`);
+          }
+        }
+      } catch (e) {
+        console.error('[Cache] Failed to load hotPosts cache:', e);
       }
       
-      console.log('Loaded more hot posts:', (cachedResult as {topics: TopTenItem[], totalPages: number}).topics.length, 'items, total pages:', (cachedResult as {topics: TopTenItem[], totalPages: number}).totalPages);
+      // 如果没有缓存，从API获取
+      if (!cachedResult) {
+        cachedResult = await getHotPosts(nextPage, 20);
+        
+        // 保存到缓存
+        try {
+          await AsyncStorage.setItem(cacheKey, JSON.stringify({
+            version: '1.0.0',
+            data: cachedResult,
+            timestamp: Date.now(),
+          }));
+          console.log(`[Cache] Saved hotPosts page ${nextPage} to cache`);
+        } catch (e) {
+          console.error('[Cache] Failed to save hotPosts cache:', e);
+        }
+      }
       
-      if ((cachedResult as {topics: TopTenItem[], totalPages: number}).topics.length > 0) {
+      console.log('Loaded more hot posts:', cachedResult.topics.length, 'items, total pages:', cachedResult.totalPages);
+      
+      if (cachedResult.topics.length > 0) {
         // 使用Set来去重，确保不会有重复的id
         setHotPosts(prev => {
           const existingIds = new Set(prev.map(p => p.id));
-          const newPosts = (cachedResult as {topics: TopTenItem[], totalPages: number}).topics.filter((p: TopTenItem) => !existingIds.has(p.id));
+          const newPosts = cachedResult!.topics.filter((p: TopTenItem) => !existingIds.has(p.id));
           return [...prev, ...newPosts];
         });
         setHotPostsPage(nextPage);
-        setHasMoreHotPosts(nextPage < (cachedResult as {topics: TopTenItem[], totalPages: number}).totalPages);
+        setHasMoreHotPosts(nextPage < cachedResult.totalPages);
       } else {
         setHasMoreHotPosts(false);
       }
@@ -147,6 +288,23 @@ const HomeScreen: React.FC = () => {
   const onRefresh = async () => {
     setRefreshing(true);
     try {
+      console.log('[Refresh] Clearing all hotPosts page caches');
+      
+      // 清除所有热帖分页缓存
+      const keys = await AsyncStorage.getAllKeys();
+      const hotPostKeys = keys.filter(key => key.startsWith('hotPosts_page') && key !== 'hotPosts_page1_cache');
+      if (hotPostKeys.length > 0) {
+        await AsyncStorage.multiRemove(hotPostKeys);
+        console.log(`[Refresh] Cleared ${hotPostKeys.length} hotPosts page caches`);
+      }
+      
+      // 重置分页状态
+      setHotPostsPage(1);
+      setHasMoreHotPosts(true);
+      
+      // 清除内存缓存中的热帖分页数据
+      cacheManager.clearCategory('hotPosts');
+      
       // 手动下拉刷新时强制从API获取最新数据
       await loadDataFromAPI(false);
     } catch (error) {
@@ -217,10 +375,13 @@ const HomeScreen: React.FC = () => {
           </Text>
           <TouchableOpacity 
             onPress={() => {
-              navigation.navigate('Board', {
-                board: item.board,
-                boardName: item.boardName || item.board,
-                source: 'link',
+              navigation.navigate('MainTabs', {
+                screen: 'Board',
+                params: {
+                  board: item.board,
+                  boardName: item.boardName || item.board,
+                  source: 'link',
+                },
               });
             }}
             hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
@@ -238,11 +399,14 @@ const HomeScreen: React.FC = () => {
     <TouchableOpacity
       style={styles.hotBoardItem}
       onPress={() => {
-        // 由于是从 Home 标签切换到 Board 标签，可以直接导航
-        navigation.navigate('Board', {
-          board: item.id,
-          boardName: item.chineseName || item.name,
-          source: 'link',
+        // 由于是从 Home 标签切换到 Board 标签，需要使用嵌套导航
+        navigation.navigate('MainTabs', {
+          screen: 'Board',
+          params: {
+            board: item.id,
+            boardName: item.chineseName || item.name,
+            source: 'link',
+          },
         });
       }}>
       <Text style={styles.hotBoardName}>
