@@ -27,6 +27,11 @@ const ImageWithPlaceholder: React.FC<ImageWithPlaceholderProps> = ({
   const [failed, setFailed] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  // 调试：打印头像URL
+  if (isAvatar && uri) {
+    console.log('Loading avatar image:', uri);
+  }
+
   if (failed) {
     // 如果是头像且没有文本，显示简化的占位符
     if (isAvatar && !placeholderText) {
@@ -52,6 +57,9 @@ const ImageWithPlaceholder: React.FC<ImageWithPlaceholderProps> = ({
         resizeMode={resizeMode}
         onLoad={(event) => {
           setLoading(false);
+          if (isAvatar) {
+            console.log('Avatar image loaded successfully:', uri);
+          }
           // 获取图片实际尺寸并回调
           if (onImageLoad && event.nativeEvent.source) {
             const {width, height} = event.nativeEvent.source;
@@ -59,7 +67,7 @@ const ImageWithPlaceholder: React.FC<ImageWithPlaceholderProps> = ({
           }
         }}
         onError={(e) => {
-          console.log(`Image load failed: ${uri}`);
+          console.log(`Image load failed: ${uri}`, e.nativeEvent?.error);
           setFailed(true);
           setLoading(false);
         }}

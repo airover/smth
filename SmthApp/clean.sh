@@ -11,7 +11,7 @@ rm -rf $TMPDIR/haste-*
 # 清理 node_modules
 echo "清理 node_modules..."
 rm -rf node_modules
-rm -rf package-lock.json
+# 保留 package-lock.json 以确保依赖版本一致性
 
 # 清理 iOS
 echo "清理 iOS..."
@@ -32,6 +32,5 @@ watchman watch-del-all 2>/dev/null
 echo "✅ 清理完成！"
 echo ""
 echo "接下来执行："
-echo "  npm install"
-echo "  cd ios && pod install --repo-update && cd .."
-echo "  npx react-native run-ios 或 run-android"
+echo "  ./build.sh"
+echo "  npm run ios 或 npm run android"

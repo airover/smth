@@ -25,6 +25,8 @@ import {Board, Post} from '../types';
 import {getCache, setCache, getCacheWithTimestamp} from '../services/cacheManager';
 import {formatRelativeTime} from '../utils/timeFormat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {useSettings} from '../context/SettingsContext';
+import {useTheme} from '../components/ThemedComponents';
 
 const {width: SCREEN_WIDTH} = Dimensions.get('window');
 const DRAWER_WIDTH = SCREEN_WIDTH * 0.8;
@@ -55,6 +57,9 @@ interface AlbumArticle {
     name: string;
     nick: string;
     avatarUrl?: string;
+    k3sUrl?: string;
+    ks3Url?: string;
+    avatar?: string;
   };
   board: {
     id: string; // 版面hash ID
@@ -102,6 +107,9 @@ interface ChannelTopic {
       level: number;
       levelTitle: string;
       avatarUrl?: string;
+      k3sUrl?: string;
+      ks3Url?: string;
+      avatar?: string;
     };
   };
   board: {
@@ -118,6 +126,8 @@ interface ChannelTopic {
 const BoardScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const route = useRoute();
+  const {settings} = useSettings();
+  const theme = useTheme();
   const [boards, setBoards] = useState<Board[]>([]);
   const [favoriteBoards, setFavoriteBoards] = useState<Board[]>([]);
   const [posts, setPosts] = useState<Post[]>([]);
@@ -139,7 +149,7 @@ const BoardScreen: React.FC = () => {
   const [loadingChannelPosts, setLoadingChannelPosts] = useState(false);
   const [postsDataLoaded, setPostsDataLoaded] = useState(false);
   const [channelPostsDataLoaded, setChannelPostsDataLoaded] = useState(false);
-  const [sortByReplyTime, setSortByReplyTime] = useState(false); // false: 按发布时间, true: 按回复时间
+  const [sortByReplyTime, setSortByReplyTime] = useState(settings.defaultBoardSort === 'reply'); // 从全局配置初始化
   const [showFabMenu, setShowFabMenu] = useState(false); // 浮动按钮菜单显示状态
   const [sortRefreshing, setSortRefreshing] = useState(false); // 排序刷新状态
   const [isBoardFavorited, setIsBoardFavorited] = useState(false); // 当前版面是否已收藏
@@ -376,13 +386,16 @@ const BoardScreen: React.FC = () => {
 
   useEffect(() => {
     if (selectedBoard) {
-      // 切换版面时重置分页状态
+      // 切换版面时重置分页状态和排序状态
       setPage(1);
       setHasMore(true);
       setPosts([]);
       setLoading(true); // 设置加载状态
       setPostsDataLoaded(false); // 重置数据加载状态
-      loadPosts(selectedBoard.id, 1, sortByReplyTime ? 1 : 0);
+      // 重置排序为默认配置
+      const defaultSort = settings.defaultBoardSort === 'reply';
+      setSortByReplyTime(defaultSort);
+      loadPosts(selectedBoard.id, 1, defaultSort ? 1 : 0);
       setShowChannels(false); // 选择版面后隐藏频道列表
       // 检查版面是否已收藏
       checkBoardFavoriteStatus(selectedBoard.id);
@@ -485,6 +498,13 @@ const BoardScreen: React.FC = () => {
               </Text>
             </View>
           );
+        } else if (selectedChannel || showChannels) {
+          // 当选中频道或显示频道列表时，标题显示"频道"
+          return (
+            <View style={styles.headerTitleContainer}>
+              <Text style={styles.headerTitleText}>频道</Text>
+            </View>
+          );
         } else {
           return (
             <View style={styles.headerTitleContainer}>
@@ -508,7 +528,7 @@ const BoardScreen: React.FC = () => {
         </TouchableOpacity>
       ),
     });
-  }, [selectedBoard, selectedChannel, navigation]);
+  }, [selectedBoard, selectedChannel, showChannels, navigation]);
 
   const loadBoards = async () => {
     try {
@@ -791,6 +811,20 @@ const BoardScreen: React.FC = () => {
             };
           });
           
+          // 处理头像URL：优先使用 k3sUrl/ks3Url，然后 avatarUrl，最后是 avatar
+          let avatarUrl = article.account.k3sUrl || article.account.ks3Url || article.account.avatarUrl || '';
+          if (!avatarUrl && article.account.avatar) {
+            if (article.account.avatar.startsWith('http')) {
+              avatarUrl = article.account.avatar;
+            } else {
+              avatarUrl = `https://file.mysmth.net/${article.account.avatar}`;
+            }
+          }
+          // 确保使用 HTTPS
+          if (avatarUrl && avatarUrl.startsWith('http:')) {
+            avatarUrl = avatarUrl.replace('http:', 'https:');
+          }
+          
           return {
           id: article.id,
           subject: article.subject,
@@ -817,7 +851,7 @@ const BoardScreen: React.FC = () => {
               gender: 0,
               level: 0,
               levelTitle: '',
-              avatarUrl: article.account.avatarUrl,
+              avatarUrl: avatarUrl,
             },
           },
           board: {
@@ -932,14 +966,44 @@ const BoardScreen: React.FC = () => {
       if (result.code === 1 && result.data) {
         const { topics, pager } = result.data;
         
+        // 处理频道帖子的头像URL
+        const processedTopics = (topics || []).map((topic: ChannelTopic) => {
+          if (topic.article && topic.article.account) {
+            const account = topic.article.account;
+            let avatarUrl = account.k3sUrl || account.ks3Url || account.avatarUrl || '';
+            if (!avatarUrl && account.avatar) {
+              if (account.avatar.startsWith('http')) {
+                avatarUrl = account.avatar;
+              } else {
+                avatarUrl = `https://file.mysmth.net/${account.avatar}`;
+              }
+            }
+            // 确保使用 HTTPS
+            if (avatarUrl && avatarUrl.startsWith('http:')) {
+              avatarUrl = avatarUrl.replace('http:', 'https:');
+            }
+            return {
+              ...topic,
+              article: {
+                ...topic.article,
+                account: {
+                  ...account,
+                  avatarUrl: avatarUrl,
+                },
+              },
+            };
+          }
+          return topic;
+        });
+        
         if (pageNum === 1) {
-          setChannelPosts(topics || []);
+          setChannelPosts(processedTopics);
           setChannelPage(1);
           
           // Save cache
           try {
             const cacheData = {
-              data: topics || [],
+              data: processedTopics,
               pager: pager
             };
             setCache('channelPosts', channelId, cacheData);
@@ -950,7 +1014,7 @@ const BoardScreen: React.FC = () => {
           // 使用Set来去重，确保不会有重复的id
           setChannelPosts(prev => {
             const existingIds = new Set(prev.map(p => p.id));
-            const newPosts = (topics || []).filter((p: ChannelTopic) => !existingIds.has(p.id));
+            const newPosts = processedTopics.filter((p: ChannelTopic) => !existingIds.has(p.id));
             return [...prev, ...newPosts];
           });
         }
@@ -1176,7 +1240,7 @@ const BoardScreen: React.FC = () => {
       <View style={styles.searchBarContainer}>
         <TextInput
           style={styles.searchInput}
-          placeholder="搜索文章"
+          placeholder="搜索文章/版面/用户"
           value={searchText}
           onChangeText={setSearchText}
           returnKeyType="search"
@@ -1322,7 +1386,13 @@ const BoardScreen: React.FC = () => {
     const isRead = readPosts.has(item.id);
     return (
     <TouchableOpacity
-      style={styles.postItem}
+      style={[
+        styles.postItem,
+        {
+          backgroundColor: theme.cardBackground,
+          borderBottomColor: theme.divider  // 使用更明显的分隔线颜色
+        }
+      ]}
       onPress={() => {
         markAsRead(item.id);
         navigation.navigate('PostDetail', {
@@ -1331,12 +1401,13 @@ const BoardScreen: React.FC = () => {
         });
       }}>
       <View style={styles.postHeader}>
-        {item.isTop && <View style={styles.topBadge}><Text style={styles.topBadgeText}>置顶</Text></View>}
+        {item.isTop && <View style={[styles.topBadge, {backgroundColor: theme.error}]}><Text style={styles.topBadgeText}>置顶</Text></View>}
         <Text 
           style={[
-            styles.postTitle, 
-            item.isTop && styles.topPostTitle,
-            isRead && styles.readPostTitle
+            styles.postTitle,
+            {color: theme.text},
+            item.isTop && {color: theme.error},
+            isRead && {color: theme.secondaryText, fontWeight: 'normal'}
           ]} 
           numberOfLines={2}
         >
@@ -1345,16 +1416,12 @@ const BoardScreen: React.FC = () => {
       </View>
       <View style={styles.postMeta}>
         <View style={styles.postAuthorInfo}>
-          {item.nickname ? (
-            <Text style={styles.metaText}>{item.nickname} ({item.author})</Text>
-          ) : (
-        <Text style={styles.metaText}>{item.author}</Text>
-          )}
-          {item.levelTitle && <Text style={styles.levelTitle}> · {item.levelTitle}</Text>}
+          <Text style={[styles.metaText, {color: theme.secondaryText}]}>{item.author}</Text>
+          {item.levelTitle && <Text style={[styles.levelTitle, {color: theme.secondaryText}]}> · {item.levelTitle}</Text>}
         </View>
         <View style={styles.postStats}>
-          <Text style={styles.metaText}>{item.replyCount} 回复</Text>
-          <Text style={styles.statsText}>{formatRelativeTime(sortByReplyTime ? item.lastReplyTime : item.postTime)}</Text>
+          <Text style={[styles.metaText, {color: theme.secondaryText}]}>{item.replyCount} 回复</Text>
+          <Text style={[styles.statsText, {color: theme.secondaryText}]}>{formatRelativeTime(sortByReplyTime ? item.lastReplyTime : item.postTime)}</Text>
         </View>
       </View>
     </TouchableOpacity>
@@ -1388,7 +1455,13 @@ const BoardScreen: React.FC = () => {
 
     return (
       <TouchableOpacity
-        style={styles.albumPostItem}
+        style={[
+          styles.albumPostItem,
+          {
+            backgroundColor: theme.cardBackground,
+            borderBottomColor: theme.divider  // 使用更明显的分隔线颜色
+          }
+        ]}
         onPress={() => {
           markAsRead(item.id);
           navigation.navigate('PostDetail', {
@@ -1406,15 +1479,17 @@ const BoardScreen: React.FC = () => {
                 isAvatar={true}
               />
             ) : (
-              <View style={styles.albumAvatarPlaceholder}>
+              <View style={[styles.albumAvatarPlaceholder, {backgroundColor: theme.primary}]}>
                 <Text style={styles.albumAvatarText}>
                   {item.article.account.nick?.charAt(0) || '?'}
                 </Text>
               </View>
             )}
             <View style={styles.albumUserDetails}>
-              <Text style={styles.albumUserName}>{item.article.account.nick}</Text>
-              <Text style={styles.albumPostTime}>{formatRelativeTime(item.postTime || item.flushTime)}</Text>
+              <Text style={[styles.albumUserName, {color: theme.text}]}>
+                {item.article.account.name}
+              </Text>
+              <Text style={[styles.albumPostTime, {color: theme.secondaryText}]}>{formatRelativeTime(item.postTime || item.flushTime)}</Text>
             </View>
           </View>
         </View>
@@ -1423,7 +1498,8 @@ const BoardScreen: React.FC = () => {
         <Text 
           style={[
             styles.albumPostTitle,
-            isRead && styles.readPostTitle
+            {color: theme.text},
+            isRead && {color: theme.secondaryText, fontWeight: 'normal'}
           ]} 
           numberOfLines={3}
         >
@@ -1487,7 +1563,13 @@ const BoardScreen: React.FC = () => {
     const isRead = readPosts.has(item.id);
     return (
       <TouchableOpacity
-        style={styles.postItem}
+        style={[
+          styles.postItem,
+          {
+            backgroundColor: theme.cardBackground,
+            borderBottomColor: theme.divider  // 使用更明显的分隔线颜色
+          }
+        ]}
         onPress={() => {
           markAsRead(item.id);
           navigation.navigate('PostDetail', {
@@ -1495,32 +1577,28 @@ const BoardScreen: React.FC = () => {
             postId: item.topicId || item.id, // 图览使用topicId，普通频道使用id
           });
         }}>
-        <View style={styles.postHeader}>
-          <Text 
-            style={[
-              styles.postTitle,
-              isRead && styles.readPostTitle
-            ]} 
-            numberOfLines={2}
-          >
-            {item.subject}
+        {/* 标题 */}
+        <Text 
+          style={[
+            styles.channelPostTitle,
+            {color: theme.text},
+            isRead && {color: theme.secondaryText, fontWeight: 'normal'}
+          ]} 
+          numberOfLines={1}
+        >
+          {item.subject}
+        </Text>
+        {/* 元信息：作者、回复数、时间、版面名 - 全部在一行 */}
+        <View style={styles.channelPostMeta}>
+          <Text style={[styles.channelMetaText, {color: theme.secondaryText}]}>
+            {item.article.account.name}
           </Text>
-        </View>
-        <View style={styles.postMeta}>
-          <View style={styles.postAuthorInfo}>
-            <Text style={styles.metaText}>
-              {item.article.account.nick} ({item.article.account.name})
-            </Text>
-            {item.article.account.levelTitle && (
-              <Text style={styles.levelTitle}> · {item.article.account.levelTitle}</Text>
-            )}
-          </View>
-          <View style={styles.postStats}>
-            <Text style={styles.metaText}>{item.availables} 回复</Text>
-            <Text style={styles.statsText}>{formatRelativeTime(sortByReplyTime ? item.lastPostTime : item.flushTime)}</Text>
-          </View>
-        </View>
-        <View style={styles.channelPostBoard}>
+          <Text style={[styles.channelMetaText, {color: theme.secondaryText}]}>
+            回复: {item.availables}
+          </Text>
+          <Text style={[styles.channelMetaText, {color: theme.secondaryText}]}>
+            {formatRelativeTime(sortByReplyTime ? item.lastPostTime : item.flushTime)}
+          </Text>
           <TouchableOpacity
             onPress={(e) => {
               e.stopPropagation();
@@ -1530,8 +1608,12 @@ const BoardScreen: React.FC = () => {
                 chineseName: item.board.title,
               } as Board);
               setSelectedChannel(null);
-            }}>
-            <Text style={styles.boardNameText}>📋 {item.board.title}</Text>
+            }}
+            hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
+          >
+            <Text style={[styles.channelMetaText, styles.channelBoardLink, {color: theme.primary}]}>
+              {item.board.title}
+            </Text>
           </TouchableOpacity>
         </View>
       </TouchableOpacity>
@@ -1540,9 +1622,9 @@ const BoardScreen: React.FC = () => {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
+          <ActivityIndicator size="large" color={theme.primary} />
         </View>
       </SafeAreaView>
     );
@@ -1712,7 +1794,7 @@ const BoardScreen: React.FC = () => {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
       {renderChannelsList()}
       {renderSearchBar()}
       <View style={{flex: 1}} {...channelSwipeResponder.panHandlers}>
@@ -1724,12 +1806,17 @@ const BoardScreen: React.FC = () => {
             onEndReached={loadMore}
             onEndReachedThreshold={0.3}
             refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+              <RefreshControl 
+                refreshing={refreshing} 
+                onRefresh={onRefresh}
+                tintColor={theme.primary}
+                colors={[theme.primary]}
+              />
             }
             ListEmptyComponent={
               !loading && !refreshing && channelPosts.length === 0 && channelPostsDataLoaded ? (
                 <View style={styles.emptyContainer}>
-                  <Text style={styles.emptyText}>暂无帖子</Text>
+                  <Text style={[styles.emptyText, {color: theme.secondaryText}]}>暂无帖子</Text>
                 </View>
               ) : null
             }
@@ -1743,12 +1830,17 @@ const BoardScreen: React.FC = () => {
             onEndReached={loadMore}
             onEndReachedThreshold={0.3}
             refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+              <RefreshControl 
+                refreshing={refreshing} 
+                onRefresh={onRefresh}
+                tintColor={theme.primary}
+                colors={[theme.primary]}
+              />
             }
             ListEmptyComponent={
               !loading && !refreshing && posts.length === 0 && postsDataLoaded ? (
                 <View style={styles.emptyContainer}>
-                  <Text style={styles.emptyText}>暂无帖子</Text>
+                  <Text style={[styles.emptyText, {color: theme.secondaryText}]}>暂无帖子</Text>
                 </View>
               ) : null
             }
@@ -1758,11 +1850,16 @@ const BoardScreen: React.FC = () => {
           <ScrollView
             style={styles.container}
             refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+              <RefreshControl 
+                refreshing={refreshing} 
+                onRefresh={onRefresh}
+                tintColor={theme.primary}
+                colors={[theme.primary]}
+              />
             }>
             <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>请选择版面或频道</Text>
-              <Text style={styles.hintText}>点击左上角菜单选择版面，或使用上方频道快速浏览</Text>
+              <Text style={[styles.emptyText, {color: theme.secondaryText}]}>请选择版面或频道</Text>
+              <Text style={[styles.hintText, {color: theme.secondaryText}]}>点击左上角菜单选择版面，或使用上方频道快速浏览</Text>
             </View>
           </ScrollView>
         )}
@@ -1850,6 +1947,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     fontSize: 14,
     color: '#333',
+    textAlign: 'center',
   },
   channelsContainer: {
     backgroundColor: '#fff',
@@ -1887,10 +1985,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   postItem: {
-    backgroundColor: '#fff',
+    // backgroundColor 由主题动态控制
     padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    borderBottomWidth: StyleSheet.hairlineWidth,  // 使用细线
+    // borderBottomColor 由主题动态控制
   },
   postHeader: {
     flexDirection: 'row',
@@ -1898,7 +1996,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   topBadge: {
-    backgroundColor: '#FF3B30',
+    // backgroundColor 由主题动态控制
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
@@ -1913,16 +2011,9 @@ const styles = StyleSheet.create({
   postTitle: {
     flex: 1,
     fontSize: 16,
-    color: '#000',
+    // color 由主题动态控制
     fontWeight: '500',
     lineHeight: 22,
-  },
-  topPostTitle: {
-    color: '#FF3B30',
-  },
-  readPostTitle: {
-    color: '#999',
-    fontWeight: 'normal',
   },
   postMeta: {
     flexDirection: 'row',
@@ -1935,7 +2026,7 @@ const styles = StyleSheet.create({
   },
   levelTitle: {
     fontSize: 11,
-    color: '#999',
+    // color 由主题动态控制
   },
   postStats: {
     flexDirection: 'row',
@@ -1943,11 +2034,11 @@ const styles = StyleSheet.create({
   },
   metaText: {
     fontSize: 12,
-    color: '#666',
+    // color 由主题动态控制
   },
   statsText: {
     fontSize: 12,
-    color: '#666',
+    // color 由主题动态控制
     marginLeft: 12,
   },
   emptyContainer: {
@@ -1976,15 +2067,35 @@ const styles = StyleSheet.create({
   },
   boardNameText: {
     fontSize: 12,
-    color: '#1890ff',
+    // color 由主题动态控制
+  },
+  // 频道帖子样式（对齐今日十大）
+  channelPostTitle: {
+    fontSize: 16,
+    // color 由主题动态控制
+    marginBottom: 8,
+    fontWeight: '500',
+  },
+  channelPostMeta: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  channelMetaText: {
+    fontSize: 12,
+    // color 由主题动态控制
+    marginRight: 12,
+  },
+  channelBoardLink: {
+    // color 由主题动态控制
+    fontWeight: '500',
   },
   // 图览频道专用样式
   albumPostItem: {
-    backgroundColor: '#fff',
+    // backgroundColor 由主题动态控制
     padding: 16,
     marginBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    borderBottomWidth: StyleSheet.hairlineWidth,  // 使用细线
+    // borderBottomColor 由主题动态控制
   },
   albumPostHeader: {
     marginBottom: 12,
@@ -2003,7 +2114,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#E1E1E1',
+    // backgroundColor 由主题动态控制
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -2019,16 +2130,16 @@ const styles = StyleSheet.create({
   albumUserName: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#000',
+    // color 由主题动态控制
     marginBottom: 2,
   },
   albumPostTime: {
     fontSize: 12,
-    color: '#999',
+    // color 由主题动态控制
   },
   albumPostTitle: {
     fontSize: 16,
-    color: '#000',
+    // color 由主题动态控制
     lineHeight: 22,
     marginBottom: 12,
   },

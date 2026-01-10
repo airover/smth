@@ -279,11 +279,32 @@ const fetchUserInfoFromServer = async (): Promise<any> => {
       const account = json.data.account;
       const data = json.data;
       
-      // 优先使用 avatarUrl，因为它已经是 https 且在主域名下，更稳定
-      let avatar = account.avatarUrl || account.ks3Url || account.k3sUrl || '';
+      // 调试：打印头像相关字段
+      console.log('Avatar fields:', {
+        avatarUrl: account.avatarUrl,
+        avatar: account.avatar,
+        ks3Url: account.ks3Url,
+        k3sUrl: account.k3sUrl,
+      });
+      
+      // 优先使用 k3sUrl/ks3Url（云存储），其次使用 avatarUrl，最后使用 avatar 字段
+      let avatar = account.k3sUrl || account.ks3Url || account.avatarUrl || '';
+      
+      // 如果上述字段都没有，尝试使用 avatar 字段
+      if (!avatar && account.avatar) {
+        // avatar 字段通常是相对路径，需要拼接完整URL
+        if (account.avatar.startsWith('http')) {
+          avatar = account.avatar;
+        } else {
+          avatar = `https://file.mysmth.net/${account.avatar}`;
+        }
+      }
+      
       if (avatar && avatar.startsWith('http:')) {
         avatar = avatar.replace('http:', 'https:');
       }
+      
+      console.log('Final avatar URL:', avatar);
       
       const userInfo = {
         id: account.id,

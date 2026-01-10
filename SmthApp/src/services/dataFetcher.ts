@@ -542,7 +542,7 @@ export const getBoardPosts = async (
         const article = topic.article || {};
         const account = article.account || {};
         
-        let avatar = account.avatarUrl || account.k3sUrl || '';
+        let avatar = account.k3sUrl || account.ks3Url || account.avatarUrl || '';
         if (avatar && avatar.startsWith('http:')) {
           avatar = avatar.replace('http:', 'https:');
         }
@@ -621,10 +621,10 @@ export const getPostDetail = async (
       const topic = json.data.topic;
       const article = topic.article;
       
-      // 提取头像，优先使用 avatarUrl (https) 确保稳定性
-      let avatar = article?.account?.avatarUrl || article?.user?.avatarUrl || 
-                   article?.account?.ks3Url || article?.account?.k3sUrl || 
-                   article?.user?.ks3Url || article?.user?.k3sUrl || '';
+      // 提取头像，优先使用 k3sUrl/ks3Url（云存储）
+      let avatar = article?.account?.k3sUrl || article?.account?.ks3Url ||
+                   article?.user?.k3sUrl || article?.user?.ks3Url ||
+                   article?.account?.avatarUrl || article?.user?.avatarUrl || '';
       if (avatar && avatar.startsWith('http:')) {
         avatar = avatar.replace('http:', 'https:');
       }
@@ -663,9 +663,9 @@ export const getPostDetail = async (
           };
         }),
         likes: (article?.likes || []).map((like: any) => {
-          let likeAvatar = like.account?.avatarUrl || like.user?.avatarUrl || 
-                          like.account?.ks3Url || like.account?.k3sUrl || 
-                          like.user?.ks3Url || like.user?.k3sUrl || '';
+          let likeAvatar = like.account?.k3sUrl || like.account?.ks3Url ||
+                          like.user?.k3sUrl || like.user?.ks3Url ||
+                          like.account?.avatarUrl || like.user?.avatarUrl || '';
           if (likeAvatar && likeAvatar.startsWith('http:')) {
             likeAvatar = likeAvatar.replace('http:', 'https:');
           }
@@ -677,6 +677,7 @@ export const getPostDetail = async (
             avatar: likeAvatar,
             body: like.body || '',
             postTime: new Date(like.postTime || Date.now()).toISOString(),
+            score: like.score || 0,
           };
         }),
         replies: [], // 详情接口目前只返回了主贴，回复可能需要另一个接口
@@ -753,10 +754,10 @@ export const getTopicReplies = async (
     if (json.code === 1 && json.data?.articles) {
       const articles = json.data.articles;
       const replies = articles.map((article: any) => {
-        // 提取头像，优先使用 avatarUrl (https) 确保稳定性
-        let avatar = article.account?.avatarUrl || article.user?.avatarUrl || 
-                     article.account?.ks3Url || article.account?.k3sUrl || 
-                     article.user?.ks3Url || article.user?.k3sUrl || '';
+        // 提取头像，优先使用 k3sUrl/ks3Url（云存储）
+        let avatar = article.account?.k3sUrl || article.account?.ks3Url ||
+                     article.user?.k3sUrl || article.user?.ks3Url ||
+                     article.account?.avatarUrl || article.user?.avatarUrl || '';
         if (avatar && avatar.startsWith('http:')) {
           avatar = avatar.replace('http:', 'https:');
         }
@@ -858,11 +859,39 @@ export const fetchUserInfo = async (username: string): Promise<any> => {
       
       console.log('fetchUserInfo content count:', content.length);
       
+      // 调试：打印头像相关字段
+      console.log('fetchUserInfo avatar fields:', {
+        avatarUrl: account.avatarUrl,
+        avatar: account.avatar,
+        ks3Url: account.ks3Url,
+        k3sUrl: account.k3sUrl,
+      });
+      
+      // 优先使用 k3sUrl/ks3Url（云存储），其次使用 avatarUrl，最后使用 avatar 字段
+      let avatar = account.k3sUrl || account.ks3Url || account.avatarUrl || '';
+      
+      // 如果上述字段都没有，尝试使用 avatar 字段
+      if (!avatar && account.avatar) {
+        // avatar 字段通常是相对路径，需要拼接完整URL
+        if (account.avatar.startsWith('http')) {
+          avatar = account.avatar;
+        } else {
+          avatar = `https://file.mysmth.net/${account.avatar}`;
+        }
+      }
+      
+      // 确保使用 HTTPS
+      if (avatar && avatar.startsWith('http:')) {
+        avatar = avatar.replace('http:', 'https:');
+      }
+      
+      console.log('fetchUserInfo final avatar URL:', avatar);
+      
       const userInfo = {
         id: account.id,
         username: account.name || username,
         nickname: account.nick,
-        avatar: account.avatarUrl || (account.avatar ? `https://file.mysmth.net/${account.avatar}` : undefined),
+        avatar: avatar,
         gender: account.gender,
         level: account.level,
         levelTitle: account.levelTitle,
@@ -975,7 +1004,7 @@ export const getConversationMessages = async (conversationId: string): Promise<a
       
       return messages.map((msg: any) => {
         const sender = msg.sender || {};
-        let avatar = sender.avatarUrl || sender.k3sUrl || '';
+        let avatar = sender.k3sUrl || sender.ks3Url || sender.avatarUrl || '';
         if (avatar && avatar.startsWith('http:')) {
           avatar = avatar.replace('http:', 'https:');
         }
@@ -1067,7 +1096,7 @@ export const getMessages = async (_page: number = 0): Promise<Mail[]> => {
         const lastMsg = lastMessages.find((msg: any) => msg.conversationId === conv.id);
         const speaker = conv.speaker || {};
         
-        let avatar = speaker.avatarUrl || speaker.k3sUrl || '';
+        let avatar = speaker.k3sUrl || speaker.ks3Url || speaker.avatarUrl || '';
         if (avatar && avatar.startsWith('http:')) {
           avatar = avatar.replace('http:', 'https:');
         }

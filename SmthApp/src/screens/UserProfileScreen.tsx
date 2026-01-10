@@ -34,6 +34,27 @@ const stripHtmlTags = (html: string): string => {
     .trim();
 };
 
+// 辅助函数：计算字符串长度（中文算2，英文算1）
+const getStringLength = (str: string): number => {
+  if (!str) return 0;
+  let length = 0;
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+    // 中文字符范围
+    if (code >= 0x4e00 && code <= 0x9fff) {
+      length += 2;
+    } else {
+      length += 1;
+    }
+  }
+  return length;
+};
+
+// 辅助函数：判断昵称是否过长（超过6个英文或4个中文，即长度>8）
+const isNicknameTooLong = (nickname: string): boolean => {
+  return getStringLength(nickname) > 8;
+};
+
 const UserProfileScreen: React.FC = () => {
   const route = useRoute();
   const navigation = useNavigation();
@@ -188,26 +209,35 @@ const UserProfileScreen: React.FC = () => {
 
           {/* 底部用户信息区域 */}
           <View style={styles.headerBottomSection}>
-            {/* 头像 */}
-            <View style={styles.avatarWrapper}>
-              {user?.avatar ? (
-                <ImageWithPlaceholder
-                  uri={user.avatar}
-                  style={styles.avatar}
-                  resizeMode="cover"
-                  isAvatar={true}
-                />
-              ) : (
-                <View style={styles.avatarPlaceholder}>
-                  <Text style={styles.avatarText}>
-                    {(user?.username || username)?.charAt(0).toUpperCase() || 'U'}
-                  </Text>
-                </View>
-              )}
-              {/* 头衔徽章 */}
-              {isCurrentUser && user?.levelTitle && (
-                <View style={styles.levelBadgeOnAvatar}>
-                  <Text style={styles.levelBadgeText}>Lv{user.levelTitle}</Text>
+            <View style={styles.avatarAndNicknameRow}>
+              {/* 头像 */}
+              <View style={styles.avatarWrapper}>
+                {user?.avatar ? (
+                  <ImageWithPlaceholder
+                    uri={user.avatar}
+                    style={styles.avatar}
+                    resizeMode="cover"
+                    isAvatar={true}
+                  />
+                ) : (
+                  <View style={styles.avatarPlaceholder}>
+                    <Text style={styles.avatarText}>
+                      {(user?.username || username)?.charAt(0).toUpperCase() || 'U'}
+                    </Text>
+                  </View>
+                )}
+                {/* 头衔徽章 */}
+                {isCurrentUser && user?.levelTitle && (
+                  <View style={styles.levelBadgeOnAvatar}>
+                    <Text style={styles.levelBadgeText}>Lv{user.levelTitle}</Text>
+                  </View>
+                )}
+              </View>
+              
+              {/* 昵称（如果存在且与用户名不同且不太长） */}
+              {user?.nickname && user.nickname !== user.username && !isNicknameTooLong(user.nickname) && (
+                <View style={styles.nicknameContainer}>
+                  <Text style={styles.nicknameOnHeader}>{user.nickname}</Text>
                 </View>
               )}
             </View>
@@ -251,6 +281,11 @@ const UserProfileScreen: React.FC = () => {
               </View>
             )}
           </View>
+
+          {/* 长昵称（如果存在、与用户名不同且太长） */}
+          {user?.nickname && user.nickname !== user.username && isNicknameTooLong(user.nickname) && (
+            <Text style={styles.longNickname}>{user.nickname}</Text>
+          )}
 
           {/* 最近登录信息 */}
           {user?.loginTime && (
@@ -488,6 +523,10 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
     paddingLeft: 20,
   },
+  avatarAndNicknameRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+  },
   avatarWrapper: {
     position: 'relative',
   },
@@ -508,6 +547,18 @@ const styles = StyleSheet.create({
     fontSize: 40,
     fontWeight: '600',
     color: '#fff',
+  },
+  nicknameContainer: {
+    marginLeft: 16,
+    flex: 1,
+  },
+  nicknameOnHeader: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#000',
+    textShadowColor: 'rgba(255, 255, 255, 0.8)',
+    textShadowOffset: {width: 0, height: 0},
+    textShadowRadius: 8,
   },
   levelBadgeOnAvatar: {
     position: 'absolute',
@@ -623,6 +674,13 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#666',
     fontWeight: '500',
+  },
+  longNickname: {
+    fontSize: 14,
+    color: '#666',
+    lineHeight: 20,
+    marginTop: 8,
+    marginBottom: 8,
   },
   loginTimeText: {
     fontSize: 13,

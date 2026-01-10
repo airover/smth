@@ -15,9 +15,11 @@ import {TopTenItem, Board} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {cacheManager} from '../services/cacheManager';
+import {useTheme} from '../components/ThemedComponents';
 
 const HomeScreen: React.FC = () => {
   const navigation = useNavigation<any>();
+  const theme = useTheme();
   const [topTen, setTopTen] = useState<TopTenItem[]>([]);
   const [hotPosts, setHotPosts] = useState<TopTenItem[]>([]);
   const [hotBoards, setHotBoards] = useState<Board[]>([]);
@@ -348,6 +350,7 @@ const HomeScreen: React.FC = () => {
       <TouchableOpacity
         style={[
           styles.topTenItem,
+          {borderBottomColor: theme.border},
           isLastItem && styles.lastTopTenItem
         ]}
         onPress={() => {
@@ -361,16 +364,17 @@ const HomeScreen: React.FC = () => {
         <Text 
           style={[
             styles.topTenTitle,
-            isRead && styles.readPostTitle
+            {color: theme.text},
+            isRead && {color: theme.secondaryText, fontWeight: 'normal'}
           ]} 
           numberOfLines={1}
         >
           {item.title}
         </Text>
         <View style={styles.topTenMeta}>
-          <Text style={styles.metaText}>{item.author}</Text>
-          <Text style={styles.metaText}>回复: {item.replyCount}</Text>
-          <Text style={styles.metaText}>
+          <Text style={[styles.metaText, {color: theme.secondaryText}]}>{item.author}</Text>
+          <Text style={[styles.metaText, {color: theme.secondaryText}]}>回复: {item.replyCount}</Text>
+          <Text style={[styles.metaText, {color: theme.secondaryText}]}>
             {formatRelativeTime(item.lastReplyTime || item.postTime)}
           </Text>
           <TouchableOpacity 
@@ -386,7 +390,7 @@ const HomeScreen: React.FC = () => {
             }}
             hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
           >
-            <Text style={[styles.metaText, styles.boardLink]}>
+            <Text style={[styles.metaText, styles.boardLink, {color: theme.primary}]}>
               {item.boardName || item.board}
             </Text>
           </TouchableOpacity>
@@ -397,7 +401,7 @@ const HomeScreen: React.FC = () => {
 
   const renderHotBoardItem = ({item}: {item: Board}) => (
     <TouchableOpacity
-      style={styles.hotBoardItem}
+      style={[styles.hotBoardItem, {backgroundColor: theme.placeholderBackground}]}
       onPress={() => {
         // 由于是从 Home 标签切换到 Board 标签，需要使用嵌套导航
         navigation.navigate('MainTabs', {
@@ -409,11 +413,11 @@ const HomeScreen: React.FC = () => {
           },
         });
       }}>
-      <Text style={styles.hotBoardName}>
+      <Text style={[styles.hotBoardName, {color: theme.text}]}>
         {item.chineseName || item.name}
       </Text>
       {item.description && (
-        <Text style={styles.hotBoardDesc} numberOfLines={1}>
+        <Text style={[styles.hotBoardDesc, {color: theme.secondaryText}]} numberOfLines={1}>
           {item.description}
         </Text>
       )}
@@ -423,22 +427,22 @@ const HomeScreen: React.FC = () => {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
+          <ActivityIndicator size="large" color={theme.primary} />
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
       <FlatList
         data={[{type: 'content'}]} // 使用单个项目来包装所有内容
         renderItem={() => (
           <View>
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>今日十大</Text>
+            <View style={[styles.section, {backgroundColor: theme.cardBackground}]}>
+              <Text style={[styles.sectionTitle, {color: theme.text}]}>今日十大</Text>
               {topTen.length > 0 ? (
                 <FlatList
                   data={topTen}
@@ -447,12 +451,12 @@ const HomeScreen: React.FC = () => {
                   scrollEnabled={false}
                 />
               ) : dataLoaded ? (
-                <Text style={styles.emptyText}>暂无数据</Text>
+                <Text style={[styles.emptyText, {color: theme.secondaryText}]}>暂无数据</Text>
               ) : null}
             </View>
 
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>热门版面</Text>
+            <View style={[styles.section, {backgroundColor: theme.cardBackground}]}>
+              <Text style={[styles.sectionTitle, {color: theme.text}]}>热门版面</Text>
               {hotBoards.length > 0 ? (
                 <FlatList
                   data={hotBoards}
@@ -463,12 +467,12 @@ const HomeScreen: React.FC = () => {
                   contentContainerStyle={styles.hotBoardsList}
                 />
               ) : dataLoaded ? (
-                <Text style={styles.emptyText}>暂无数据</Text>
+                <Text style={[styles.emptyText, {color: theme.secondaryText}]}>暂无数据</Text>
               ) : null}
             </View>
 
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>热门帖子</Text>
+            <View style={[styles.section, {backgroundColor: theme.cardBackground}]}>
+              <Text style={[styles.sectionTitle, {color: theme.text}]}>热门帖子</Text>
               {hotPosts.length > 0 ? (
                 <FlatList
                   data={hotPosts}
@@ -481,21 +485,26 @@ const HomeScreen: React.FC = () => {
                     hasMoreHotPosts ? (
                       <View style={styles.footerContainer}>
                         {loadingMoreHotPosts ? (
-                          <ActivityIndicator size="small" color="#007AFF" />
+                          <ActivityIndicator size="small" color={theme.primary} />
                         ) : null}
                       </View>
                     ) : null
                   }
                 />
               ) : dataLoaded ? (
-                <Text style={styles.emptyText}>暂无热门帖子</Text>
+                <Text style={[styles.emptyText, {color: theme.secondaryText}]}>暂无热门帖子</Text>
               ) : null}
             </View>
           </View>
         )}
         keyExtractor={() => 'content'}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          <RefreshControl 
+            refreshing={refreshing} 
+            onRefresh={onRefresh}
+            tintColor={theme.primary}
+            colors={[theme.primary]}
+          />
         }
         contentContainerStyle={styles.content}
       />
@@ -506,7 +515,7 @@ const HomeScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    // backgroundColor 由主题动态控制
   },
   content: {
     padding: 16,
@@ -518,33 +527,29 @@ const styles = StyleSheet.create({
   },
   section: {
     marginBottom: 24,
-    backgroundColor: '#fff',
+    // backgroundColor 由主题动态控制
     borderRadius: 8,
     padding: 16,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#000',
+    // color 由主题动态控制
     marginBottom: 12,
   },
   topTenItem: {
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    // borderBottomColor 由主题动态控制
   },
   lastTopTenItem: {
     borderBottomWidth: 0,
   },
   topTenTitle: {
     fontSize: 16,
-    color: '#000',
+    // color 由主题动态控制
     marginBottom: 8,
     fontWeight: '500',
-  },
-  readPostTitle: {
-    color: '#999',
-    fontWeight: 'normal',
   },
   topTenMeta: {
     flexDirection: 'row',
@@ -552,18 +557,18 @@ const styles = StyleSheet.create({
   },
   metaText: {
     fontSize: 12,
-    color: '#666',
+    // color 由主题动态控制
     marginRight: 12,
   },
   boardLink: {
-    color: '#007AFF',
+    // color 由主题动态控制
     fontWeight: '500',
   },
   hotBoardsList: {
     paddingVertical: 8,
   },
   hotBoardItem: {
-    backgroundColor: '#f9f9f9',
+    // backgroundColor 由主题动态控制
     borderRadius: 8,
     padding: 12,
     marginRight: 12,
@@ -572,32 +577,18 @@ const styles = StyleSheet.create({
   hotBoardName: {
     fontSize: 16,
     fontWeight: '500',
-    color: '#000',
+    // color 由主题动态控制
     marginBottom: 4,
   },
   hotBoardDesc: {
     fontSize: 12,
-    color: '#666',
+    // color 由主题动态控制
   },
   emptyText: {
     fontSize: 14,
-    color: '#999',
+    // color 由主题动态控制
     textAlign: 'center',
     paddingVertical: 20,
-  },
-  loadMoreButton: {
-    marginTop: 16,
-    padding: 12,
-    backgroundColor: '#f9f9f9',
-    borderRadius: 8,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-  },
-  loadMoreText: {
-    fontSize: 14,
-    color: '#007AFF',
-    fontWeight: '500',
   },
   footerContainer: {
     paddingVertical: 20,

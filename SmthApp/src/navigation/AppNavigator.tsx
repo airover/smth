@@ -44,6 +44,7 @@ const MainTabs = () => {
         component={HomeScreen}
         options={{
           title: '首页',
+          headerBackTitle: '',
           tabBarIcon: ({color}) => (
             <Text style={{color, fontSize: 24}}>🏠</Text>
           ),
@@ -54,6 +55,7 @@ const MainTabs = () => {
         component={BoardScreen}
         options={{
           title: '版面',
+          headerBackTitle: '',
           tabBarIcon: ({color}) => (
             <Text style={{color, fontSize: 24}}>📋</Text>
           ),
@@ -84,6 +86,7 @@ const MainTabs = () => {
         component={SettingsScreen}
         options={{
           title: '我',
+          headerBackTitle: '',
           tabBarIcon: ({color}) => (
             <Text style={{color, fontSize: 24}}>⚙️</Text>
           ),
@@ -102,22 +105,26 @@ const AppNavigator = () => {
           headerStyle: {
             backgroundColor: '#fff',
           },
-          headerTintColor: '#000',
+          headerTintColor: '#007AFF', // 统一使用项目蓝色主题
           headerTitleStyle: {
             fontWeight: '600',
           },
+          headerBackTitle: undefined, // 完全不显示返回文字
+          headerBackTitleVisible: false, // iOS上完全隐藏返回文字
         }}>
         <Stack.Screen
           name="MainTabs"
           component={MainTabs}
-          options={{headerShown: false}}
+          options={{
+            headerShown: false,
+            title: '', // 设置空标题，避免返回时显示 "MainTabs"
+          }}
         />
         <Stack.Screen
           name="PostDetail"
           component={PostDetailScreen}
           options={{
             title: '',
-            headerBackTitle: '返回',
           }}
         />
         <Stack.Screen
@@ -125,7 +132,6 @@ const AppNavigator = () => {
           component={BoardListScreen}
           options={{
             title: '收藏版面',
-            headerBackTitle: '返回',
           }}
         />
         <Stack.Screen
@@ -133,7 +139,6 @@ const AppNavigator = () => {
           component={MailScreen}
           options={{
             title: '站内邮箱',
-            headerBackTitle: '返回',
           }}
         />
         <Stack.Screen
@@ -141,7 +146,6 @@ const AppNavigator = () => {
           component={SettingsDetailScreen}
           options={{
             title: '设置',
-            headerBackTitle: '返回',
           }}
         />
         <Stack.Screen
@@ -149,7 +153,6 @@ const AppNavigator = () => {
           component={AccountSwitchScreen}
           options={{
             title: '切换帐号',
-            headerBackTitle: '返回',
           }}
         />
         <Stack.Screen
@@ -157,7 +160,6 @@ const AppNavigator = () => {
           component={CacheManagementScreen}
           options={{
             title: '缓存管理',
-            headerBackTitle: '返回',
           }}
         />
         <Stack.Screen
@@ -172,7 +174,6 @@ const AppNavigator = () => {
           component={MailDetailScreen}
           options={({route}) => ({
             title: (route.params as any)?.mail?.fromNickname || '私信详情',
-            headerBackTitle: '返回',
           })}
         />
         <Stack.Screen
@@ -180,7 +181,6 @@ const AppNavigator = () => {
           component={BrowsingHistoryScreen}
           options={{
             title: '浏览历史',
-            headerBackTitle: '返回',
           }}
         />
         <Stack.Screen
@@ -188,7 +188,6 @@ const AppNavigator = () => {
           component={SearchScreen}
           options={{
             title: '搜索',
-            headerBackTitle: '返回',
           }}
         />
         <Stack.Screen
@@ -196,7 +195,6 @@ const AppNavigator = () => {
           component={LoginScreen}
           options={{
             title: '登录',
-            headerBackTitle: '返回',
             presentation: 'modal',
           }}
         />

@@ -15,9 +15,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {getUserInfo, logout} from '../services/api';
 import {User} from '../types';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
+import {useTheme} from '../components/ThemedComponents';
 
 const SettingsScreen: React.FC = () => {
   const navigation = useNavigation<any>();
+  const theme = useTheme();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -106,31 +108,31 @@ const SettingsScreen: React.FC = () => {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
+          <ActivityIndicator size="large" color={theme.primary} />
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
       <ScrollView 
         style={styles.content}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            colors={['#007AFF']}
-            tintColor="#007AFF"
+            colors={[theme.primary]}
+            tintColor={theme.primary}
           />
         }
       >
         {/* 个人信息卡片 - 微信风格 */}
         <View style={styles.firstSection}>
           <TouchableOpacity 
-            style={styles.profileCard}
+            style={[styles.profileCard, {backgroundColor: theme.cardBackground}]}
             onPress={() => {
               if (isLoggedIn && (user?.username || username)) {
                 navigation.navigate('UserProfile', { username: user?.username || username });
@@ -149,121 +151,121 @@ const SettingsScreen: React.FC = () => {
                   isAvatar={true}
                 />
               ) : (
-                <View style={styles.avatarPlaceholder}>
+                <View style={[styles.avatarPlaceholder, {backgroundColor: theme.primary}]}>
                   <Text style={styles.avatarText}>
                     {user?.username?.charAt(0).toUpperCase() || username?.charAt(0).toUpperCase() || 'U'}
                   </Text>
                 </View>
               )}
               <View style={styles.profileInfo}>
-                <Text style={styles.username}>
+                <Text style={[styles.username, {color: theme.text}]}>
                   {user?.nickname || user?.username || username || '未登录'}
                 </Text>
                 {(user?.username || username) && (
-                  <Text style={styles.userId}>水木社区ID: {user?.username || username}</Text>
+                  <Text style={[styles.userId, {color: theme.secondaryText}]}>水木社区ID: {user?.username || username}</Text>
                 )}
               </View>
             </View>
-            <Text style={styles.chevron}>›</Text>
+            <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
           </TouchableOpacity>
         </View>
 
         {/* 个人内容 */}
         <View style={styles.section}>
-          <View style={styles.card}>
+          <View style={[styles.card, {backgroundColor: theme.cardBackground}]}>
             <TouchableOpacity 
               style={styles.menuItem}
               onPress={() => navigation.navigate('BrowsingHistory')}>
               <View style={styles.menuItemLeft}>
                 <Text style={styles.menuIcon}>📜</Text>
-                <Text style={styles.menuItemText}>浏览历史</Text>
+                <Text style={[styles.menuItemText, {color: theme.text}]}>浏览历史</Text>
               </View>
-              <Text style={styles.chevron}>›</Text>
+              <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
             </TouchableOpacity>
-            <View style={styles.divider} />
+            <View style={[styles.divider, {backgroundColor: theme.border}]} />
             <TouchableOpacity 
               style={styles.menuItem}
               onPress={() => Alert.alert('提示', '我的收藏功能开发中')}>
               <View style={styles.menuItemLeft}>
                 <Text style={styles.menuIcon}>⭐</Text>
-                <Text style={styles.menuItemText}>我的收藏</Text>
+                <Text style={[styles.menuItemText, {color: theme.text}]}>我的收藏</Text>
               </View>
-              <Text style={styles.chevron}>›</Text>
+              <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
             </TouchableOpacity>
-            <View style={styles.divider} />
+            <View style={[styles.divider, {backgroundColor: theme.border}]} />
             <TouchableOpacity 
               style={styles.menuItem}
               onPress={() => Alert.alert('提示', '我的文章功能开发中')}>
               <View style={styles.menuItemLeft}>
                 <Text style={styles.menuIcon}>📝</Text>
-                <Text style={styles.menuItemText}>我的文章</Text>
+                <Text style={[styles.menuItemText, {color: theme.text}]}>我的文章</Text>
               </View>
-              <Text style={styles.chevron}>›</Text>
+              <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
             </TouchableOpacity>
           </View>
         </View>
 
         {/* 社交关系 */}
         <View style={styles.section}>
-          <View style={styles.card}>
+          <View style={[styles.card, {backgroundColor: theme.cardBackground}]}>
             <TouchableOpacity 
               style={styles.menuItem}
               onPress={() => Alert.alert('提示', '我的关注功能开发中')}>
               <View style={styles.menuItemLeft}>
                 <Text style={styles.menuIcon}>👥</Text>
-                <Text style={styles.menuItemText}>我的关注</Text>
+                <Text style={[styles.menuItemText, {color: theme.text}]}>我的关注</Text>
               </View>
-              <Text style={styles.chevron}>›</Text>
+              <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
             </TouchableOpacity>
-            <View style={styles.divider} />
+            <View style={[styles.divider, {backgroundColor: theme.border}]} />
             <TouchableOpacity 
               style={styles.menuItem}
               onPress={() => Alert.alert('提示', '我的粉丝功能开发中')}>
               <View style={styles.menuItemLeft}>
                 <Text style={styles.menuIcon}>👤</Text>
-                <Text style={styles.menuItemText}>我的粉丝</Text>
+                <Text style={[styles.menuItemText, {color: theme.text}]}>我的粉丝</Text>
               </View>
-              <Text style={styles.chevron}>›</Text>
+              <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
             </TouchableOpacity>
-            <View style={styles.divider} />
+            <View style={[styles.divider, {backgroundColor: theme.border}]} />
             <TouchableOpacity 
               style={styles.menuItem}
               onPress={() => Alert.alert('提示', '黑名单功能开发中')}>
               <View style={styles.menuItemLeft}>
                 <Text style={styles.menuIcon}>🚫</Text>
-                <Text style={styles.menuItemText}>黑名单</Text>
+                <Text style={[styles.menuItemText, {color: theme.text}]}>黑名单</Text>
               </View>
-              <Text style={styles.chevron}>›</Text>
+              <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
             </TouchableOpacity>
           </View>
         </View>
 
         {/* 站内邮箱 */}
         <View style={styles.section}>
-          <View style={styles.card}>
+          <View style={[styles.card, {backgroundColor: theme.cardBackground}]}>
             <TouchableOpacity 
               style={styles.menuItem}
               onPress={() => navigation.navigate('Mail')}>
               <View style={styles.menuItemLeft}>
                 <Text style={styles.menuIcon}>✉️</Text>
-                <Text style={styles.menuItemText}>站内邮箱</Text>
+                <Text style={[styles.menuItemText, {color: theme.text}]}>站内邮箱</Text>
               </View>
-              <Text style={styles.chevron}>›</Text>
+              <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
             </TouchableOpacity>
           </View>
         </View>
 
         {/* 设置 */}
         <View style={styles.section}>
-          <View style={styles.card}>
+          <View style={[styles.card, {backgroundColor: theme.cardBackground}]}>
             <TouchableOpacity 
               style={styles.menuItem}
               onPress={() => navigation.navigate('SettingsDetail')}>
               <View style={styles.menuItemLeft}>
                 <Text style={styles.menuIcon}>⚙️</Text>
-                <Text style={styles.menuItemText}>设置</Text>
+                <Text style={[styles.menuItemText, {color: theme.text}]}>设置</Text>
               </View>
-              <Text style={styles.chevron}>›</Text>
+              <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -278,7 +280,7 @@ const SettingsScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#EDEDED',
+    // backgroundColor 由主题动态控制
   },
   loadingContainer: {
     flex: 1,
@@ -298,7 +300,7 @@ const styles = StyleSheet.create({
   },
   // 个人信息卡片 - 微信风格
   profileCard: {
-    backgroundColor: '#fff',
+    // backgroundColor 由主题动态控制
     borderRadius: 8,
     padding: 16,
     flexDirection: 'row',
@@ -319,7 +321,7 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 6,
-    backgroundColor: '#007AFF',
+    // backgroundColor 由主题动态控制
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -335,16 +337,16 @@ const styles = StyleSheet.create({
   username: {
     fontSize: 22,
     fontWeight: '600',
-    color: '#000',
+    // color 由主题动态控制
     marginBottom: 4,
   },
   userId: {
     fontSize: 14,
-    color: '#888',
+    // color 由主题动态控制
   },
   // 功能卡片
   card: {
-    backgroundColor: '#fff',
+    // backgroundColor 由主题动态控制
     borderRadius: 8,
     overflow: 'hidden',
   },
@@ -354,7 +356,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 14,
     paddingHorizontal: 16,
-    backgroundColor: '#fff',
   },
   menuItemLeft: {
     flexDirection: 'row',
@@ -369,32 +370,16 @@ const styles = StyleSheet.create({
   },
   menuItemText: {
     fontSize: 17,
-    color: '#000',
+    // color 由主题动态控制
   },
   chevron: {
     fontSize: 20,
-    color: '#C7C7CC',
+    // color 由主题动态控制
     fontWeight: '300',
-  },
-  // 信息行
-  infoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-  },
-  infoLabel: {
-    fontSize: 17,
-    color: '#000',
-  },
-  infoValue: {
-    fontSize: 17,
-    color: '#888',
   },
   divider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: '#E5E5E5',
+    // backgroundColor 由主题动态控制
     marginLeft: 16,
   },
 });

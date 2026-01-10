@@ -7,6 +7,7 @@ import {createNativeStackNavigator} from '@react-navigation/native-stack';
 // Components
 import AppNavigator from './src/navigation/AppNavigator';
 import LoginScreen from './src/screens/LoginScreen';
+import {SettingsProvider} from './src/context/SettingsContext';
 
 const AuthStack = createNativeStackNavigator();
 
@@ -50,23 +51,25 @@ const App = () => {
   // 登录后显示主导航
   if (isLoggedIn) {
     return (
-      <>
+      <SettingsProvider>
         <StatusBar barStyle="dark-content" backgroundColor="#fff" />
         <AppNavigator />
-      </>
+      </SettingsProvider>
     );
   }
 
   // 未登录显示登录页面
   return (
-    <NavigationContainer>
-      <StatusBar barStyle="dark-content" backgroundColor="#fff" />
-      <AuthStack.Navigator screenOptions={{headerShown: false}}>
-        <AuthStack.Screen name="Login">
-          {() => <LoginScreen onLoginSuccess={handleLoginSuccess} />}
-        </AuthStack.Screen>
-      </AuthStack.Navigator>
-    </NavigationContainer>
+    <SettingsProvider>
+      <NavigationContainer>
+        <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+        <AuthStack.Navigator screenOptions={{headerShown: false}}>
+          <AuthStack.Screen name="Login">
+            {() => <LoginScreen onLoginSuccess={handleLoginSuccess} />}
+          </AuthStack.Screen>
+        </AuthStack.Navigator>
+      </NavigationContainer>
+    </SettingsProvider>
   );
 };
 

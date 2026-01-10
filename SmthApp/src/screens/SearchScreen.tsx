@@ -124,7 +124,7 @@ const SearchScreen: React.FC = () => {
         <View style={styles.headerContainer}>
           <TextInput
             style={styles.searchInput}
-            placeholder="搜索文章"
+            placeholder="搜索文章/版面/用户"
             value={keyword}
             onChangeText={setKeyword}
             returnKeyType="search"

@@ -20,6 +20,8 @@ import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import ImageViewer from '../components/ImageViewer';
 import {cacheManager} from '../services/cacheManager';
 import {saveBrowsingHistory} from './BrowsingHistoryScreen';
+import {useSettings} from '../context/SettingsContext';
+import {getTheme, getFontSizes} from '../utils/theme';
 
 // 格式化具体时间（用于主帖）
 const formatDateTime = (time: string): string => {
@@ -46,6 +48,9 @@ const PostDetailScreen: React.FC = () => {
   const route = useRoute();
   const navigation = useNavigation<any>();
   const {board, postId} = route.params as {board: string; postId: string};
+  const {settings} = useSettings();
+  const theme = getTheme(settings.themeMode);
+  const fontSizes = getFontSizes(settings.fontSize);
   const [post, setPost] = useState<Post | null>(null);
   const [replies, setReplies] = useState<Reply[]>([]);
   const [loading, setLoading] = useState(true);
@@ -210,8 +215,21 @@ const PostDetailScreen: React.FC = () => {
       .map((segment, index) => (
         <View
           key={index}
-          style={segment.type === 'quote' ? styles.quoteContainer : styles.textContainer}>
-          <Text style={segment.type === 'quote' ? styles.quoteText : styles.contentText}>
+          style={[
+            segment.type === 'quote' ? styles.quoteContainer : styles.textContainer,
+            segment.type === 'quote' && {
+              backgroundColor: theme.quoteBackground,
+              borderLeftColor: theme.quoteBorder,
+            }
+          ]}>
+          <Text style={[
+            segment.type === 'quote' ? styles.quoteText : styles.contentText,
+            {
+              fontSize: segment.type === 'quote' ? fontSizes.quote : fontSizes.content,
+              lineHeight: segment.type === 'quote' ? fontSizes.quoteLineHeight : fontSizes.lineHeight,
+              color: segment.type === 'quote' ? theme.secondaryText : theme.text,
+            }
+          ]}>
             {segment.text.trim()}
           </Text>
         </View>
@@ -317,9 +335,9 @@ const PostDetailScreen: React.FC = () => {
     const displayedLikes = showCollapse && !likesExpanded ? likes.slice(0, 5) : likes;
 
     return (
-      <View style={styles.likesContainer}>
+      <View style={[styles.likesContainer, {borderTopColor: theme.border}]}>
         <View style={styles.likesHeader}>
-          <Text style={styles.likesTitle}>点赞/点评 ({likes.length})</Text>
+          <Text style={[styles.likesTitle, {color: theme.secondaryText}]}>点赞/点评 ({likes.length})</Text>
         </View>
         {displayedLikes.map((like, index) => (
           <View key={like.id || index} style={styles.likeItem}>
@@ -346,24 +364,27 @@ const PostDetailScreen: React.FC = () => {
                 )}
               </TouchableOpacity>
               <View style={styles.likeTextContainer}>
-                <View style={styles.likeUserRow}>
-                  <Text style={styles.likeAuthor}>
-                    {like.nick ? `${like.nick} (${like.author})` : like.author}
-                    {like.levelTitle ? ` · ${like.levelTitle}` : ''}
+                <Text style={[styles.likeContent, {color: theme.text}]}>
+                  <Text style={[styles.likeAuthor, {color: theme.text}]}>
+                    {like.author}
                   </Text>
-                  <Text style={styles.likeTime}>{formatRelativeTime(like.postTime)}</Text>
-                </View>
-                <Text style={styles.likeBody}>{like.body}</Text>
-                {like.city ? <Text style={styles.likeCity}>{like.city}</Text> : null}
+                  {like.score !== undefined && like.score !== null && like.score !== 0 && (
+                    <Text style={[styles.likeScore, {color: theme.error}]}>
+                      {' '}[{like.score > 0 ? '+' : ''}{like.score}分]
+                    </Text>
+                  )}
+                  <Text style={[styles.likeColon, {color: theme.secondaryText}]}>: </Text>
+                  <Text style={[styles.likeBody, {color: theme.text}]}>{like.body}</Text>
+                </Text>
               </View>
             </View>
           </View>
         ))}
         {showCollapse && (
           <TouchableOpacity
-            style={styles.likesExpandButton}
+            style={[styles.likesExpandButton, {borderTopColor: theme.border}]}
             onPress={() => setLikesExpanded(!likesExpanded)}>
-            <Text style={styles.likesExpandText}>
+            <Text style={[styles.likesExpandText, {color: theme.primary}]}>
               {likesExpanded ? '收起更多点评' : `查看更多 ${likes.length - 5} 条点评...`}
             </Text>
           </TouchableOpacity>
@@ -376,7 +397,7 @@ const PostDetailScreen: React.FC = () => {
     const isAuthor = post && item.author === post.author;
     
     return (
-    <View style={styles.replyContainer}>
+    <View style={[styles.replyContainer, {backgroundColor: theme.cardBackground}]}>
       <View style={styles.replyHeader}>
         <View style={styles.replyAuthorInfo}>
           <TouchableOpacity
@@ -393,7 +414,7 @@ const PostDetailScreen: React.FC = () => {
                 isAvatar={true}
               />
             ) : (
-              <View style={styles.authorAvatarPlaceholder}>
+              <View style={[styles.authorAvatarPlaceholder, {backgroundColor: theme.primary}]}>
                 <Text style={styles.authorAvatarText}>
                   {item.author.charAt(0).toUpperCase()}
                 </Text>
@@ -402,8 +423,8 @@ const PostDetailScreen: React.FC = () => {
           </TouchableOpacity>
           <View style={styles.authorText}>
               <View style={styles.authorNameRow}>
-            <Text style={styles.authorName}>
-                  {item.nickname ? `${item.nickname} (${item.author})` : item.author}
+            <Text style={[styles.authorName, {color: theme.text}]}>
+                  {item.nickname || item.author}
                   {item.levelTitle ? ` · ${item.levelTitle}` : ''}
             </Text>
                 {isAuthor && (
@@ -412,32 +433,38 @@ const PostDetailScreen: React.FC = () => {
                   </View>
                 )}
               </View>
-              {(item.city || item.location) && (
-                <Text style={styles.location}>{item.city || item.location}</Text>
-            )}
+              <View style={styles.authorMetaRow}>
+                <Text style={[styles.authorID, {color: theme.secondaryText}]}>@{item.author}</Text>
+                {(item.city || item.location) && (
+                  <>
+                    <Text style={[styles.authorMetaSeparator, {color: theme.secondaryText}]}> · </Text>
+                    <Text style={[styles.location, {color: theme.secondaryText}]}>{item.city || item.location}</Text>
+                  </>
+                )}
+              </View>
           </View>
         </View>
           {item.floor && (
-            <Text style={styles.floor}>#{item.floor}</Text>
+            <Text style={[styles.floor, {color: theme.secondaryText}]}>#{item.floor}</Text>
           )}
       </View>
       {item.signature && (
-        <Text style={styles.signature}>{item.signature}</Text>
+        <Text style={[styles.signature, {color: theme.secondaryText}]}>{item.signature}</Text>
       )}
       <View style={styles.replyContentBody}>
         {renderContent(item.content)}
       </View>
       {renderAttachments(item.attachments || [])}
-      <Text style={styles.replyTime}>{formatRelativeTime(item.postTime)}</Text>
+      <Text style={[styles.replyTime, {color: theme.secondaryText}]}>{formatRelativeTime(item.postTime)}</Text>
     </View>
   );
   };
 
   if (loading && !post) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
+          <ActivityIndicator size="large" color={theme.primary} />
         </View>
       </SafeAreaView>
     );
@@ -445,9 +472,9 @@ const PostDetailScreen: React.FC = () => {
 
   if (!post) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
         <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>帖子不存在</Text>
+          <Text style={[styles.emptyText, {color: theme.secondaryText}]}>帖子不存在</Text>
         </View>
       </SafeAreaView>
     );
@@ -459,12 +486,12 @@ const PostDetailScreen: React.FC = () => {
     return (
       <View style={styles.footerContainer}>
         {loadingMore ? (
-          <ActivityIndicator size="small" color="#007AFF" />
+          <ActivityIndicator size="small" color={theme.primary} />
         ) : (
           <TouchableOpacity 
-            style={styles.loadMoreButton}
+            style={[styles.loadMoreButton, {backgroundColor: theme.cardBackground, borderColor: theme.border}]}
             onPress={loadMore}>
-            <Text style={styles.loadMoreText}>加载更多回复</Text>
+            <Text style={[styles.loadMoreText, {color: theme.primary}]}>加载更多回复</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -472,20 +499,20 @@ const PostDetailScreen: React.FC = () => {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
       <FlatList
         data={replies}
         renderItem={renderReply}
         keyExtractor={(item, index) => `${item.id}-${index}`}
         ListHeaderComponent={
-          <View style={styles.postContainer}>
-            <Text style={styles.postTitle}>{post.title}</Text>
+          <View style={[styles.postContainer, {backgroundColor: theme.cardBackground}]}>
+            <Text style={[styles.postTitle, {color: theme.text}]}>{post.title}</Text>
             <View style={styles.postMeta}>
-              <Text style={styles.metaText}>{post.boardName || post.board}</Text>
-              <Text style={styles.metaText}>回复: {post.replyCount}</Text>
-              <Text style={styles.metaText}>{formatDateTime(post.postTime)}</Text>
+              <Text style={[styles.metaText, {color: theme.secondaryText}]}>{post.boardName || post.board}</Text>
+              <Text style={[styles.metaText, {color: theme.secondaryText}]}>回复: {post.replyCount}</Text>
+              <Text style={[styles.metaText, {color: theme.secondaryText}]}>{formatDateTime(post.postTime)}</Text>
             </View>
-            <View style={styles.divider} />
+            <View style={[styles.divider, {backgroundColor: theme.border}]} />
             <View style={styles.authorContainer}>
               {post.author && (
                 <View style={styles.authorInfo}>
@@ -503,7 +530,7 @@ const PostDetailScreen: React.FC = () => {
                         isAvatar={true}
                       />
                     ) : (
-                    <View style={styles.authorAvatarPlaceholder}>
+                    <View style={[styles.authorAvatarPlaceholder, {backgroundColor: theme.primary}]}>
                       <Text style={styles.authorAvatarText}>
                         {post.author.charAt(0).toUpperCase()}
                       </Text>
@@ -511,15 +538,19 @@ const PostDetailScreen: React.FC = () => {
                     )}
                   </TouchableOpacity>
                   <View style={styles.authorDetails}>
-                    <Text style={styles.authorName}>
-                      {post.nick ? `${post.nick} (${post.author})` : post.author}
+                    <Text style={[styles.authorName, {color: theme.text}]}>
+                      {post.nick || post.author}
                       {post.levelTitle ? ` · ${post.levelTitle}` : ''}
-                      </Text>
-                    {post.city ? (
-                      <Text style={styles.authorCity}>{post.city}</Text>
-                    ) : (
-                      <Text style={styles.authorID}>@{post.author}</Text>
-                    )}
+                    </Text>
+                    <View style={styles.authorMetaRow}>
+                      <Text style={[styles.authorID, {color: theme.secondaryText}]}>@{post.author}</Text>
+                      {post.city && (
+                        <>
+                          <Text style={[styles.authorMetaSeparator, {color: theme.secondaryText}]}> · </Text>
+                          <Text style={[styles.authorCity, {color: theme.secondaryText}]}>{post.city}</Text>
+                        </>
+                      )}
+                    </View>
                   </View>
                 </View>
               )}
@@ -529,8 +560,8 @@ const PostDetailScreen: React.FC = () => {
             </View>
             {renderAttachments(post.attachments || [])}
             {renderLikes(post.likes || [])}
-            <View style={styles.divider} />
-            <Text style={styles.repliesTitle}>回复 ({post.replyCount})</Text>
+            <View style={[styles.divider, {backgroundColor: theme.border}]} />
+            <Text style={[styles.repliesTitle, {color: theme.text}]}>回复 ({post.replyCount})</Text>
           </View>
         }
         ListFooterComponent={renderFooter}
@@ -619,6 +650,15 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   authorID: {
+    fontSize: 10,
+    color: '#999',
+  },
+  authorMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  authorMetaSeparator: {
     fontSize: 10,
     color: '#999',
   },
@@ -728,7 +768,7 @@ const styles = StyleSheet.create({
   },
   likeUserInfo: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
   },
   likeAvatar: {
     width: 32,
@@ -749,30 +789,44 @@ const styles = StyleSheet.create({
   likeTextContainer: {
     flex: 1,
   },
-  likeUserRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
+  likeContent: {
+    fontSize: 13,
+    lineHeight: 18,
   },
   likeAuthor: {
-    fontSize: 11,
-    fontWeight: '500',
+    fontSize: 13,
+    fontWeight: '600',
     color: '#333',
+  },
+  likeScore: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#FF6B6B',
+  },
+  likeColon: {
+    fontSize: 13,
+    color: '#666',
+  },
+  likeBody: {
+    fontSize: 13,
+    color: '#444',
+  },
+  likeMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  likeMetaSeparator: {
+    fontSize: 9,
+    color: '#999',
   },
   likeTime: {
     fontSize: 9,
     color: '#999',
   },
-  likeBody: {
-    fontSize: 13,
-    color: '#444',
-    lineHeight: 18,
-  },
   likeCity: {
     fontSize: 9,
     color: '#999',
-    marginTop: 2,
   },
   likesExpandButton: {
     paddingVertical: 12,

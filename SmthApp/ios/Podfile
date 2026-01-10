@@ -39,5 +39,23 @@ target 'SmthApp' do
         config.build_settings['GCC_WARN_INHIBIT_ALL_WARNINGS'] = 'YES'
       end
     end
+    
+    # 添加本地化文件支持
+    project_path = 'SmthApp.xcodeproj'
+    project = Xcodeproj::Project.open(project_path)
+    main_target = project.targets.first
+    main_group = project.main_group.find_subpath('SmthApp', true)
+    
+    # 添加本地化文件（如果还没有添加）
+    ['en', 'zh-Hans'].each do |locale|
+      strings_path = "SmthApp/#{locale}.lproj/InfoPlist.strings"
+      next if main_group.files.any? { |f| f.path&.include?("#{locale}.lproj/InfoPlist.strings") }
+      
+      file_ref = main_group.new_file(strings_path)
+      main_target.resources_build_phase.add_file_reference(file_ref)
+      puts "✅ 已添加本地化文件: #{strings_path}"
+    end
+    
+    project.save
   end
 end

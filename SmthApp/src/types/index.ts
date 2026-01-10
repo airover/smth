@@ -75,6 +75,7 @@ export interface Like {
   levelTitle?: string;
   body: string;
   postTime: string;
+  score?: number;
 }
 
 export interface Attachment {
@@ -130,3 +131,9 @@ export interface LoginCredentials {
   password: string;
 }
 
+// 全局配置
+export interface AppSettings {
+  fontSize: 'small' | 'medium' | 'large'; // 帖子内容字体大小
+  defaultBoardSort: 'post' | 'reply'; // 版面帖子默认排序方式: post-按发布时间, reply-按回复时间
+  themeMode: 'light' | 'dark' | 'auto'; // 主题模式: light-日间, dark-夜间, auto-跟随系统
+}

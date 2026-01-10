@@ -1,5 +1,6 @@
 // 本地存储工具函数
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {AppSettings} from '../types';
 
 export const STORAGE_KEYS = {
   SAVED_USERNAME: 'saved_username',
@@ -9,6 +10,14 @@ export const STORAGE_KEYS = {
   USERNAME: 'username',
   COOKIES: 'cookies',
   FAVORITE_BOARDS: 'favoriteBoards',
+  APP_SETTINGS: 'app_settings', // 全局配置
+};
+
+// 默认配置
+const DEFAULT_SETTINGS: AppSettings = {
+  fontSize: 'medium',
+  defaultBoardSort: 'post',
+  themeMode: 'light',
 };
 
 // 保存账号密码
@@ -73,3 +82,43 @@ export const clearSavedCredentials = async (): Promise<void> => {
   }
 };
 
+// 获取应用配置
+export const getAppSettings = async (): Promise<AppSettings> => {
+  try {
+    const settingsJson = await AsyncStorage.getItem(STORAGE_KEYS.APP_SETTINGS);
+    if (settingsJson) {
+      const settings = JSON.parse(settingsJson);
+      // 合并默认配置，确保新增配置项有默认值
+      return {...DEFAULT_SETTINGS, ...settings};
+    }
+    return DEFAULT_SETTINGS;
+  } catch (error) {
+    console.error('Get app settings error:', error);
+    return DEFAULT_SETTINGS;
+  }
+};
+
+// 保存应用配置
+export const saveAppSettings = async (settings: AppSettings): Promise<void> => {
+  try {
+    await AsyncStorage.setItem(STORAGE_KEYS.APP_SETTINGS, JSON.stringify(settings));
+  } catch (error) {
+    console.error('Save app settings error:', error);
+    throw error;
+  }
+};
+
+// 更新单个配置项
+export const updateAppSetting = async <K extends keyof AppSettings>(
+  key: K,
+  value: AppSettings[K],
+): Promise<void> => {
+  try {
+    const settings = await getAppSettings();
+    settings[key] = value;
+    await saveAppSettings(settings);
+  } catch (error) {
+    console.error('Update app setting error:', error);
+    throw error;
+  }
+};
