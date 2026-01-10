@@ -1,3 +1,30 @@
+/**
+ * 缓存管理界面
+ * 
+ * 功能概览：
+ * 1. 显示缓存统计信息
+ * 2. 提供多层级的缓存清理功能
+ * 
+ * 清理功能层级（从小到大）：
+ * ┌─────────────────────────────────────────────────────────────┐
+ * │ 层级1：分类清理（最小单位）                                      │
+ * │ - 清除"帖子类缓存"：hotPosts, postDetail, topicReplies 等     │
+ * │ - 清除"版面类缓存"：boards, boardPosts, favoriteBoards 等     │
+ * │ - 清除"其他缓存"：userInfo 等                                 │
+ * │ - 清除"已读记录"：read_posts_ids, read_posts_details         │
+ * ├─────────────────────────────────────────────────────────────┤
+ * │ 层级2：内存缓存清理（中等范围）                                  │
+ * │ - 清除所有内存缓存 = 清除所有分类（帖子+版面+其他）                │
+ * │ - 不影响持久化数据（登录信息、已读记录、设置）                      │
+ * ├─────────────────────────────────────────────────────────────┤
+ * │ 层级3：全部清理（最大范围）⚠️                                   │
+ * │ - 清除所有数据 = 内存缓存 + 持久化数据                           │
+ * │ - 包括：登录信息、已读记录、用户设置、浏览历史等                    │
+ * │ - 需要重新登录                                                │
+ * └─────────────────────────────────────────────────────────────┘
+ * 
+ * 详细说明请参考：CACHE_CLEANUP_GUIDE.md
+ */
 import React, {useState, useEffect} from 'react';
 import {
   View,
@@ -9,7 +36,7 @@ import {
   SafeAreaView,
   RefreshControl,
 } from 'react-native';
-import {getCacheStats, clearCache, cleanExpiredCache} from '../services/cacheManager';
+import {getCacheStats, clearCache} from '../services/cacheManager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const CacheManagementScreen: React.FC = () => {
@@ -77,6 +104,12 @@ const CacheManagementScreen: React.FC = () => {
     setRefreshing(false);
   };
 
+  /**
+   * 清除内存缓存
+   * 范围：清除所有内存中的缓存（帖子类、版面类、其他）
+   * 不影响：登录信息、已读记录、用户设置等持久化数据
+   * 层级：中层清理（包含所有分类的内存缓存）
+   */
   const handleClearMemoryCache = () => {
     Alert.alert(
       '清除内存缓存',
@@ -87,7 +120,7 @@ const CacheManagementScreen: React.FC = () => {
           text: '确定',
           style: 'destructive',
           onPress: () => {
-            clearCache();
+            clearCache(); // 清除所有内存缓存
             loadStats();
             Alert.alert('成功', '内存缓存已清除');
           },
@@ -96,12 +129,12 @@ const CacheManagementScreen: React.FC = () => {
     );
   };
 
-  const handleClearExpiredCache = () => {
-    const cleaned = cleanExpiredCache();
-    loadStats();
-    Alert.alert('成功', `已清理 ${cleaned} 个过期缓存项`);
-  };
-
+  /**
+   * 清除已读帖子记录
+   * 范围：仅清除已读帖子的记录（持久化缓存）
+   * 不影响：内存缓存、登录信息、用户设置
+   * 层级：独立功能（只针对已读记录）
+   */
   const handleClearReadPosts = async () => {
     try {
       await AsyncStorage.removeItem('read_posts_ids');
@@ -114,6 +147,13 @@ const CacheManagementScreen: React.FC = () => {
     }
   };
 
+  /**
+   * 清除所有数据
+   * 范围：清除所有缓存和数据（内存+持久化）
+   * 包括：内存缓存、登录信息、已读记录、用户设置、浏览历史等
+   * 层级：最高层清理（相当于恢复应用到初始状态）
+   * ⚠️ 需要重新登录
+   */
   const handleClearAllData = () => {
     Alert.alert(
       '清除所有数据',
@@ -125,9 +165,9 @@ const CacheManagementScreen: React.FC = () => {
           style: 'destructive',
           onPress: async () => {
             try {
-              // 清除内存缓存
+              // 1. 清除所有内存缓存
               clearCache();
-              // 清除 AsyncStorage
+              // 2. 清除所有持久化数据（包括登录信息）
               await AsyncStorage.clear();
               loadStats();
               Alert.alert('成功', '所有数据已清除，请重新登录');
@@ -140,48 +180,104 @@ const CacheManagementScreen: React.FC = () => {
     );
   };
 
-  const renderCategoryItem = (category: {name: string; count: number; size: string}) => {
+  const getCategorizedData = () => {
     const categoryNames: {[key: string]: string} = {
+      // 帖子类
+      hotPosts: '热门帖子',
+      postDetail: '帖子详情',
+      topicReplies: '帖子回复',
+      channelPosts: '频道帖子',
+      albumPosts: '图览帖子',
+      topTen: '今日十大',
+      // 版面类
       boards: '版面分区',
       subBoards: '子版面',
       boardPosts: '版面帖子',
-      userInfo: '用户信息',
-      favoriteBoards: '收藏版面',
-      topTen: '今日十大',
       hotBoards: '热门版面',
-      postDetail: '帖子详情',
-      topicReplies: '帖子回复',
+      favoriteBoards: '收藏版面',
+      // 其他
+      userInfo: '用户信息',
     };
 
+    // 帖子类缓存
+    const postCategories = ['hotPosts', 'postDetail', 'topicReplies', 'channelPosts', 'albumPosts', 'topTen'];
+    const postData = cacheStats.categories.filter(cat => postCategories.includes(cat.name));
+    const postTotal = postData.reduce((sum, cat) => sum + cat.count, 0);
+    const postCacheKeys = postData.map(cat => cat.name);
+
+    // 版面类缓存
+    const boardCategories = ['boards', 'subBoards', 'boardPosts', 'hotBoards', 'favoriteBoards'];
+    const boardData = cacheStats.categories.filter(cat => boardCategories.includes(cat.name));
+    const boardTotal = boardData.reduce((sum, cat) => sum + cat.count, 0);
+    const boardCacheKeys = boardData.map(cat => cat.name);
+
+    // 其他缓存
+    const otherData = cacheStats.categories.filter(
+      cat => !postCategories.includes(cat.name) && !boardCategories.includes(cat.name)
+    );
+
+    return {
+      categoryNames,
+      postData: {items: postData, total: postTotal, keys: postCacheKeys},
+      boardData: {items: boardData, total: boardTotal, keys: boardCacheKeys},
+      otherData,
+    };
+  };
+
+  /**
+   * 渲染分类缓存组
+   * 功能：显示单个缓存分类（帖子类/版面类/其他）及其清除按钮
+   * 
+   * 清除范围：
+   * - "帖子类缓存"：清除所有帖子相关的内存缓存
+   * - "版面类缓存"：清除所有版面相关的内存缓存
+   * - "其他缓存"：清除其他内存缓存（如用户信息）
+   * 
+   * 不影响：持久化数据、登录信息、其他分类的缓存
+   * 层级：最小单位清理（只针对特定分类）
+   */
+  const renderCategoryGroup = (
+    title: string,
+    data: {items: {name: string; count: number; size: string}[]; total: number; keys: string[]},
+    categoryNames: {[key: string]: string}
+  ) => {
+    if (data.total === 0) return null;
+
+    // 计算总大小
+    const totalSizeKB = data.items.reduce((sum, item) => {
+      const sizeMatch = item.size.match(/([\d.]+)\s*KB/);
+      return sum + (sizeMatch ? parseFloat(sizeMatch[1]) : 0);
+    }, 0);
+    const sizeDisplay = totalSizeKB >= 1024 
+      ? `${(totalSizeKB / 1024).toFixed(2)} MB` 
+      : `${totalSizeKB.toFixed(2)} KB`;
+
     return (
-      <View key={category.name} style={styles.statItem}>
+      <View style={styles.statItem}>
         <View style={styles.statItemLeft}>
-          <Text style={styles.statItemName}>{categoryNames[category.name] || category.name}</Text>
-          <Text style={styles.statItemValue}>{category.size}</Text>
+          <Text style={styles.statItemName}>{title}</Text>
+          <Text style={styles.statItemValue}>
+            {data.total} 项 · {sizeDisplay}
+          </Text>
         </View>
-        {category.count > 0 && (
-          <TouchableOpacity
-            style={styles.clearButton}
-            onPress={() => {
-              Alert.alert(
-                '清除缓存',
-                `确定要清除"${categoryNames[category.name]}"的缓存吗？`,
-                [
-                  {text: '取消', style: 'cancel'},
-                  {
-                    text: '确定',
-                    onPress: () => {
-                      clearCache(category.name as any);
-                      loadStats();
-                      Alert.alert('成功', '缓存已清除');
-                    },
-                  },
-                ]
-              );
-            }}>
-            <Text style={styles.clearButtonText}>清除</Text>
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity
+          style={styles.clearButton}
+          onPress={() => {
+            Alert.alert('清除缓存', `确定要清除所有${title}吗？`, [
+              {text: '取消', style: 'cancel'},
+              {
+                text: '确定',
+                onPress: () => {
+                  // 清除该分类下的所有缓存项
+                  data.keys.forEach(key => clearCache(key as any));
+                  loadStats();
+                  Alert.alert('成功', `${title}已清除`);
+                },
+              },
+            ]);
+          }}>
+          <Text style={styles.clearButtonText}>清除</Text>
+        </TouchableOpacity>
       </View>
     );
   };
@@ -246,11 +342,43 @@ const CacheManagementScreen: React.FC = () => {
           </View>
         </View>
 
-        {/* 内存缓存详情 */}
+        {/* 内存缓存详情 - 归类显示 */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>内存缓存详情</Text>
           <View style={styles.card}>
-            {cacheStats.categories.map(renderCategoryItem)}
+            {(() => {
+              const {categoryNames, postData, boardData, otherData} = getCategorizedData();
+              const hasData = postData.total > 0 || boardData.total > 0 || otherData.length > 0;
+              
+              if (!hasData) {
+                return (
+                  <View style={styles.emptyState}>
+                    <Text style={styles.emptyText}>暂无缓存</Text>
+                  </View>
+                );
+              }
+
+              return (
+                <>
+                  {postData.total > 0 && renderCategoryGroup('帖子类缓存', postData, categoryNames)}
+                  {postData.total > 0 && boardData.total > 0 && <View style={styles.divider} />}
+                  {boardData.total > 0 && renderCategoryGroup('版面类缓存', boardData, categoryNames)}
+                  {otherData.length > 0 && (postData.total > 0 || boardData.total > 0) && (
+                    <View style={styles.divider} />
+                  )}
+                  {otherData.length > 0 &&
+                    renderCategoryGroup(
+                      '其他缓存',
+                      {
+                        items: otherData,
+                        total: otherData.reduce((sum, cat) => sum + cat.count, 0),
+                        keys: otherData.map(cat => cat.name),
+                      },
+                      categoryNames
+                    )}
+                </>
+              );
+            })()}
           </View>
         </View>
 
@@ -258,18 +386,6 @@ const CacheManagementScreen: React.FC = () => {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>缓存管理</Text>
           <View style={styles.card}>
-            <TouchableOpacity style={styles.actionButton} onPress={handleClearExpiredCache}>
-              <View style={styles.actionButtonContent}>
-                <View>
-                  <Text style={styles.actionButtonText}>清理过期缓存</Text>
-                  <Text style={styles.actionButtonDesc}>清理超过1分钟的缓存项</Text>
-                </View>
-                <Text style={styles.chevron}>›</Text>
-              </View>
-            </TouchableOpacity>
-
-            <View style={styles.divider} />
-
             <TouchableOpacity style={styles.actionButton} onPress={handleClearMemoryCache}>
               <View style={styles.actionButtonContent}>
                 <View>
@@ -294,20 +410,6 @@ const CacheManagementScreen: React.FC = () => {
           </View>
         </View>
 
-        {/* 说明 */}
-        <View style={styles.section}>
-          <View style={styles.card}>
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>缓存策略</Text>
-              <Text style={styles.infoValue}>1分钟自动过期</Text>
-            </View>
-            <View style={styles.divider} />
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>清理建议</Text>
-              <Text style={styles.infoValue}>每周一次</Text>
-            </View>
-          </View>
-        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -361,9 +463,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#f0f0f0',
+    paddingVertical: 14,
   },
   statItemLeft: {
     flex: 1,
@@ -386,6 +486,14 @@ const styles = StyleSheet.create({
   clearButtonText: {
     fontSize: 13,
     color: '#007AFF',
+  },
+  emptyState: {
+    paddingVertical: 20,
+    alignItems: 'center',
+  },
+  emptyText: {
+    fontSize: 14,
+    color: '#8E8E93',
   },
   actionButton: {
     paddingVertical: 12,
@@ -417,20 +525,6 @@ const styles = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     backgroundColor: '#f0f0f0',
     marginVertical: 8,
-  },
-  infoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
-  },
-  infoLabel: {
-    fontSize: 15,
-    color: '#000',
-  },
-  infoValue: {
-    fontSize: 15,
-    color: '#8E8E93',
   },
 });
 

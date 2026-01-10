@@ -226,12 +226,6 @@ const UserProfileScreen: React.FC = () => {
                     </Text>
                   </View>
                 )}
-                {/* 头衔徽章 */}
-                {isCurrentUser && user?.levelTitle && (
-                  <View style={styles.levelBadgeOnAvatar}>
-                    <Text style={styles.levelBadgeText}>Lv{user.levelTitle}</Text>
-                  </View>
-                )}
               </View>
               
               {/* 昵称（如果存在且与用户名不同且不太长） */}
@@ -559,22 +553,6 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(255, 255, 255, 0.8)',
     textShadowOffset: {width: 0, height: 0},
     textShadowRadius: 8,
-  },
-  levelBadgeOnAvatar: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    backgroundColor: '#007AFF', // 蓝色主题
-    borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderWidth: 2,
-    borderColor: '#fff',
-  },
-  levelBadgeText: {
-    fontSize: 10,
-    fontWeight: 'bold',
-    color: '#fff',
   },
   // 用户信息区域
   userInfoSection: {

@@ -9,6 +9,9 @@ import {
   Alert,
   Modal,
   Switch,
+  Linking,
+  Platform,
+  Clipboard,
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -61,6 +64,41 @@ const SettingsDetailScreen: React.FC = () => {
         },
       },
     ]);
+  };
+
+  const handleFeedback = async () => {
+    const email = 'airover@gmail.com';
+    const subject = encodeURIComponent('My Smth 用户反馈');
+    const body = encodeURIComponent(
+      `感谢您使用 My Smth（我的水木）！\n\n请在下方描述您的问题或建议：\n\n\n\n---\n应用版本：1.0.0\n用户ID：${username || '未登录'}\n系统信息：${Platform.OS} ${Platform.Version}`
+    );
+    
+    const mailtoUrl = `mailto:${email}?subject=${subject}&body=${body}`;
+    
+    try {
+      const supported = await Linking.canOpenURL(mailtoUrl);
+      if (supported) {
+        await Linking.openURL(mailtoUrl);
+      } else {
+        Alert.alert(
+          '无法打开邮件应用',
+          `请手动发送邮件至：\n${email}\n\n或复制邮箱地址`,
+          [
+            {text: '取消', style: 'cancel'},
+            {
+              text: '复制邮箱',
+              onPress: () => {
+                Clipboard.setString(email);
+                Alert.alert('成功', `邮箱地址已复制：\n${email}`);
+              },
+            },
+          ]
+        );
+      }
+    } catch (error) {
+      console.error('Open email error:', error);
+      Alert.alert('错误', '打开邮件应用失败，请稍后重试');
+    }
   };
 
   const getFontSizeLabel = () => {
@@ -246,10 +284,29 @@ const SettingsDetailScreen: React.FC = () => {
               <Text style={[styles.infoValue, {color: theme.secondaryText}]}>1.0.0</Text>
             </View>
             <View style={[styles.divider, {backgroundColor: theme.border}]} />
-            <View style={styles.infoRow}>
-              <Text style={[styles.infoLabel, {color: theme.text}]}>缓存策略</Text>
-              <Text style={[styles.infoValue, {color: theme.secondaryText}]}>1分钟自动过期</Text>
-            </View>
+            <TouchableOpacity 
+              style={styles.menuItem}
+              onPress={handleFeedback}>
+              <View style={styles.menuItemLeft}>
+                <Text style={styles.menuIcon}>💬</Text>
+                <Text style={[styles.menuItemText, {color: theme.text}]}>用户反馈</Text>
+              </View>
+              <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
+            </TouchableOpacity>
+            <View style={[styles.divider, {backgroundColor: theme.border}]} />
+            <TouchableOpacity 
+              style={styles.menuItem}
+              onPress={() => Alert.alert(
+                '免责声明',
+                '一、应用性质\n\n本应用（My Smth/我的水木）是基于水木社区（newsmth.net）开发的非官方第三方移动客户端，与水木社区官方无任何直属关系。\n\n二、隐私保护\n\n1. 本应用不收集、不存储、不上传任何用户个人信息或隐私数据\n2. 用户登录凭证（Cookie）仅加密存储于用户本地设备，不会上传至任何第三方服务器\n3. 所有数据请求均直接与水木社区官方服务器通信\n4. 本应用不包含任何用户行为追踪或数据统计功能\n\n三、服务免责\n\n1. 本应用按"现状"提供，不对服务的稳定性、可靠性、准确性作任何明示或暗示的保证\n2. 因使用本应用产生的任何直接或间接损失，开发者不承担责任\n3. 本应用可能因维护、升级或其他原因暂停服务，恕不另行通知\n4. 用户在使用本应用时应遵守水木社区的各项管理规定和中国法律法规\n\n四、内容免责\n\n1. 本应用展示的所有内容均来自水木社区，开发者不对内容的真实性、合法性负责\n2. 如发现违法违规内容，请直接联系水木社区官方处理\n\n五、其他\n\n1. 本应用为开源项目，代码托管于公开平台，接受社区监督\n2. 使用本应用即表示您已阅读并同意本免责声明\n3. 开发者保留随时修改或更新本声明的权利\n\n如有疑问，请通过用户反馈渠道联系开发者。',
+                [{text: '我已知晓', style: 'default'}]
+              )}>
+              <View style={styles.menuItemLeft}>
+                <Text style={styles.menuIcon}>📄</Text>
+                <Text style={[styles.menuItemText, {color: theme.text}]}>免责声明</Text>
+              </View>
+              <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
+            </TouchableOpacity>
           </View>
         </View>
 
