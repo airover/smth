@@ -152,7 +152,6 @@ export const getTopTen = async (): Promise<any[] | null> => {
     
     console.log('getTopTen API response code:', json.code);
     console.log('getTopTen API response keys:', json.data ? Object.keys(json.data) : 'no data');
-    console.log('getTopTen API response data:', JSON.stringify(json.data).substring(0, 500));
 
     if (json.code === 1 && json.data) {
       const topics = json.data.topics || [];
@@ -694,19 +693,10 @@ export const getPostDetail = async (
       console.log('getPostDetail success:', post.title, 'by', post.author);
       return post;
     }
-    
-    // 🔴 修复：API返回失败时抛出错误，不返回null
-    const errorMsg = json.message || json.msg || 'API返回错误';
-    console.error('getPostDetail API failed:', {
-      code: json.code,
-      message: errorMsg,
-      url
-    });
-    throw new Error(`获取帖子详情失败: ${errorMsg}`);
+    return null;
   } catch (error) {
     console.error('Get post detail error:', error);
-    // 🔴 修复：失败时抛出错误，不返回null
-    throw error;
+    return null;
   }
 };
 
@@ -744,93 +734,75 @@ export const getTopicReplies = async (
     const json = await response.json();
     console.log('getTopicReplies API response code:', json.code);
 
-    // 🔴 修复：API返回失败时抛出错误，不写缓存
-    if (json.code !== 1) {
-      const errorMsg = json.message || json.msg || 'API返回错误';
-      console.error('getTopicReplies API failed:', {
-        code: json.code,
-        message: errorMsg,
-        url
+    if (json.code === 1 && json.data?.articles) {
+
+      const articles = json.data.articles;
+      const replies: any[] = articles.map((article: any) => {
+        // 提取头像，优先使用 k3sUrl/ks3Url（云存储）
+        let avatar = article.account?.k3sUrl || article.account?.ks3Url ||
+                     article.user?.k3sUrl || article.user?.ks3Url ||
+                     article.account?.avatarUrl || article.user?.avatarUrl || '';
+        if (avatar && avatar.startsWith('http:')) {
+          avatar = avatar.replace('http:', 'https:');
+        }
+
+        // 处理回复内容
+        let content = article.body || '';
+        let contentText = content
+          .replace(/&nbsp;/g, ' ')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&amp;/g, '&')
+          .replace(/&quot;/g, '"')
+          .replace(/<p[^>]*>/gi, '')
+          .replace(/<\/p>/gi, '\n')
+          .replace(/<br\s*\/?>/gi, '\n')
+          .replace(/<div[^>]*>/gi, '')
+          .replace(/<\/div>/gi, '\n')
+          .replace(/<[^>]*>/g, '')
+          .trim();
+
+        return {
+          id: article.id,
+          author: article.account?.name || article.user?.name || '',
+          nickname: article.account?.nick || article.user?.nick || '',
+          levelTitle: article.account?.levelTitle || article.user?.levelTitle || '',
+          avatar: avatar,
+          city: article.city || '',
+          content: contentText,
+          postTime: new Date(article.postTime || Date.now()).toISOString(),
+          floor: article.topicOrder,
+          attachments: (article.attachments || []).map((att: any) => {
+            // 优先使用 k3sUrl/ks3Url
+            let url = att.k3sUrl || att.ks3Url || att.url || '';
+
+            console.log('📎 回复附件:', {
+              k3sUrl: att.k3sUrl,
+              ks3Url: att.ks3Url,
+              url: att.url,
+              finalUrl: url
+            });
+
+            if (url && url.startsWith('http:')) {
+              url = url.replace('http:', 'https:');
+            }
+            if (url && !url.startsWith('http')) {
+              url = `https://file.mysmth.net/${url}`;
+            }
+            return { ...att, url };
+          }),
+        };
       });
-      throw new Error(`获取回复失败: ${errorMsg}`);
-    }
-
-    // 检查是否有数据
-    if (!json.data?.articles) {
-      console.warn('getTopicReplies: 响应成功但无数据');
-      // 返回空数组（但这是正常情况，可以缓存）
-      return {
-        replies: [],
-        totalItems: json.data?.pager?.totalItems || 0
-      };
-    }
-
-    const articles = json.data.articles;
-    const replies = articles.map((article: any) => {
-      // 提取头像，优先使用 k3sUrl/ks3Url（云存储）
-      let avatar = article.account?.k3sUrl || article.account?.ks3Url ||
-                   article.user?.k3sUrl || article.user?.ks3Url ||
-                   article.account?.avatarUrl || article.user?.avatarUrl || '';
-      if (avatar && avatar.startsWith('http:')) {
-        avatar = avatar.replace('http:', 'https:');
-      }
-
-      // 处理回复内容
-      let content = article.body || '';
-      let contentText = content
-        .replace(/&nbsp;/g, ' ')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&amp;/g, '&')
-        .replace(/&quot;/g, '"')
-        .replace(/<p[^>]*>/gi, '')
-        .replace(/<\/p>/gi, '\n')
-        .replace(/<br\s*\/?>/gi, '\n')
-        .replace(/<div[^>]*>/gi, '')
-        .replace(/<\/div>/gi, '\n')
-        .replace(/<[^>]*>/g, '')
-        .trim();
 
       return {
-        id: article.id,
-        author: article.account?.name || article.user?.name || '',
-        nickname: article.account?.nick || article.user?.nick || '',
-        levelTitle: article.account?.levelTitle || article.user?.levelTitle || '',
-        avatar: avatar,
-        city: article.city || '',
-        content: contentText,
-        postTime: new Date(article.postTime || Date.now()).toISOString(),
-        floor: article.topicOrder,
-        attachments: (article.attachments || []).map((att: any) => {
-          // 优先使用 k3sUrl/ks3Url
-          let url = att.k3sUrl || att.ks3Url || att.url || '';
-          
-          console.log('📎 回复附件:', {
-            k3sUrl: att.k3sUrl,
-            ks3Url: att.ks3Url,
-            url: att.url,
-            finalUrl: url
-          });
-          
-          if (url && url.startsWith('http:')) {
-            url = url.replace('http:', 'https:');
-          }
-          if (url && !url.startsWith('http')) {
-            url = `https://file.mysmth.net/${url}`;
-          }
-          return { ...att, url };
-        }),
+        replies,
+        totalItems: json.data.pager?.totalItems || 0
       };
-    });
-
-    return {
-      replies,
-      totalItems: json.data.pager?.totalItems || 0
-    };
+    }
+    return { replies: [], totalItems: -1 };
   } catch (error) {
     console.error('Get topic replies error:', error);
-    // 🔴 修复：失败时抛出错误，不返回空数组
-    throw error;
+    return { replies: [], totalItems: -1 };
   }
 };
 
