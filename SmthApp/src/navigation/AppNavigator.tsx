@@ -19,6 +19,8 @@ import UserProfileScreen from '../screens/UserProfileScreen';
 import MailDetailScreen from '../screens/MailDetailScreen';
 import BrowsingHistoryScreen from '../screens/BrowsingHistoryScreen';
 import SearchScreen from '../screens/SearchScreen';
+import CreatePostScreen from '../screens/CreatePostScreen';
+import WebViewPostScreen from '../screens/WebViewPostScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -196,6 +198,13 @@ const AppNavigator = () => {
           options={{
             title: '登录',
             presentation: 'modal',
+          }}
+        />
+        <Stack.Screen
+          name="CreatePost"
+          component={CreatePostScreen}
+          options={{
+            headerShown: false, // 使用自定义顶部栏
           }}
         />
       </Stack.Navigator>

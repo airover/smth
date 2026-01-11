@@ -1,36 +1,14 @@
 // 数据获取服务 - 使用 wap.newsmth.net 获取数据
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {Mail} from '../types';
+import {
+  fetchWithRetry,
+  DEFAULT_TIMEOUT,
+  logRequest,
+  safeJsonParse,
+} from '../utils/requestUtils';
 
 const WAP_BASE_URL = 'https://wap.newsmth.net';
-
-// 默认超时时间（毫秒）
-const DEFAULT_TIMEOUT = 10000; // 10秒
-
-// 带超时的 fetch 函数
-const fetchWithTimeout = async (
-  url: string,
-  options: RequestInit = {},
-  timeout: number = DEFAULT_TIMEOUT
-): Promise<Response> => {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeout);
-  
-  try {
-    const response = await fetch(url, {
-      ...options,
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-    return response;
-  } catch (error: any) {
-    clearTimeout(timeoutId);
-    if (error.name === 'AbortError') {
-      throw new Error('请求超时');
-    }
-    throw error;
-  }
-};
 
 // 获取 Cookie
 const getCookies = async (): Promise<string | null> => {
@@ -57,9 +35,9 @@ const requestWithCookies = async (
 
   const fullUrl = url.startsWith('http') ? url : `${WAP_BASE_URL}${url}`;
   
-  console.log('Fetching:', fullUrl);
+  logRequest.start(fullUrl, options.method?.toString() || 'GET');
   
-  const response = await fetchWithTimeout(fullUrl, {
+  const response = await fetchWithRetry(fullUrl, {
     ...options,
     headers,
     credentials: 'include',
@@ -92,7 +70,7 @@ export const getHotPosts = async (
       headers.Cookie = cookies;
     }
 
-    const response = await fetchWithTimeout(url, {
+    const response = await fetchWithRetry(url, {
       headers,
       credentials: 'include',
     });
@@ -155,7 +133,7 @@ export const getTopTen = async (): Promise<any[] | null> => {
       headers.Cookie = cookies;
     }
 
-    const response = await fetchWithTimeout(url, {
+    const response = await fetchWithRetry(url, {
       headers,
       credentials: 'include',
     });
@@ -226,7 +204,7 @@ export const getHotBoards = async (): Promise<any[]> => {
       headers.Cookie = cookies;
     }
 
-    const response = await fetchWithTimeout(url, {
+    const response = await fetchWithRetry(url, {
       headers,
       credentials: 'include',
     });
@@ -275,7 +253,7 @@ export const getFavoriteBoards = async (): Promise<any[]> => {
       'Cookie': cookies,
     };
 
-    const response = await fetchWithTimeout(url, {
+    const response = await fetchWithRetry(url, {
       headers,
       credentials: 'include',
     });
@@ -388,7 +366,7 @@ export const getBoards = async (): Promise<any[]> => {
       headers.Cookie = cookies;
     }
 
-    const response = await fetchWithTimeout(url, {
+    const response = await fetchWithRetry(url, {
       headers,
       credentials: 'include',
     });
@@ -433,7 +411,7 @@ export const getSubBoards = async (sectionId: string): Promise<any[]> => {
       headers.Cookie = cookies;
     }
 
-    const response = await fetchWithTimeout(url, {
+    const response = await fetchWithRetry(url, {
       headers,
       credentials: 'include',
     });
@@ -524,7 +502,7 @@ export const getBoardPosts = async (
       headers.Cookie = cookies;
     }
 
-    const response = await fetchWithTimeout(url, {
+    const response = await fetchWithRetry(url, {
       headers,
       credentials: 'include',
     });
@@ -564,7 +542,7 @@ export const getBoardPosts = async (
           isTop: isTop,
           attachments: (article.attachments || []).map((att: any) => ({
             ...att,
-            url: att.ks3Url || (att.url?.startsWith('http') ? att.url : `https://file.mysmth.net/${att.url}`)
+            url: att.k3sUrl || att.ks3Url || (att.url?.startsWith('http') ? att.url : `https://file.mysmth.net/${att.url}`)
           })),
         };
       };
@@ -609,7 +587,7 @@ export const getPostDetail = async (
       headers.Cookie = cookies;
     }
 
-    const response = await fetchWithTimeout(url, {
+    const response = await fetchWithRetry(url, {
       headers,
       credentials: 'include',
     });
@@ -643,8 +621,15 @@ export const getPostDetail = async (
         postTime: new Date(article?.postTime || Date.now()).toISOString(),
         replyCount: Math.max(0, (topic.availables || 0) - 1),
         attachments: (article?.attachments || []).map((att: any) => {
-          // 优先使用 ks3Url，这是金山云的直接访问地址
-          let url = att.ks3Url || att.url || '';
+          // 优先使用 k3sUrl/ks3Url，这是金山云的直接访问地址
+          let url = att.k3sUrl || att.ks3Url || att.url || '';
+          
+          console.log('📎 帖子详情附件:', {
+            k3sUrl: att.k3sUrl,
+            ks3Url: att.ks3Url,
+            url: att.url,
+            finalUrl: url
+          });
           
           if (url && url.startsWith('http:')) {
             url = url.replace('http:', 'https:');
@@ -710,10 +695,18 @@ export const getPostDetail = async (
       return post;
     }
     
-    return null;
+    // 🔴 修复：API返回失败时抛出错误，不返回null
+    const errorMsg = json.message || json.msg || 'API返回错误';
+    console.error('getPostDetail API failed:', {
+      code: json.code,
+      message: errorMsg,
+      url
+    });
+    throw new Error(`获取帖子详情失败: ${errorMsg}`);
   } catch (error) {
     console.error('Get post detail error:', error);
-    return null;
+    // 🔴 修复：失败时抛出错误，不返回null
+    throw error;
   }
 };
 
@@ -743,7 +736,7 @@ export const getTopicReplies = async (
       headers.Cookie = cookies;
     }
 
-    const response = await fetchWithTimeout(url, {
+    const response = await fetchWithRetry(url, {
       headers,
       credentials: 'include',
     });
@@ -751,66 +744,93 @@ export const getTopicReplies = async (
     const json = await response.json();
     console.log('getTopicReplies API response code:', json.code);
 
-    if (json.code === 1 && json.data?.articles) {
-      const articles = json.data.articles;
-      const replies = articles.map((article: any) => {
-        // 提取头像，优先使用 k3sUrl/ks3Url（云存储）
-        let avatar = article.account?.k3sUrl || article.account?.ks3Url ||
-                     article.user?.k3sUrl || article.user?.ks3Url ||
-                     article.account?.avatarUrl || article.user?.avatarUrl || '';
-        if (avatar && avatar.startsWith('http:')) {
-          avatar = avatar.replace('http:', 'https:');
-        }
-
-        // 处理回复内容
-        let content = article.body || '';
-        let contentText = content
-          .replace(/&nbsp;/g, ' ')
-          .replace(/&lt;/g, '<')
-          .replace(/&gt;/g, '>')
-          .replace(/&amp;/g, '&')
-          .replace(/&quot;/g, '"')
-          .replace(/<p[^>]*>/gi, '')
-          .replace(/<\/p>/gi, '\n')
-          .replace(/<br\s*\/?>/gi, '\n')
-          .replace(/<div[^>]*>/gi, '')
-          .replace(/<\/div>/gi, '\n')
-          .replace(/<[^>]*>/g, '')
-          .trim();
-
-        return {
-          id: article.id,
-          author: article.account?.name || article.user?.name || '',
-          nickname: article.account?.nick || article.user?.nick || '',
-          levelTitle: article.account?.levelTitle || article.user?.levelTitle || '',
-          avatar: avatar,
-          city: article.city || '',
-          content: contentText,
-          postTime: new Date(article.postTime || Date.now()).toISOString(),
-          floor: article.topicOrder,
-          attachments: (article.attachments || []).map((att: any) => {
-            let url = att.ks3Url || att.url || '';
-            if (url && url.startsWith('http:')) {
-              url = url.replace('http:', 'https:');
-            }
-            if (url && !url.startsWith('http')) {
-              url = `https://file.mysmth.net/${url}`;
-            }
-            return { ...att, url };
-          }),
-        };
+    // 🔴 修复：API返回失败时抛出错误，不写缓存
+    if (json.code !== 1) {
+      const errorMsg = json.message || json.msg || 'API返回错误';
+      console.error('getTopicReplies API failed:', {
+        code: json.code,
+        message: errorMsg,
+        url
       });
+      throw new Error(`获取回复失败: ${errorMsg}`);
+    }
 
+    // 检查是否有数据
+    if (!json.data?.articles) {
+      console.warn('getTopicReplies: 响应成功但无数据');
+      // 返回空数组（但这是正常情况，可以缓存）
       return {
-        replies,
-        totalItems: json.data.pager?.totalItems || 0
+        replies: [],
+        totalItems: json.data?.pager?.totalItems || 0
       };
     }
-    
-    return { replies: [], totalItems: 0 };
+
+    const articles = json.data.articles;
+    const replies = articles.map((article: any) => {
+      // 提取头像，优先使用 k3sUrl/ks3Url（云存储）
+      let avatar = article.account?.k3sUrl || article.account?.ks3Url ||
+                   article.user?.k3sUrl || article.user?.ks3Url ||
+                   article.account?.avatarUrl || article.user?.avatarUrl || '';
+      if (avatar && avatar.startsWith('http:')) {
+        avatar = avatar.replace('http:', 'https:');
+      }
+
+      // 处理回复内容
+      let content = article.body || '';
+      let contentText = content
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&')
+        .replace(/&quot;/g, '"')
+        .replace(/<p[^>]*>/gi, '')
+        .replace(/<\/p>/gi, '\n')
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<div[^>]*>/gi, '')
+        .replace(/<\/div>/gi, '\n')
+        .replace(/<[^>]*>/g, '')
+        .trim();
+
+      return {
+        id: article.id,
+        author: article.account?.name || article.user?.name || '',
+        nickname: article.account?.nick || article.user?.nick || '',
+        levelTitle: article.account?.levelTitle || article.user?.levelTitle || '',
+        avatar: avatar,
+        city: article.city || '',
+        content: contentText,
+        postTime: new Date(article.postTime || Date.now()).toISOString(),
+        floor: article.topicOrder,
+        attachments: (article.attachments || []).map((att: any) => {
+          // 优先使用 k3sUrl/ks3Url
+          let url = att.k3sUrl || att.ks3Url || att.url || '';
+          
+          console.log('📎 回复附件:', {
+            k3sUrl: att.k3sUrl,
+            ks3Url: att.ks3Url,
+            url: att.url,
+            finalUrl: url
+          });
+          
+          if (url && url.startsWith('http:')) {
+            url = url.replace('http:', 'https:');
+          }
+          if (url && !url.startsWith('http')) {
+            url = `https://file.mysmth.net/${url}`;
+          }
+          return { ...att, url };
+        }),
+      };
+    });
+
+    return {
+      replies,
+      totalItems: json.data.pager?.totalItems || 0
+    };
   } catch (error) {
     console.error('Get topic replies error:', error);
-    return { replies: [], totalItems: 0 };
+    // 🔴 修复：失败时抛出错误，不返回空数组
+    throw error;
   }
 };
 
@@ -835,7 +855,7 @@ export const fetchUserInfo = async (username: string): Promise<any> => {
       headers.Cookie = cookies;
     }
 
-    const response = await fetchWithTimeout(url, {
+    const response = await fetchWithRetry(url, {
       headers,
       credentials: 'include',
     });
@@ -971,7 +991,7 @@ export const getConversationMessages = async (conversationId: string): Promise<a
       'Cookie': cookies,
     };
 
-    const response = await fetchWithTimeout(url, {
+    const response = await fetchWithRetry(url, {
       headers,
       credentials: 'include',
     });
@@ -1060,7 +1080,7 @@ export const getMessages = async (_page: number = 0): Promise<Mail[]> => {
       'Cookie': cookies,
     };
 
-    const response = await fetchWithTimeout(url, {
+    const response = await fetchWithRetry(url, {
       headers,
       credentials: 'include',
     });
@@ -1152,7 +1172,7 @@ export const checkBoardFavorite = async (boardId: string): Promise<boolean> => {
       'Cookie': cookies,
     };
 
-    const response = await fetchWithTimeout(url, {
+    const response = await fetchWithRetry(url, {
       headers,
       credentials: 'include',
     }, 5000); // 5秒超时
@@ -1197,7 +1217,7 @@ export const addBoardFavorite = async (boardId: string): Promise<{success: boole
 
     const body = `id=${boardId}&t=${timestamp}`;
 
-    const response = await fetchWithTimeout(url, {
+    const response = await fetchWithRetry(url, {
       method: 'POST',
       headers,
       body,
@@ -1245,7 +1265,7 @@ export const removeBoardFavorite = async (boardId: string): Promise<{success: bo
       'Cookie': cookies,
     };
 
-    const response = await fetchWithTimeout(url, {
+    const response = await fetchWithRetry(url, {
       method: 'DELETE',
       headers,
       credentials: 'include',

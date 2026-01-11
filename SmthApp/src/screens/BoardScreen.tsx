@@ -386,6 +386,15 @@ const BoardScreen: React.FC = () => {
 
   useEffect(() => {
     if (selectedBoard) {
+      console.log('版面切换 useEffect 触发:', selectedBoard.chineseName || selectedBoard.name, 'ID:', selectedBoard.id);
+      
+      // 验证版面ID是否有效
+      if (!selectedBoard.id) {
+        console.error('错误：版面ID为空', selectedBoard);
+        Alert.alert('错误', '版面ID无效，无法加载帖子');
+        return;
+      }
+      
       // 切换版面时重置分页状态和排序状态
       setPage(1);
       setHasMore(true);
@@ -395,7 +404,10 @@ const BoardScreen: React.FC = () => {
       // 重置排序为默认配置
       const defaultSort = settings.defaultBoardSort === 'reply';
       setSortByReplyTime(defaultSort);
+      
+      console.log('开始加载版面帖子，ID:', selectedBoard.id, '排序:', defaultSort ? '按回复' : '按发布');
       loadPosts(selectedBoard.id, 1, defaultSort ? 1 : 0);
+      
       setShowChannels(false); // 选择版面后隐藏频道列表
       // 检查版面是否已收藏
       checkBoardFavoriteStatus(selectedBoard.id);
@@ -1127,9 +1139,14 @@ const BoardScreen: React.FC = () => {
       
       setHasMore(pageNum < totalPages);
       setPostsDataLoaded(true);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Load posts error:', error);
+      console.error('版面ID:', boardId, '页码:', pageNum);
       // 接口失败时不设置postsDataLoaded
+      // 如果是第一页且没有缓存数据，显示错误提示
+      if (pageNum === 1 && posts.length === 0) {
+        Alert.alert('加载失败', error.message || '无法加载帖子列表，请稍后重试');
+      }
     } finally {
       setLoading(false);
       setSortRefreshing(false); // 清除排序刷新状态
@@ -1309,7 +1326,23 @@ const BoardScreen: React.FC = () => {
 
       // 如果是版面（非文件夹），选中并关闭抽屉
       if (!item.isFolder && !hasChildren) {
-        setSelectedBoard(item);
+        console.log('选中版面:', item.chineseName || item.name, 'ID:', item.id);
+        // 确保版面对象有必要的字段
+        const boardToSelect = {
+          ...item,
+          // 确保有id字段
+          id: item.id,
+          // 确保有name字段
+          name: item.name || item.chineseName,
+          // 确保有chineseName字段
+          chineseName: item.chineseName || item.name,
+        };
+        // 清除频道相关状态，确保显示版面帖子而不是频道帖子
+        // 保持与外部链接进入版面时的逻辑一致（参考第289-293行）
+        setSelectedChannel(null);
+        setChannelPosts([]);
+        setShowChannels(false);
+        setSelectedBoard(boardToSelect);
         closeDrawer();
         return;
       }
@@ -1671,8 +1704,12 @@ const BoardScreen: React.FC = () => {
       label: '发帖',
       onPress: () => {
         setShowFabMenu(false); // 立即关闭菜单
-        // TODO: 跳转到发帖页面
-        console.log('发帖');
+        if (selectedBoard) {
+          navigation.navigate('CreatePost', {
+            boardId: selectedBoard.id,
+            boardName: selectedBoard.chineseName || selectedBoard.name,
+          });
+        }
       },
       show: selectedBoard !== null,
       disabled: false,

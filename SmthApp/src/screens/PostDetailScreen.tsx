@@ -22,6 +22,7 @@ import {cacheManager} from '../services/cacheManager';
 import {saveBrowsingHistory} from './BrowsingHistoryScreen';
 import {useSettings} from '../context/SettingsContext';
 import {getTheme, getFontSizes} from '../utils/theme';
+import {normalizeImageUrl, isImageUrl, isVideoUrl} from '../utils/imageUtils';
 
 // 格式化具体时间（用于主帖）
 const formatDateTime = (time: string): string => {
@@ -84,19 +85,28 @@ const PostDetailScreen: React.FC = () => {
         // 如果缓存中没有数据，则从API获取
         if (!detailData || !repliesData) {
           console.log('[PostDetail] Cache miss, fetching from API');
-          const [apiDetailData, apiRepliesData] = await Promise.all([
-            detailData ? Promise.resolve(detailData) : getPostDetail(board, postId),
-            repliesData ? Promise.resolve(repliesData) : getTopicReplies(postId, 1)
-          ]);
           
-          // 缓存新获取的数据
-          if (apiDetailData && !detailData) {
-            cacheManager.set('postDetail', postCacheKey, apiDetailData);
-            detailData = apiDetailData;
-          }
-          if (apiRepliesData && !repliesData) {
-            cacheManager.set('topicReplies', repliesCacheKey, apiRepliesData);
-            repliesData = apiRepliesData;
+          try {
+            const [apiDetailData, apiRepliesData] = await Promise.all([
+              detailData ? Promise.resolve(detailData) : getPostDetail(board, postId),
+              repliesData ? Promise.resolve(repliesData) : getTopicReplies(postId, 1)
+            ]);
+            
+            // 🔴 修复：只有成功获取且数据有效时才缓存
+            if (apiDetailData && !detailData) {
+              cacheManager.set('postDetail', postCacheKey, apiDetailData);
+              detailData = apiDetailData;
+            }
+            if (apiRepliesData && !repliesData) {
+              // 检查是否是真实的空数据（totalItems为0）还是错误返回
+              if (apiRepliesData.totalItems >= 0) {
+                cacheManager.set('topicReplies', repliesCacheKey, apiRepliesData);
+                repliesData = apiRepliesData;
+              }
+            }
+          } catch (error: any) {
+            console.error('[PostDetail] Failed to fetch data:', error.message);
+            // 失败时不更新数据，保留缓存或空状态
           }
         } else {
           console.log('[PostDetail] Cache hit, using cached data');
@@ -130,9 +140,16 @@ const PostDetailScreen: React.FC = () => {
         
         if (!repliesData) {
           console.log(`[PostDetail] Cache miss for page ${pageNum}, fetching from API`);
-          repliesData = await getTopicReplies(postId, pageNum);
-          if (repliesData) {
-            cacheManager.set('topicReplies', repliesCacheKey, repliesData);
+          try {
+            repliesData = await getTopicReplies(postId, pageNum);
+            // 🔴 修复：只有成功获取且数据有效时才缓存
+            if (repliesData && repliesData.totalItems >= 0) {
+              cacheManager.set('topicReplies', repliesCacheKey, repliesData);
+            }
+          } catch (error: any) {
+            console.error(`[PostDetail] Failed to fetch page ${pageNum}:`, error.message);
+            // 失败时不更新数据
+            repliesData = null;
           }
         } else {
           console.log(`[PostDetail] Cache hit for page ${pageNum}, using cached data`);
@@ -171,15 +188,11 @@ const PostDetailScreen: React.FC = () => {
   };
 
   const isImage = (url: string, name?: string) => {
-    const imageReg = /\.(jpg|jpeg|png|gif|webp|bmp)($|\?)/i;
-    // 如果文件名或 URL 包含图片后缀，或者 URL 包含特定的文件路径
-    return imageReg.test(url) || (name ? imageReg.test(name) : false) || url.includes('/file/') || url.includes('/attachment/');
+    return isImageUrl(url, name);
   };
 
   const isVideo = (url: string, name?: string) => {
-    const videoReg = /\.(mp4|mov|m4v|webm)($|\?)/i;
-    // 视频必须匹配后缀，不能误认包含 /file/ 的图片为视频
-    return videoReg.test(url) || (name ? videoReg.test(name) : false);
+    return isVideoUrl(url, name);
   };
 
   const renderContent = (content: string) => {
@@ -237,8 +250,16 @@ const PostDetailScreen: React.FC = () => {
   };
 
   const handleImagePress = (imageUri: string) => {
-    setSelectedImageUri(imageUri);
+    // 标准化图片URL作为最后的安全保障（通常dataFetcher已经处理过了）
+    const normalizedUri = normalizeImageUrl(imageUri);
+    console.log('🖼️ 图片点击 - 原始URL:', imageUri);
+    if (normalizedUri !== imageUri) {
+      console.log('🖼️ 图片点击 - URL被标准化为:', normalizedUri);
+    }
+    console.log('🖼️ 当前 imageViewerVisible:', imageViewerVisible);
+    setSelectedImageUri(normalizedUri);
     setImageViewerVisible(true);
+    console.log('🖼️ 设置后 imageViewerVisible: true');
   };
 
   // 根据图片实际尺寸计算显示高度
@@ -271,8 +292,11 @@ const PostDetailScreen: React.FC = () => {
     return (
       <View style={styles.attachmentsContainer}>
         {attachments.map((item, index) => {
+          // dataFetcher 已经处理过URL，直接使用
           const url = item.url;
           const name = item.name;
+          
+          console.log(`📸 附件 ${index}:`, {url, name, isImage: isImage(url, name)});
           
           if (isImage(url, name)) {
             const imageSize = imageSizes[url];

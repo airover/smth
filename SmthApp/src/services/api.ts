@@ -1,43 +1,21 @@
 // API 服务
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  fetchWithRetry,
+  DEFAULT_TIMEOUT,
+  LOGIN_TIMEOUT,
+  SEARCH_TIMEOUT,
+  logRequest,
+  safeJsonParse,
+} from '../utils/requestUtils';
 
 const BASE_URL = 'https://wap.newsmth.net';
 const WAP_BASE_URL = 'https://wap.newsmth.net';
-
-// 默认超时时间（毫秒）
-const DEFAULT_TIMEOUT = 10000; // 10秒
-const LOGIN_TIMEOUT = 15000; // 登录接口15秒
-const SEARCH_TIMEOUT = 20000; // 搜索接口20秒
 
 // 搜索相关常量
 const DEFAULT_PAGE = 1; // 默认页码
 const DEFAULT_PAGE_SIZE = 20; // 默认每页数量
 const DEFAULT_SEARCH_STATUS = 0; // 默认搜索状态
-
-// 带超时的 fetch 函数
-const fetchWithTimeout = async (
-  url: string,
-  options: RequestInit = {},
-  timeout: number = DEFAULT_TIMEOUT
-): Promise<Response> => {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeout);
-  
-  try {
-    const response = await fetch(url, {
-      ...options,
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-    return response;
-  } catch (error: any) {
-    clearTimeout(timeoutId);
-    if (error.name === 'AbortError') {
-      throw new Error('请求超时');
-    }
-    throw error;
-  }
-};
 
 // 存储 Cookie
 const storeCookies = async (cookies: string) => {
@@ -62,7 +40,7 @@ const request = async (
     ...(cookies ? {Cookie: cookies} : {}),
   };
 
-  const response = await fetchWithTimeout(`${BASE_URL}${url}`, {
+  const response = await fetchWithRetry(`${BASE_URL}${url}`, {
     ...options,
     headers,
   });
@@ -135,7 +113,7 @@ export const login = async (
     const loginUrl = BASE_URL + '/wap/authorize/sign-in';
     console.log('发送登录请求到:', loginUrl);
     
-    const response = await fetchWithTimeout(loginUrl, {
+    const response = await fetchWithRetry(loginUrl, {
       method: 'POST',
       headers,
       body: formData.toString(),
@@ -265,7 +243,7 @@ const fetchUserInfoFromServer = async (): Promise<any> => {
       'Cookie': cookies,
     };
     
-    const response = await fetchWithTimeout(`${WAP_BASE_URL}/wap/api/profile`, {
+    const response = await fetchWithRetry(`${WAP_BASE_URL}/wap/api/profile`, {
       method: 'POST',
       headers,
       credentials: 'include',
@@ -517,7 +495,7 @@ export const searchArticles = async (
     }
     
     const url = `${WAP_BASE_URL}/wap/api/search/article?${params.toString()}`;
-    const response = await fetchWithTimeout(url, {
+    const response = await fetchWithRetry(url, {
       method: 'GET',
       headers,
     }, SEARCH_TIMEOUT);
@@ -582,7 +560,7 @@ export const searchBoards = async (
     }
     
     const url = `${WAP_BASE_URL}/wap/api/search/board?${params.toString()}`;
-    const response = await fetchWithTimeout(url, {
+    const response = await fetchWithRetry(url, {
       method: 'GET',
       headers,
     }, SEARCH_TIMEOUT);
@@ -645,7 +623,7 @@ export const searchAccounts = async (
     }
     
     const url = `${WAP_BASE_URL}/wap/api/search/account?${params.toString()}`;
-    const response = await fetchWithTimeout(url, {
+    const response = await fetchWithRetry(url, {
       method: 'GET',
       headers,
     }, SEARCH_TIMEOUT);
