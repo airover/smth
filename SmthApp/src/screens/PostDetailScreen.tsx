@@ -62,6 +62,7 @@ const PostDetailScreen: React.FC = () => {
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
   const [selectedImageUri, setSelectedImageUri] = useState('');
   const [imageSizes, setImageSizes] = useState<{[key: string]: {width: number; height: number}}>({});
+  const [failedImages, setFailedImages] = useState<Set<string>>(new Set()); // 跟踪加载失败的图片
 
   useEffect(() => {
     loadPostDetail(1);
@@ -250,16 +251,16 @@ const PostDetailScreen: React.FC = () => {
   };
 
   const handleImagePress = (imageUri: string) => {
+    // 检查图片是否加载失败
+    if (failedImages.has(imageUri)) {
+      console.log('🖼️ 图片加载失败，禁止查看原图:', imageUri);
+      return;
+    }
+
     // 标准化图片URL作为最后的安全保障（通常dataFetcher已经处理过了）
     const normalizedUri = normalizeImageUrl(imageUri);
-    console.log('🖼️ 图片点击 - 原始URL:', imageUri);
-    if (normalizedUri !== imageUri) {
-      console.log('🖼️ 图片点击 - URL被标准化为:', normalizedUri);
-    }
-    console.log('🖼️ 当前 imageViewerVisible:', imageViewerVisible);
     setSelectedImageUri(normalizedUri);
     setImageViewerVisible(true);
-    console.log('🖼️ 设置后 imageViewerVisible: true');
   };
 
   // 根据图片实际尺寸计算显示高度
@@ -284,10 +285,13 @@ const PostDetailScreen: React.FC = () => {
     }));
   };
 
+  // 处理图片加载失败
+  const handleImageLoadError = (imageUri: string) => {
+    setFailedImages(prev => new Set(prev).add(imageUri));
+  };
+
   const renderAttachments = (attachments: Attachment[]) => {
     if (!attachments || attachments.length === 0) return null;
-    
-    console.log('Rendering attachments:', JSON.stringify(attachments));
 
     return (
       <View style={styles.attachmentsContainer}>
@@ -295,8 +299,6 @@ const PostDetailScreen: React.FC = () => {
           // dataFetcher 已经处理过URL，直接使用
           const url = item.url;
           const name = item.name;
-          
-          console.log(`📸 附件 ${index}:`, {url, name, isImage: isImage(url, name)});
           
           if (isImage(url, name)) {
             const imageSize = imageSizes[url];
@@ -308,6 +310,7 @@ const PostDetailScreen: React.FC = () => {
                 style={styles.imageContainer}
                 onPress={() => handleImagePress(url)}
                 activeOpacity={0.9}
+                disabled={failedImages.has(url)} // 加载失败的图片禁止点击
               >
                 <ImageWithPlaceholder
                   uri={url}
@@ -319,6 +322,9 @@ const PostDetailScreen: React.FC = () => {
                   showLoadingIndicator={true}
                   onImageLoad={(imageSize) => {
                     handleImageLoad(url, imageSize);
+                  }}
+                  onLoadError={() => {
+                    handleImageLoadError(url);
                   }}
                 />
               </TouchableOpacity>

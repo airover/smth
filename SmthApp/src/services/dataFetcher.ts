@@ -539,7 +539,9 @@ export const getBoardPosts = async (
           // 使用lastPostTime而不是flushTime作为最后回复时间
           lastReplyTime: new Date(topic.lastPostTime || topic.flushTime || Date.now()).toISOString(),
           isTop: isTop,
-          attachments: (article.attachments || []).map((att: any) => ({
+          attachments: (article.attachments || [])
+            .filter((att: any) => att != null)
+            .map((att: any) => ({
             ...att,
             url: att.k3sUrl || att.ks3Url || (att.url?.startsWith('http') ? att.url : `https://file.mysmth.net/${att.url}`)
           })),
@@ -619,13 +621,16 @@ export const getPostDetail = async (
         city: article?.city || '',
         postTime: new Date(article?.postTime || Date.now()).toISOString(),
         replyCount: Math.max(0, (topic.availables || 0) - 1),
-        attachments: (article?.attachments || []).map((att: any) => {
-          // 优先使用 k3sUrl/ks3Url，这是金山云的直接访问地址
-          let url = att.k3sUrl || att.ks3Url || att.url || '';
+        attachments: (article?.attachments || [])
+          .filter((att: any) => att != null)
+          .map((att: any) => {
+          // 优先使用 k3sUrl/ks3Url，然后是 cdnUrl，最后是 url
+          let url = att.k3sUrl || att.ks3Url || att.cdnUrl || att.url || '';
           
           console.log('📎 帖子详情附件:', {
             k3sUrl: att.k3sUrl,
             ks3Url: att.ks3Url,
+            cdnUrl: att.cdnUrl,
             url: att.url,
             finalUrl: url
           });
@@ -646,7 +651,9 @@ export const getPostDetail = async (
             url: url
           };
         }),
-        likes: (article?.likes || []).map((like: any) => {
+        likes: (article?.likes || [])
+          .filter((like: any) => like != null)
+          .map((like: any) => {
           let likeAvatar = like.account?.k3sUrl || like.account?.ks3Url ||
                           like.user?.k3sUrl || like.user?.ks3Url ||
                           like.account?.avatarUrl || like.user?.avatarUrl || '';
@@ -772,13 +779,16 @@ export const getTopicReplies = async (
           content: contentText,
           postTime: new Date(article.postTime || Date.now()).toISOString(),
           floor: article.topicOrder,
-          attachments: (article.attachments || []).map((att: any) => {
-            // 优先使用 k3sUrl/ks3Url
-            let url = att.k3sUrl || att.ks3Url || att.url || '';
+          attachments: (article.attachments || [])
+            .filter((att: any) => att != null) // 过滤掉 null 和 undefined
+            .map((att: any) => {
+            // 优先使用 k3sUrl/ks3Url，然后是 cdnUrl，最后是 url
+            let url = att.k3sUrl || att.ks3Url || att.cdnUrl || att.url || '';
 
             console.log('📎 回复附件:', {
               k3sUrl: att.k3sUrl,
               ks3Url: att.ks3Url,
+              cdnUrl: att.cdnUrl,
               url: att.url,
               finalUrl: url
             });

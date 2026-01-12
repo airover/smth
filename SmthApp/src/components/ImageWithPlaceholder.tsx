@@ -8,6 +8,7 @@ interface ImageWithPlaceholderProps {
   placeholderText?: string;
   isAvatar?: boolean; // 是否是头像，如果是则显示为圆形占位符
   onImageLoad?: (imageSize: {width: number; height: number}) => void; // 图片加载完成回调
+  onLoadError?: () => void; // 图片加载失败回调
   showLoadingIndicator?: boolean; // 是否显示加载指示器
 }
 
@@ -22,6 +23,7 @@ const ImageWithPlaceholder: React.FC<ImageWithPlaceholderProps> = ({
   placeholderText = '图片加载失败',
   isAvatar = false,
   onImageLoad,
+  onLoadError,
   showLoadingIndicator = false,
 }) => {
   const [failed, setFailed] = useState(false);
@@ -70,6 +72,10 @@ const ImageWithPlaceholder: React.FC<ImageWithPlaceholderProps> = ({
           console.log(`Image load failed: ${uri}`, e.nativeEvent?.error);
           setFailed(true);
           setLoading(false);
+          // 通知父组件图片加载失败
+          if (onLoadError) {
+            onLoadError();
+          }
         }}
       />
       {loading && showLoadingIndicator && (
