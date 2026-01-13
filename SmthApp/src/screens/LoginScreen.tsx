@@ -10,6 +10,7 @@ import {
   Image,
   Switch,
   Modal,
+  Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {WebView} from 'react-native-webview';
@@ -789,6 +790,11 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess}) => {
     setCaptchaVerified(true); // 标记验证码已通过
     setIsTencentCaptcha(true); // 标记为腾讯验证码模式
     setShowCaptcha(true); // 确保验证码状态为显示
+    
+    // 延迟关闭键盘，确保Modal完全关闭后再执行，避免焦点自动回到输入框
+    setTimeout(() => {
+      Keyboard.dismiss();
+    }, 300);
     
     // 用户验证后自动关闭弹窗，不再自动提交登录，等待用户点击登录按钮
     console.log('验证码验证完成，等待用户手动点击登录');

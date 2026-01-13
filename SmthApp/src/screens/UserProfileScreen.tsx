@@ -282,11 +282,33 @@ const UserProfileScreen: React.FC = () => {
           )}
 
           {/* 最近登录信息 */}
-          {user?.loginTime && (
-            <Text style={styles.loginTimeText}>
-              最近登录: {formatRelativeTime(user.loginTime)}
-            </Text>
-          )}
+          {user?.loginTime && (() => {
+            // 客人态且有文章列表时，判断是否使用文章发布时间
+            if (!isCurrentUser && user?.recentPosts && user.recentPosts.length > 0) {
+              const latestPost = user.recentPosts[0];
+              if (latestPost?.postTime) {
+                const loginTime = new Date(user.loginTime).getTime();
+                const postTime = new Date(latestPost.postTime).getTime();
+                const oneDayInMs = 24 * 60 * 60 * 1000;
+                
+                // 如果登录时间早于文章发布时间1天以上，使用文章发布时间
+                if (postTime - loginTime > oneDayInMs) {
+                  return (
+                    <Text style={styles.loginTimeText}>
+                      最近登录: {formatRelativeTime(latestPost.postTime)}
+                    </Text>
+                  );
+                }
+              }
+            }
+            
+            // 默认显示登录时间
+            return (
+              <Text style={styles.loginTimeText}>
+                最近登录: {formatRelativeTime(user.loginTime)}
+              </Text>
+            );
+          })()}
 
           {/* 个性签名 */}
           {user?.signature && (
@@ -664,6 +686,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#666',
     marginBottom: 8,
+  },
+  postLocationText: {
+    fontSize: 13,
+    color: '#007AFF',
+    fontWeight: '500',
   },
   signatureText: {
     fontSize: 14,

@@ -10,10 +10,12 @@ import {
   TouchableOpacity,
   ScrollView,
   Dimensions,
+  Alert,
+  Modal,
 } from 'react-native';
 import {useRoute, useNavigation} from '@react-navigation/native';
 import {WebView} from 'react-native-webview';
-import {getPostDetail, getTopicReplies} from '../services/api';
+import {getPostDetail, getTopicReplies, deletePost, getUserInfo} from '../services/api';
 import {Post, Reply, Attachment, Like} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
@@ -63,10 +65,39 @@ const PostDetailScreen: React.FC = () => {
   const [selectedImageUri, setSelectedImageUri] = useState('');
   const [imageSizes, setImageSizes] = useState<{[key: string]: {width: number; height: number}}>({});
   const [failedImages, setFailedImages] = useState<Set<string>>(new Set()); // 跟踪加载失败的图片
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [currentUsername, setCurrentUsername] = useState<string | null>(null);
 
   useEffect(() => {
     loadPostDetail(1);
+    loadCurrentUser();
   }, []);
+
+  // 设置导航栏右侧按钮
+  useEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <TouchableOpacity
+          style={styles.headerMenuButton}
+          onPress={() => setMenuVisible(true)}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.headerMenuButtonText}>⋯</Text>
+        </TouchableOpacity>
+      ),
+    });
+  }, [navigation]);
+
+  const loadCurrentUser = async () => {
+    try {
+      const userInfo = await getUserInfo();
+      if (userInfo && userInfo.username) {
+        setCurrentUsername(userInfo.username);
+      }
+    } catch (error) {
+      console.error('Load current user error:', error);
+    }
+  };
 
   const loadPostDetail = async (pageNum: number) => {
     try {
@@ -186,6 +217,57 @@ const PostDetailScreen: React.FC = () => {
       setPage(nextPage);
       loadPostDetail(nextPage);
     }
+  };
+
+  const handleDeletePost = async () => {
+    setMenuVisible(false);
+    
+    Alert.alert(
+      '确认删除',
+      '确定要删除这篇帖子吗？删除后无法恢复。',
+      [
+        {
+          text: '取消',
+          style: 'cancel'
+        },
+        {
+          text: '删除',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // 使用 articleId 而不是 topicId
+              if (!post?.articleId) {
+                Alert.alert('错误', '无法获取帖子ID');
+                return;
+              }
+              const result = await deletePost(post.articleId, post?.title, board);
+              if (result.success) {
+                Alert.alert('成功', result.message || '删除成功', [
+                  {
+                    text: '确定',
+                    onPress: () => navigation.goBack()
+                  }
+                ]);
+              } else {
+                Alert.alert('失败', result.message || '删除失败');
+              }
+            } catch (error) {
+              Alert.alert('错误', '删除失败，请稍后重试');
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleReply = () => {
+    setMenuVisible(false);
+    Alert.alert('提示', '回复功能开发中');
+  };
+
+  const handleShare = () => {
+    setMenuVisible(false);
+    Alert.alert('提示', '分享功能开发中');
   };
 
   const isImage = (url: string, name?: string) => {
@@ -453,10 +535,10 @@ const PostDetailScreen: React.FC = () => {
           </TouchableOpacity>
           <View style={styles.authorText}>
               <View style={styles.authorNameRow}>
-            <Text style={[styles.authorName, {color: theme.text}]}>
+                <Text style={[styles.authorName, {color: theme.text}]}>
                   {item.nickname || item.author}
                   {item.levelTitle ? ` · ${item.levelTitle}` : ''}
-            </Text>
+                </Text>
                 {isAuthor && (
                   <View style={styles.authorBadge}>
                     <Text style={styles.authorBadgeText}>楼主</Text>
@@ -605,6 +687,54 @@ const PostDetailScreen: React.FC = () => {
         imageUri={selectedImageUri}
         onClose={() => setImageViewerVisible(false)}
       />
+
+      {/* 菜单弹窗 */}
+      <Modal
+        visible={menuVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setMenuVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setMenuVisible(false)}
+        >
+          <View style={[styles.menuContainer, {backgroundColor: theme.cardBackground}]}>
+            {/* 只有当前用户是发帖人时才显示删除选项 */}
+            {currentUsername && post && currentUsername === post.author && (
+              <TouchableOpacity
+                style={[styles.menuItem, {borderBottomColor: theme.border}]}
+                onPress={handleDeletePost}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.menuItemText, styles.deleteText]}>🗑️ 删除</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              style={[styles.menuItem, {borderBottomColor: theme.border}]}
+              onPress={handleReply}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.menuItemText, {color: theme.text}]}>💬 回复</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={handleShare}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.menuItemText, {color: theme.text}]}>📤 分享</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.cancelButton, {borderTopColor: theme.border}]}
+              onPress={() => setMenuVisible(false)}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.cancelButtonText, {color: theme.secondaryText}]}>取消</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -613,6 +743,52 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f5f5f5',
+  },
+  headerMenuButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 4,
+  },
+  headerMenuButtonText: {
+    fontSize: 24,
+    color: '#007AFF',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  menuContainer: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingBottom: 20,
+  },
+  menuItem: {
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#e0e0e0',
+  },
+  menuItemText: {
+    fontSize: 16,
+    color: '#333',
+    textAlign: 'center',
+  },
+  deleteText: {
+    color: '#FF3B30',
+  },
+  cancelButton: {
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    marginTop: 8,
+    borderTopWidth: 6,
+    borderTopColor: '#f0f0f0',
+  },
+  cancelButtonText: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    fontWeight: '500',
   },
   loadingContainer: {
     flex: 1,
@@ -905,13 +1081,13 @@ const styles = StyleSheet.create({
   authorNameRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
   },
   authorBadge: {
     backgroundColor: '#FF6B6B',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 3,
+    marginLeft: 6,
   },
   authorBadgeText: {
     fontSize: 10,

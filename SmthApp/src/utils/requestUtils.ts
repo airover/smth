@@ -18,7 +18,7 @@ export const RETRY_DELAY = 1000; // 重试延迟1秒
 /**
  * 延迟函数
  */
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 /**
  * 带超时和重试的 fetch 函数

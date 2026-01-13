@@ -47,6 +47,7 @@ export interface Board {
 
 export interface Post {
   id: string;
+  articleId?: string; // 文章ID，用于删除等操作
   title: string;
   author: string;
   nick?: string;

@@ -12,9 +12,12 @@ import {
   KeyboardAvoidingView,
   Platform,
   Modal,
+  Image,
+  Keyboard,
 } from 'react-native';
+import {launchImageLibrary} from 'react-native-image-picker';
 import {useNavigation, useRoute} from '@react-navigation/native';
-import {createPost, replyPost, getDraft, saveDraft, clearDraft} from '../services/postApi';
+import {createPost, replyPost, getDraft, saveDraft, clearDraft, checkPublish, getUploadToken, uploadImages} from '../services/postApi';
 import PostCaptchaScreen from './PostCaptchaScreen';
 
 interface RouteParams {
@@ -40,6 +43,30 @@ const CreatePostScreen: React.FC = () => {
   const [captchaTicket, setCaptchaTicket] = useState<string | null>(null);
   const [captchaRandstr, setCaptchaRandstr] = useState<string | null>(null);
   const [captchaVerified, setCaptchaVerified] = useState(false); // 验证码是否已验证
+  const [selectedImages, setSelectedImages] = useState<any[]>([]); // 选中的图片asset对象列表
+  const [uploadToken, setUploadToken] = useState<string | null>(null); // 上传token（多个图片共用）
+  const [uploading, setUploading] = useState(false); // 是否正在上传图片
+  const [uploadProgress, setUploadProgress] = useState<number>(0); // 上传进度（0-100）
+  const [showImageSourceModal, setShowImageSourceModal] = useState(false); // 显示图片来源选择弹窗
+
+  // 设置导航栏
+  useEffect(() => {
+    navigation.setOptions({
+      title: isReplyMode ? '回复' : '发帖',
+      headerRight: () => (
+        <TouchableOpacity
+          onPress={handleSubmit}
+          disabled={submitting}
+          style={styles.headerButton}>
+          {submitting ? (
+            <ActivityIndicator size="small" color="#007AFF" />
+          ) : (
+            <Text style={styles.submitText}>发布</Text>
+          )}
+        </TouchableOpacity>
+      ),
+    });
+  }, [navigation, isReplyMode, submitting, title, content, captchaVerified, captchaTicket, captchaRandstr, selectedImages, uploadToken, uploading]);
 
   // 加载草稿
   useEffect(() => {
@@ -109,8 +136,14 @@ const CreatePostScreen: React.FC = () => {
       return;
     }
 
+    // 如果有选中的图片但还未上传完成，不允许发布
+    if (selectedImages.length > 0 && (!uploadToken || uploading)) {
+      Alert.alert('提示', uploading ? '图片正在上传中，请稍候' : '请先完成人机验证以上传图片');
+      return;
+    }
+
     // 解析验证码参数
-    let captchaParams = undefined;
+    let captchaParams;
     const parts = captchaTicket.split('|');
     if (parts.length >= 4) {
       captchaParams = {
@@ -120,10 +153,6 @@ const CreatePostScreen: React.FC = () => {
         pass_token: parts[2],
         gen_time: parts[3],
       };
-      console.log('使用验证码参数:', {
-        lot_number: parts[0],
-        gen_time: parts[3],
-      });
     }
 
     setSubmitting(true);
@@ -135,11 +164,12 @@ const CreatePostScreen: React.FC = () => {
         body: content.trim(),
         reId: params.reId,
         captchaParams, // 传递验证码参数
+        uploadToken: uploadToken || undefined, // 传递图片上传token
       };
 
-      const result = isReplyMode
-        ? await replyPost(postParams)
-        : await createPost(postParams);
+      await (isReplyMode
+        ? replyPost(postParams)
+        : createPost(postParams));
 
       // 发帖成功后清除草稿
       if (!isReplyMode) {
@@ -167,12 +197,21 @@ const CreatePostScreen: React.FC = () => {
   };
 
   // 验证码验证成功
-  const handleCaptchaSuccess = (ticket: string, randstr: string) => {
-    console.log('验证码验证成功');
+  const handleCaptchaSuccess = async (ticket: string, randstr: string) => {
     setCaptchaTicket(ticket);
     setCaptchaRandstr(randstr);
     setCaptchaVerified(true);
     setShowCaptchaModal(false);
+    
+    // 延迟关闭键盘，确保Modal完全关闭后再执行，避免焦点自动回到输入框
+    setTimeout(() => {
+      Keyboard.dismiss();
+    }, 300);
+
+    // 如果有选中的图片，自动开始上传
+    if (selectedImages.length > 0 && !uploadToken) {
+      await handleUploadImages();
+    }
   };
 
   // 验证码取消
@@ -180,8 +219,142 @@ const CreatePostScreen: React.FC = () => {
     setShowCaptchaModal(false);
   };
 
+  // 显示图片来源选择
+  const handleShowImageSourcePicker = () => {
+    if (selectedImages.length >= 9) {
+      Alert.alert('提示', '最多只能选择9张图片');
+      return;
+    }
+    setShowImageSourceModal(true);
+  };
+
+  // 从相册选择图片
+  const handleSelectFromGallery = async () => {
+    // 先关闭弹窗，延迟一下再打开相册，避免弹窗和相册冲突
+    setShowImageSourceModal(false);
+    
+    // 最多选择9张图片
+    if (selectedImages.length >= 9) {
+      Alert.alert('提示', '最多只能选择9张图片');
+      return;
+    }
+
+    // 延迟执行，确保弹窗完全关闭
+    setTimeout(async () => {
+      try {
+        const options = {
+          mediaType: 'photo' as const,
+          selectionLimit: 9 - selectedImages.length, // 剩余可选数量
+          quality: 0.8 as const,
+        };
+        
+        const result = await launchImageLibrary(options);
+
+        if (result.didCancel) {
+          return;
+        }
+        
+        if (result.errorCode) {
+          console.error('选择图片失败, errorCode:', result.errorCode, 'errorMessage:', result.errorMessage);
+          Alert.alert('失败', '选择图片失败: ' + result.errorMessage);
+          return;
+        }
+        
+        if (result.assets && result.assets.length > 0) {
+          // 保存完整的 asset 对象，包含 uri, originalPath, fileName, type 等信息
+          const newAssets = result.assets.filter((asset: any) => asset.uri);
+          const newImages = [...selectedImages, ...newAssets];
+          setSelectedImages(newImages);
+          
+          // 清除之前的上传状态
+          setUploadToken(null);
+        }
+      } catch (error: any) {
+        console.error('选择图片异常:', error);
+        console.error('错误堆栈:', error.stack);
+        Alert.alert('失败', '选择图片失败: ' + error.message);
+      }
+    }, 300);
+  };
+
+  // 从相机拍照
+  const handleTakePhoto = async () => {
+    setShowImageSourceModal(false);
+    // TODO: 实现相机拍照功能
+    Alert.alert('提示', '相机功能开发中，请先使用相册选择');
+  };
+
+  // 删除选中的图片
+  const handleRemoveImage = (index: number) => {
+    if (uploading) {
+      Alert.alert('提示', '图片正在上传中，无法删除');
+      return;
+    }
+    const newImages = selectedImages.filter((_, i) => i !== index);
+    setSelectedImages(newImages);
+    // 如果删除了所有图片，清除token和上传状态
+    if (newImages.length === 0) {
+      setUploadToken(null);
+      setUploadProgress(0);
+    } else {
+      // 删除图片后需要重新上传
+      setUploadToken(null);
+      setUploadProgress(0);
+    }
+  };
+
+  // 上传图片（批量上传）
+  const handleUploadImages = async () => {
+    if (selectedImages.length === 0) {
+      return;
+    }
+
+    // 验证图片asset对象
+    const validImages = selectedImages.filter(asset => {
+      if (!asset || !asset.uri) {
+        return false;
+      }
+      return true;
+    });
+    
+    if (validImages.length === 0) {
+      Alert.alert('提示', '没有有效的图片可上传');
+      return;
+    }
+
+    setUploading(true);
+    setUploadProgress(0);
+    try {
+      // 先检查发帖权限
+      await checkPublish(params.boardId);
+      
+      // 请求两次token，使用第二次的结果
+      await getUploadToken(params.boardId);
+      const token2 = await getUploadToken(params.boardId);
+      
+      // 批量上传所有图片（一次HTTP请求），并监听进度
+      await uploadImages(params.boardId, token2, validImages, (progress) => {
+        setUploadProgress(progress);
+      });
+
+      setUploadToken(token2);
+      setUploadProgress(100);
+    } catch (error: any) {
+      console.error('上传图片失败:', error);
+      console.error('错误堆栈:', error.stack);
+      setUploadProgress(0);
+      Alert.alert('失败', '上传图片失败: ' + error.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const handleCancel = () => {
-    if (title || content) {
+    if (uploading) {
+      Alert.alert('提示', '图片正在上传中，请稍候');
+      return;
+    }
+    if (title || content || selectedImages.length > 0) {
       Alert.alert('提示', '确定要放弃当前编辑吗？', [
         {text: '取消', style: 'cancel'},
         {
@@ -221,29 +394,45 @@ const CreatePostScreen: React.FC = () => {
     </Modal>
   );
 
+  // 渲染图片来源选择Modal
+  const renderImageSourceModal = () => (
+    <Modal
+      visible={showImageSourceModal}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={() => setShowImageSourceModal(false)}>
+      <TouchableOpacity 
+        style={styles.imageSourceOverlay} 
+        activeOpacity={1}
+        onPress={() => setShowImageSourceModal(false)}>
+        <View style={styles.imageSourceModal}>
+          <TouchableOpacity
+            style={styles.imageSourceButton}
+            onPress={handleTakePhoto}>
+            <Text style={styles.imageSourceButtonText}>📷 拍照</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.imageSourceButton}
+            onPress={handleSelectFromGallery}>
+            <Text style={styles.imageSourceButtonText}>🖼️ 从相册选择</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.imageSourceButton, styles.imageSourceCancelButton]}
+            onPress={() => setShowImageSourceModal(false)}>
+            <Text style={[styles.imageSourceButtonText, styles.imageSourceCancelText]}>取消</Text>
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       {renderCaptchaModal()}
+      {renderImageSourceModal()}
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.container}>
-        {/* 顶部操作栏 */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={handleCancel} style={styles.headerButton}>
-            <Text style={styles.cancelText}>取消</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>{isReplyMode ? '回复' : '发帖'}</Text>
-          <TouchableOpacity
-            onPress={handleSubmit}
-            disabled={submitting}
-            style={styles.headerButton}>
-            {submitting ? (
-              <ActivityIndicator size="small" color="#007AFF" />
-            ) : (
-              <Text style={styles.submitText}>发布</Text>
-            )}
-          </TouchableOpacity>
-        </View>
 
         <ScrollView style={styles.content} keyboardShouldPersistTaps="handled">
           {/* 版面信息 */}
@@ -252,7 +441,7 @@ const CreatePostScreen: React.FC = () => {
               {isReplyMode ? '回复到：' : '发帖到：'}
             </Text>
             <Text style={styles.boardName}>
-              {params.boardName || params.board}
+              {params.boardName || params.boardId}
             </Text>
           </View>
 
@@ -273,19 +462,75 @@ const CreatePostScreen: React.FC = () => {
 
           {/* 内容输入 */}
           <View style={styles.inputGroup}>
-            <TextInput
-              style={styles.contentInput}
-              value={content}
-              onChangeText={setContent}
-              placeholder="请输入内容"
-              placeholderTextColor="#999"
-              multiline
-              textAlignVertical="top"
-              maxLength={10000}
-              editable={!submitting}
-            />
+            <View style={styles.contentInputContainer}>
+              <TextInput
+                style={styles.contentInput}
+                value={content}
+                onChangeText={setContent}
+                placeholder="请输入内容"
+                placeholderTextColor="#999"
+                multiline
+                textAlignVertical="top"
+                maxLength={10000}
+                editable={!submitting}
+              />
+              {/* 图片选择按钮（左下角） */}
+              <TouchableOpacity
+                style={styles.imagePickerButton}
+                onPress={handleShowImageSourcePicker}
+                disabled={submitting || uploading || selectedImages.length >= 9}
+                activeOpacity={0.6}>
+                <Text style={styles.imagePickerButtonText}>🖼️</Text>
+              </TouchableOpacity>
+            </View>
             <Text style={styles.counter}>{content.length}/10000</Text>
           </View>
+
+          {/* 已选择的图片列表 */}
+          {selectedImages.length > 0 && (
+            <View style={styles.inputGroup}>
+              <View style={styles.imageListHeader}>
+                <Text style={styles.sectionTitle}>已选择 {selectedImages.length}/9 张图片</Text>
+                {uploadToken && (
+                  <Text style={styles.uploadSuccessText}>✓ 上传完成</Text>
+                )}
+              </View>
+              
+              {/* 上传进度条 */}
+              {uploading && (
+                <View style={styles.progressContainer}>
+                  <View style={styles.progressBar}>
+                    <View style={[styles.progressFill, {width: `${uploadProgress}%`}]} />
+                  </View>
+                  <Text style={styles.progressText}>{uploadProgress}%</Text>
+                </View>
+              )}
+              
+              <ScrollView horizontal style={styles.imageList}>
+                  {selectedImages.map((asset, index) => (
+                  <View key={index} style={styles.imageItem}>
+                    <Image source={{uri: asset.uri || asset}} style={styles.imagePreview} />
+                    <TouchableOpacity
+                      style={styles.removeImageButton}
+                      onPress={() => handleRemoveImage(index)}
+                      disabled={uploading}>
+                      <Text style={styles.removeImageText}>×</Text>
+                    </TouchableOpacity>
+                    {uploadToken && (
+                      <View style={styles.uploadedBadge}>
+                        <Text style={styles.uploadedBadgeText}>✓</Text>
+                      </View>
+                    )}
+                    {uploading && (
+                      <View style={styles.uploadingOverlay}>
+                        <ActivityIndicator size="small" color="#fff" />
+                      </View>
+                    )}
+                  </View>
+                ))}
+              </ScrollView>
+            </View>
+          )}
 
           {/* 人机验证 */}
           <View style={styles.inputGroup}>
@@ -315,9 +560,10 @@ const CreatePostScreen: React.FC = () => {
           {/* 提示信息 */}
           <View style={styles.tipContainer}>
             <Text style={styles.tipText}>💡 提示：</Text>
-            <Text style={styles.tipText}>• 发帖前需完成人机验证</Text>
-            <Text style={styles.tipText}>• 草稿会自动保存</Text>
-            <Text style={styles.tipText}>• 发帖前请遵守版面规则</Text>
+            <Text style={styles.tipText}>• 点击内容框左下角图标可添加图片（最多9张）</Text>
+            <Text style={styles.tipText}>• 完成人机验证后会自动上传图片</Text>
+            <Text style={styles.tipText}>• 图片上传完成后才能发布</Text>
+            <Text style={styles.tipText}>• 草稿会自动保存（不含图片）</Text>
             <Text style={styles.tipText}>• 发布后无法删除，请谨慎发言</Text>
           </View>
         </ScrollView>
@@ -329,35 +575,15 @@ const CreatePostScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
     backgroundColor: '#fff',
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#e0e0e0',
   },
   headerButton: {
-    width: 60,
-  },
-  headerTitle: {
-    fontSize: 17,
-    fontWeight: '600',
-    color: '#333',
-  },
-  cancelText: {
-    fontSize: 16,
-    color: '#666',
+    paddingHorizontal: 8,
   },
   submitText: {
     fontSize: 16,
-    fontWeight: '600',
     color: '#007AFF',
-    textAlign: 'right',
+    fontWeight: '600',
   },
   content: {
     flex: 1,
@@ -392,16 +618,31 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e0e0e0',
   },
+  contentInputContainer: {
+    position: 'relative',
+  },
   contentInput: {
     backgroundColor: '#fff',
     borderRadius: 8,
     padding: 12,
+    paddingBottom: 48, // 为左下角按钮留出空间
     fontSize: 16,
     color: '#333',
     borderWidth: 1,
     borderColor: '#e0e0e0',
     minHeight: 200,
     maxHeight: 400,
+  },
+  imagePickerButton: {
+    position: 'absolute',
+    left: 8,
+    bottom: 8,
+    padding: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imagePickerButtonText: {
+    fontSize: 22,
   },
   counter: {
     fontSize: 12,
@@ -441,6 +682,161 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     backgroundColor: 'transparent',
+  },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+  },
+  imageListHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  uploadSuccessText: {
+    fontSize: 12,
+    color: '#34C759',
+    fontWeight: '600',
+  },
+  progressContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 8,
+  },
+  progressBar: {
+    flex: 1,
+    height: 8,
+    backgroundColor: '#e0e0e0',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#007AFF',
+    borderRadius: 4,
+  },
+  progressText: {
+    fontSize: 12,
+    color: '#007AFF',
+    fontWeight: '600',
+    minWidth: 40,
+    textAlign: 'right',
+  },
+  imageList: {
+    marginBottom: 12,
+  },
+  imageItem: {
+    position: 'relative',
+    marginRight: 8,
+  },
+  imagePreview: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+    backgroundColor: '#f0f0f0',
+  },
+  removeImageButton: {
+    position: 'absolute',
+    top: -8,
+    right: -8,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#FF3B30',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  removeImageText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+    lineHeight: 20,
+  },
+  uploadedBadge: {
+    position: 'absolute',
+    bottom: 4,
+    right: 4,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#34C759',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  uploadedBadgeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  uploadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  imageActionButton: {
+    flex: 1,
+    backgroundColor: '#f9f9f9',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 12,
+    alignItems: 'center',
+  },
+  imageActionButtonDisabled: {
+    opacity: 0.5,
+  },
+  uploadButton: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
+  },
+  imageActionButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+  },
+  imageSourceOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  imageSourceModal: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    padding: 16,
+    paddingBottom: 32,
+  },
+  imageSourceButton: {
+    backgroundColor: '#f9f9f9',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    alignItems: 'center',
+  },
+  imageSourceCancelButton: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  imageSourceButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+  },
+  imageSourceCancelText: {
+    color: '#666',
   },
 });
 

@@ -16,6 +16,7 @@ import {
   RefreshControl,
   PanResponder,
   Image,
+  Alert,
 } from 'react-native';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {useNavigation, useRoute} from '@react-navigation/native';

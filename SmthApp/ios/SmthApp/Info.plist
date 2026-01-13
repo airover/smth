@@ -67,7 +67,9 @@
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>需要访问您的相册以保存图片</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>需要访问您的相册以保存图片</string>
+	<string>需要访问您的相册以选择图片</string>
+	<key>NSCameraUsageDescription</key>
+	<string>需要访问您的相机以拍照</string>
 	<key>RCTNewArchEnabled</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

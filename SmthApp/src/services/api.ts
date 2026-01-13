@@ -17,9 +17,114 @@ const DEFAULT_PAGE = 1; // 默认页码
 const DEFAULT_PAGE_SIZE = 20; // 默认每页数量
 const DEFAULT_SEARCH_STATUS = 0; // 默认搜索状态
 
-// 存储 Cookie
-const storeCookies = async (cookies: string) => {
-  await AsyncStorage.setItem('cookies', cookies);
+// 存储 Cookie（合并新旧 cookie，保留 set_identity 等自定义 cookie）
+const storeCookies = async (newCookies: string, replace: boolean = false) => {
+  if (replace) {
+    // 完全替换模式（用于登出等场景）
+    await AsyncStorage.setItem('cookies', newCookies);
+    return;
+  }
+  
+  // 合并模式：保留已有的 set_identity 等自定义 cookie
+  const existingCookies = await AsyncStorage.getItem('cookies') || '';
+  
+  // 从已有 cookies 中提取 set_identity（如果存在）
+  const setIdentityMatch = existingCookies.match(/set_identity=([^;]+)/);
+  const existingSetIdentity = setIdentityMatch ? setIdentityMatch[0] : null;
+  
+  // 解析新的 cookies，提取有效的 cookie 键值对
+  // Set-Cookie 格式可能是: "kbs-info=xxx; path=/; domain=.newsmth.net, kbs-key=yyy; path=/; domain=.newsmth.net"
+  const cookieParts: string[] = [];
+  
+  // 提取 kbs-info
+  const kbsInfoMatch = newCookies.match(/kbs-info=([^;,\s]+)/);
+  if (kbsInfoMatch) {
+    cookieParts.push(`kbs-info=${kbsInfoMatch[1]}`);
+  }
+  
+  // 提取 kbs-key
+  const kbsKeyMatch = newCookies.match(/kbs-key=([^;,\s]+)/);
+  if (kbsKeyMatch) {
+    cookieParts.push(`kbs-key=${kbsKeyMatch[1]}`);
+  }
+  
+  // 如果新 cookies 中没有 set_identity，但已有 cookies 中有，则保留
+  const newSetIdentityMatch = newCookies.match(/set_identity=([^;]+)/);
+  if (newSetIdentityMatch) {
+    cookieParts.push(newSetIdentityMatch[0]);
+  } else if (existingSetIdentity) {
+    cookieParts.push(existingSetIdentity);
+  }
+  
+  // 组合最终的 cookies
+  const finalCookies = cookieParts.length > 0 ? cookieParts.join('; ') : newCookies;
+  await AsyncStorage.setItem('cookies', finalCookies);
+};
+
+// 更新 set_identity cookie
+const updateSetIdentityCookie = async (userInfo: any) => {
+  try {
+    if (!userInfo || !userInfo.rawAccount) return;
+    
+    const account = userInfo.rawAccount;
+    const identity = {
+      birthday: account.birthday,
+      friendCount: account.friendCount,
+      gender: account.gender,
+      avatarUrl: account.avatarUrl,
+      level: account.level,
+      suicide: account.suicide || false,
+      isFans: account.isFans || false,
+      mobile: account.mobile,
+      articleCount: account.articleCount,
+      fansCount: account.fansCount,
+      avatar: account.avatar,
+      levelTitle: account.levelTitle,
+      type: account.type || 0,
+      nick: account.nick,
+      score: account.score,
+      loginTime: account.loginTime,
+      createTime: account.createTime,
+      isBlack: account.isBlack || false,
+      name: account.name,
+      id: account.id,
+      k3sUrl: account.k3sUrl,
+      title: userInfo.title
+    };
+    
+    // 序列化并编码，模拟 curl 格式
+    const jsonStr = JSON.stringify(identity);
+    const encoded = encodeURIComponent(jsonStr)
+      .replace(/%7B/g, '{')
+      .replace(/%7D/g, '}')
+      .replace(/%3A/g, ':')
+      .replace(/%2F/g, '/');
+      
+    const setIdentityCookie = `set_identity=${encoded}`;
+    
+    // 获取当前 cookies
+    let currentCookies = await getCookies() || '';
+    
+    // 检查是否已存在 set_identity
+    if (currentCookies.includes('set_identity=')) {
+      // 替换现有的 set_identity
+      // 正则匹配 set_identity=...; 或者 set_identity=... 到字符串结束
+      currentCookies = currentCookies.replace(/set_identity=[^;]+(;|$)/, `${setIdentityCookie}$1`);
+    } else {
+      // 追加 set_identity
+      if (currentCookies && !currentCookies.endsWith(';')) {
+        currentCookies += '; ';
+      }
+      currentCookies += setIdentityCookie;
+    }
+    
+    // 保存更新后的 cookies
+    await storeCookies(currentCookies);
+    console.log('已更新并持久化 set_identity cookie');
+    
+  } catch (error) {
+    console.error('更新 set_identity cookie 失败:', error);
+  }
 };
 
 // 获取 Cookie
@@ -147,6 +252,10 @@ export const login = async (
         const accountName = json.data?.account?.name || username;
         await AsyncStorage.setItem('username', accountName);
         await AsyncStorage.setItem('isLoggedIn', 'true');
+        
+        // 登录成功后立即获取用户信息，以便构造 set_identity cookie
+        // 不等待它完成，让它在后台执行
+        getUserInfo().catch(e => console.error('登录后获取用户信息失败:', e));
         
         return {
           success: true,
@@ -305,6 +414,7 @@ const fetchUserInfoFromServer = async (): Promise<any> => {
         loginTime: account.loginTime, // 最后登录时间戳
         createTime: account.createTime, // 注册时间戳
         isLoggedIn: true,
+        rawAccount: account, // 保存原始数据，用于构造 set_identity cookie
       };
       
       // 保存用户名到本地存储
@@ -325,6 +435,9 @@ const fetchUserInfoFromServer = async (): Promise<any> => {
         await AsyncStorage.setItem(USER_INFO_STORAGE_KEY, JSON.stringify(userInfo));
         await AsyncStorage.setItem(USER_INFO_TIMESTAMP_KEY, now.toString());
         console.log('用户信息已持久化到本地存储');
+        
+        // 更新 set_identity cookie
+        await updateSetIdentityCookie(userInfo);
       } catch (error) {
         console.error('持久化用户信息失败:', error);
       }
@@ -482,11 +595,9 @@ export const searchArticles = async (
       'priority': 'u=1, i',
       'sec-ch-ua': '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
       'sec-ch-ua-mobile': '?0',
-      'sec-ch-ua-platform': '"macOS"',
       'sec-fetch-dest': 'empty',
       'sec-fetch-mode': 'cors',
       'sec-fetch-site': 'same-origin',
-      'test-uin-only': '1',
       'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
     };
     
@@ -547,11 +658,9 @@ export const searchBoards = async (
       'priority': 'u=1, i',
       'sec-ch-ua': '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
       'sec-ch-ua-mobile': '?0',
-      'sec-ch-ua-platform': '"macOS"',
       'sec-fetch-dest': 'empty',
       'sec-fetch-mode': 'cors',
       'sec-fetch-site': 'same-origin',
-      'test-uin-only': '1',
       'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
     };
     
@@ -610,11 +719,9 @@ export const searchAccounts = async (
       'priority': 'u=1, i',
       'sec-ch-ua': '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
       'sec-ch-ua-mobile': '?0',
-      'sec-ch-ua-platform': '"macOS"',
       'sec-fetch-dest': 'empty',
       'sec-fetch-mode': 'cors',
       'sec-fetch-site': 'same-origin',
-      'test-uin-only': '1',
       'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
     };
     
@@ -662,6 +769,130 @@ export const checkLoginStatus = async (): Promise<boolean> => {
   } catch (error) {
     console.error('Check login status error:', error);
     return false;
+  }
+};
+
+// 删除帖子
+// API: DELETE https://wap.newsmth.net/wap/api/topic/delete/article/{postId}
+export const deletePost = async (postId: string, title?: string, board?: string): Promise<{success: boolean; message?: string}> => {
+  try {
+    const cookies = await getCookies();
+    
+    if (!cookies) {
+      return {
+        success: false,
+        message: '未登录，无法删除帖子'
+      };
+    }
+    
+    // 构造动态 referer，格式：https://wap.newsmth.net/article/{postId}?title={title}&from=board
+    let referer = `https://wap.newsmth.net/article/${postId}`;
+    if (title || board) {
+      const params = new URLSearchParams();
+      if (title) params.append('title', title);
+      if (board) params.append('from', 'board');
+      referer += `?${params.toString()}`;
+    }
+    
+    // 检查并补充 set_identity
+    let finalCookies = cookies;
+    if (!cookies.includes('set_identity=')) {
+      try {
+        // 获取用户信息（利用缓存）
+        const userInfo = await getUserInfo();
+        if (userInfo && userInfo.rawAccount) {
+          const account = userInfo.rawAccount;
+          const identity = {
+            birthday: account.birthday,
+            friendCount: account.friendCount,
+            gender: account.gender,
+            avatarUrl: account.avatarUrl,
+            level: account.level,
+            suicide: account.suicide || false,
+            isFans: account.isFans || false,
+            mobile: account.mobile,
+            articleCount: account.articleCount,
+            fansCount: account.fansCount,
+            avatar: account.avatar,
+            levelTitle: account.levelTitle,
+            type: account.type || 0,
+            nick: account.nick,
+            score: account.score,
+            loginTime: account.loginTime,
+            createTime: account.createTime,
+            isBlack: account.isBlack || false,
+            name: account.name,
+            id: account.id,
+            k3sUrl: account.k3sUrl,
+            title: userInfo.title
+          };
+          
+          // 序列化
+          const jsonStr = JSON.stringify(identity);
+          
+          // 模拟 curl 的编码方式：保留 { } : / ，编码 " , 和中文
+          // 先 encodeURIComponent 整个字符串，然后把 %7B 换回 {，%7D 换回 }，%3A 换回 :，%2F 换回 /
+          const encoded = encodeURIComponent(jsonStr)
+            .replace(/%7B/g, '{')
+            .replace(/%7D/g, '}')
+            .replace(/%3A/g, ':')
+            .replace(/%2F/g, '/');
+            
+          finalCookies = `${cookies}; set_identity=${encoded}`;
+          console.log('已自动构造并添加 set_identity cookie');
+        }
+      } catch (e) {
+        console.warn('尝试构造 set_identity 失败:', e);
+      }
+    }
+    
+    const headers: Record<string, string> = {
+      'accept': 'application/json, text/plain, */*',
+      'accept-language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+      'access-control-allow-origin': '*',
+      'authorization': 'Basic Og==',
+      'cache-control': 'no-cache',
+      'content-length': '0',
+      'content-type': 'application/x-www-form-urlencoded',
+      'origin': 'https://wap.newsmth.net',
+      'pragma': 'no-cache',
+      'priority': 'u=1, i',
+      'referer': referer,
+      'x-requested-with': 'XMLHttpRequest',
+      'user-agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15',
+      'Cookie': finalCookies,
+    };
+    
+    const url = `${WAP_BASE_URL}/wap/api/topic/delete/article/${postId}`;
+    console.log('删除帖子 URL:', url);
+    console.log('删除帖子 Headers:', JSON.stringify(headers, null, 2));
+    
+    const response = await fetchWithRetry(url, {
+      method: 'DELETE',
+      headers,
+      credentials: 'include',
+    });
+    
+    const json = await response.json();
+    console.log('删除帖子响应:', json);
+    
+    if (json.code === 1) {
+      return {
+        success: true,
+        message: json.message || '删除成功'
+      };
+    } else {
+      return {
+        success: false,
+        message: json.message || '删除失败'
+      };
+    }
+  } catch (error) {
+    console.error('Delete post error:', error);
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : '删除失败'
+    };
   }
 };
 

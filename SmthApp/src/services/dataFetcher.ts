@@ -610,6 +610,7 @@ export const getPostDetail = async (
       
       const post: any = {
         id: topic.id,
+        articleId: article?.id, // 文章ID，用于删除等操作
         board: topic.board?.name || _board,
         boardName: topic.board?.title || '未知版面',
         title: topic.subject?.trim(),

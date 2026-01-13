@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import RNFetchBlob from 'rn-fetch-blob';
 import {
   fetchWithRetry,
   DEFAULT_TIMEOUT,
@@ -25,6 +26,7 @@ export interface PostParams {
   reId?: string; // 回复的帖子ID（如果是回复）
   type?: number; // 帖子类型，默认3
   captchaParams?: CaptchaParams; // 验证码参数
+  uploadToken?: string; // 上传图片的token（多个图片共用一个token）
 }
 
 /**
@@ -65,7 +67,7 @@ export const createPost = async (params: PostParams): Promise<PostResponse> => {
     }
 
     // 构建请求头（基于抓包结果）
-    const headers: HeadersInit = {
+    const headers: Record<string, string> = {
       Accept: 'application/json, text/plain, */*',
       'Content-Type': 'application/x-www-form-urlencoded',
       Cookie: cookies,
@@ -94,14 +96,15 @@ export const createPost = async (params: PostParams): Promise<PostResponse> => {
       formData.append('captcha_output', params.captchaParams.captcha_output);
       formData.append('pass_token', params.captchaParams.pass_token);
       formData.append('gen_time', params.captchaParams.gen_time);
-      console.log('使用验证码参数:', {
-        lot_number: params.captchaParams.lot_number,
-        gen_time: params.captchaParams.gen_time,
-      });
     }
 
     if (params.reId) {
       formData.append('reid', params.reId);
+    }
+
+    // 添加图片上传token（如果有）
+    if (params.uploadToken) {
+      formData.append('uploadToken', params.uploadToken);
     }
 
     logRequest.start(API_URL, 'POST');
@@ -116,7 +119,7 @@ export const createPost = async (params: PostParams): Promise<PostResponse> => {
       method: 'POST',
       headers,
       body: formData.toString(),
-    }, DEFAULT_TIMEOUT);
+    }, 20000);
 
     // 处理HTTP错误
     if (!response.ok) {
@@ -202,4 +205,351 @@ export const clearDraft = async (boardId: string): Promise<void> => {
   } catch (error) {
     console.error('清除草稿失败:', error);
   }
+};
+
+/**
+ * 获取图片上传token
+ * 
+ * @param boardId 版面ID（用于Referer）
+ * @returns 上传token
+ */
+/**
+ * 检查发帖权限
+ * 在获取上传token前调用，验证用户是否有发帖权限
+ * 
+ * @param boardId 版面ID
+ * @returns 检查结果，成功返回true，失败抛出错误
+ */
+export const checkPublish = async (boardId?: string): Promise<boolean> => {
+  try {
+    const API_URL = 'https://wap.newsmth.net/wap/api/topic/publish/check';
+
+    // 获取登录凭证
+    const cookies = await AsyncStorage.getItem('cookies');
+    if (!cookies) {
+      throw new Error('未登录，请先登录');
+    }
+
+    const headers: Record<string, string> = {
+      Accept: 'application/json, text/plain, */*',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+      'access-control-allow-origin': '*',
+      Cookie: cookies,
+      Authorization: 'Basic Og==',
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache',
+      Referer: boardId 
+        ? `https://wap.newsmth.net/post?boardId=${boardId}` 
+        : 'https://wap.newsmth.net/',
+      'priority': 'u=1, i',
+      'sec-ch-ua': '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"macOS"',
+      'sec-fetch-dest': 'empty',
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-site': 'same-origin',
+      'User-Agent':
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
+    };
+
+    logRequest.start(API_URL, 'GET');
+
+    const response = await fetchWithRetry(API_URL, {
+      method: 'GET',
+      headers,
+    }, DEFAULT_TIMEOUT);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      logRequest.error(API_URL, new Error(`HTTP ${response.status}: ${errorText}`));
+      throw new Error(`检查发帖权限失败: ${response.status}`);
+    }
+
+    const result = await response.json();
+    logRequest.success(API_URL, result);
+
+    if (result.code === 1) {
+      return true;
+    } else {
+      throw new Error(result.message || '您没有发帖权限');
+    }
+  } catch (error: any) {
+    console.error('检查发帖权限错误:', error);
+    throw error;
+  }
+};
+
+export const getUploadToken = async (boardId?: string): Promise<string> => {
+  try {
+    const API_URL = 'https://wap.newsmth.net/wap/api/file/token';
+
+    // 获取登录凭证
+    const cookies = await AsyncStorage.getItem('cookies');
+    if (!cookies) {
+      throw new Error('未登录，请先登录');
+    }
+
+    // 对比浏览器请求头，完善请求头设置
+    const headers: Record<string, string> = {
+      Accept: 'application/json, text/plain, */*',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+      'access-control-allow-origin': '*',
+      Cookie: cookies,
+      Authorization: 'Basic Og==',
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache',
+      Origin: 'https://wap.newsmth.net',
+      Referer: boardId 
+        ? `https://wap.newsmth.net/post?boardId=${boardId}` 
+        : 'https://wap.newsmth.net/',
+      'priority': 'u=1, i',
+      'sec-ch-ua': '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"macOS"',
+      'sec-fetch-dest': 'empty',
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-site': 'same-origin',
+      'test-uin-only': '1',
+      'User-Agent':
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
+    };
+
+    logRequest.start(API_URL, 'GET');
+
+    const response = await fetchWithRetry(API_URL, {
+      method: 'GET',
+      headers,
+    }, DEFAULT_TIMEOUT);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      logRequest.error(API_URL, new Error(`HTTP ${response.status}: ${errorText}`));
+      throw new Error(`获取上传token失败: ${response.status}`);
+    }
+
+    const result = await response.json();
+    logRequest.success(API_URL, result);
+
+    if (result.code === 1 && result.data) {
+      return result.data;
+    } else {
+      throw new Error(result.message || '获取上传token失败');
+    }
+  } catch (error: any) {
+    console.error('获取上传token错误:', error);
+    throw error;
+  }
+};
+
+/**
+ * 图片 Asset 对象接口（来自 react-native-image-picker）
+ */
+interface ImageAsset {
+  uri: string;           // 图片 URI（可能是 ph:// 格式）
+  originalPath?: string; // 原始文件路径（iOS 上可用）
+  fileName?: string;     // 文件名
+  type?: string;         // MIME 类型
+  fileSize?: number;     // 文件大小
+  width?: number;        // 宽度
+  height?: number;       // 高度
+  base64?: string;       // Base64 数据（如果请求了）
+}
+
+/**
+ * 批量上传图片（一次请求上传多张图片）
+ * 
+ * 使用 rn-fetch-blob 库进行文件上传，该库可以正确读取本地文件并发送
+ * React Native 的 fetch/XMLHttpRequest 在处理 FormData 文件时存在兼容性问题
+ * 
+ * @param boardId 版面ID
+ * @param token 上传token
+ * @param imageAssets 图片 asset 对象数组（来自 react-native-image-picker）
+ * @param onProgress 上传进度回调
+ * @returns 上传后的图片token
+ */
+export const uploadImages = async (
+  boardId: string,
+  token: string,
+  imageAssets: ImageAsset[],
+  onProgress?: (progress: number) => void
+): Promise<string> => {
+  try {
+    const API_URL = `https://wap.newsmth.net/wap/api/file/upload/${boardId}/${token}`;
+
+    // 获取登录凭证
+    const cookies = await AsyncStorage.getItem('cookies');
+    if (!cookies) {
+      throw new Error('未登录，请先登录');
+    }
+
+    // 检查是否有图片
+    if (!imageAssets || imageAssets.length === 0) {
+      throw new Error('请选择要上传的图片');
+    }
+
+    // 构建 multipart/form-data 数据
+    const formDataParts: Array<{
+      name: string;
+      filename: string;
+      type: string;
+      data: string; // rn-fetch-blob 使用 wrap() 包装文件路径
+    }> = [];
+    
+    for (let i = 0; i < imageAssets.length; i++) {
+      const asset = imageAssets[i];
+      
+      // 检查 asset 是否有效
+      if (!asset || !asset.uri) {
+        console.error(`图片 ${i + 1} asset无效:`, asset);
+        continue;
+      }
+      
+      // 获取文件路径（去掉 file:// 前缀）
+      let filePath = asset.originalPath || asset.uri;
+      if (filePath.startsWith('file://')) {
+        filePath = filePath.substring(7);
+      }
+      // 解码路径，处理空格和特殊字符
+      filePath = decodeURIComponent(filePath);
+      
+      // 获取文件名
+      const filename = asset.fileName || filePath.split('/').pop() || `image${i}.jpg`;
+      
+      // 获取 MIME 类型
+      let mimeType = asset.type || 'image/jpeg';
+      if (mimeType === 'image/jpg') {
+        mimeType = 'image/jpeg';
+      }
+      const ext = filename.split('.').pop()?.toLowerCase();
+      if (ext === 'png') {
+        mimeType = 'image/png';
+      } else if (ext === 'gif') {
+        mimeType = 'image/gif';
+      } else if (ext === 'heic' || ext === 'heif') {
+        mimeType = 'image/heic';
+      } else if (ext === 'webp') {
+        mimeType = 'image/webp';
+      }
+
+      // 检查文件是否存在
+      try {
+        await RNFetchBlob.fs.stat(filePath);
+      } catch (e) {
+        console.error(`图片 ${i + 1} 文件读取失败:`, e);
+        throw new Error(`无法读取图片文件: ${filename}`);
+      }
+
+      // 使用 RNFetchBlob.wrap() 包装文件路径
+      formDataParts.push({
+        name: 'files', // 根据前端JS分析，字段名应为 'files'
+        filename: filename,
+        type: mimeType,
+        data: RNFetchBlob.wrap(filePath),
+      });
+    }
+    
+    if (formDataParts.length === 0) {
+      throw new Error('没有有效的图片可上传');
+    }
+
+    logRequest.start(API_URL, 'POST');
+    logRequest.params({boardId, token, imageCount: imageAssets.length});
+
+    // 构建请求头 - 直接使用缓存的 cookies
+    // set_identity 已在登录后由 api.ts 自动构造并持久化，无需再手动构造
+    const requestHeaders = {
+      Accept: 'application/json, text/plain, */*',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+      'access-control-allow-origin': '*',
+      Cookie: cookies,
+      Authorization: 'Basic Og==',
+      Origin: 'https://wap.newsmth.net',
+      Referer: `https://wap.newsmth.net/post?boardId=${boardId}`,
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache',
+      'priority': 'u=1, i',
+      'sec-ch-ua': '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"macOS"',
+      'sec-fetch-dest': 'empty',
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-site': 'same-origin',
+      'test-uin-only': '1',
+      'User-Agent':
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
+      // Content-Type 由 rn-fetch-blob 自动设置为 multipart/form-data
+    };
+
+    // 使用 rn-fetch-blob 上传文件
+    const response = await RNFetchBlob.config({
+      timeout: 30000,
+    }).fetch(
+      'POST',
+      API_URL,
+      requestHeaders,
+      formDataParts
+    )
+    .uploadProgress((written, total) => {
+      let progress = Math.round((written / total) * 100);
+      // 限制进度最大为95%，预留5%给服务器处理时间，避免进度条提前100%但实际还在等待响应
+      if (progress > 95) {
+        progress = 95;
+      }
+      if (onProgress) {
+        onProgress(progress);
+      }
+    });
+
+    const responseText = await response.text();
+
+    if (response.respInfo.status !== 200) {
+      logRequest.error(API_URL, new Error(`HTTP ${response.respInfo.status}: ${responseText}`));
+      throw new Error(`上传图片失败: ${response.respInfo.status}`);
+    }
+
+    const result = JSON.parse(responseText);
+    logRequest.success(API_URL, result);
+
+    // 根据浏览器抓包响应格式：
+    // {
+    //   "code": 1,
+    //   "data": [
+    //     { "ext": "image/jpeg", "key": "xxx.jpg", "uri": "/compose/download/xxx.jpg", ... },
+    //     { "ext": "image/jpeg", "key": "yyy.jpg", "uri": "/compose/download/yyy.jpg", ... }
+    //   ],
+    //   "kbsCode": 0,
+    //   "message": "操作成功"
+    // }
+    if (result.code === 1) {
+      // result.data 是一个数组，包含每张图片的信息
+      // 返回 token（调用方实际使用 URL 中的 token 来关联图片）
+      // 这里返回 token 以保持接口兼容性
+      return token;
+    } else {
+      throw new Error(result.message || '上传图片失败');
+    }
+  } catch (error: any) {
+    console.error('批量上传图片错误:', error);
+    throw error;
+  }
+};
+
+/**
+ * 上传单张图片（兼容旧代码）
+ * 
+ * @param boardId 版面ID
+ * @param token 上传token
+ * @param imageAsset 图片 asset 对象或 URI 字符串
+ * @returns 上传后的图片token
+ */
+export const uploadImage = async (
+  boardId: string,
+  token: string,
+  imageAsset: ImageAsset | string
+): Promise<string> => {
+  // 兼容旧代码：如果传入的是字符串，转换为 asset 对象
+  const asset: ImageAsset = typeof imageAsset === 'string' 
+    ? { uri: imageAsset } 
+    : imageAsset;
+  return uploadImages(boardId, token, [asset]);
 };

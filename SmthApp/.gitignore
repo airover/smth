@@ -76,3 +76,6 @@ yarn-error.log
 
 # Documentation (development notes)
 docs/
+
+# CodeBuddy
+.codebuddy/

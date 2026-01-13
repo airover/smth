@@ -107,9 +107,10 @@ const AppNavigator = () => {
           headerStyle: {
             backgroundColor: '#fff',
           },
-          headerTintColor: '#007AFF', // 统一使用项目蓝色主题
+          headerTintColor: '#007AFF', // 统一使用项目蓝色主题（按钮颜色）
           headerTitleStyle: {
             fontWeight: '600',
+            color: '#000', // 标题颜色使用黑色
           },
           headerBackTitle: undefined, // 完全不显示返回文字
           headerBackTitleVisible: false, // iOS上完全隐藏返回文字
@@ -204,7 +205,7 @@ const AppNavigator = () => {
           name="CreatePost"
           component={CreatePostScreen}
           options={{
-            headerShown: false, // 使用自定义顶部栏
+            title: '',
           }}
         />
       </Stack.Navigator>
