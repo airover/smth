@@ -14,6 +14,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {getFavoriteBoards} from '../services/api';
 import {removeBoardFavorite} from '../services/dataFetcher';
 import {Board} from '../types';
+import {
+  SPACING,
+  FONT_SIZE,
+  BORDER_RADIUS,
+  scaleModerate,
+} from '../utils/responsive';
 
 const BoardListScreen: React.FC = () => {
   const route = useRoute();
@@ -216,19 +222,19 @@ const styles = StyleSheet.create({
     backgroundColor: '#f5f5f5',
   },
   content: {
-    padding: 12,
+    padding: SPACING.md,
   },
   columnWrapper: {
     justifyContent: 'flex-start',
   },
   boardItem: {
     backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 10,
-    marginHorizontal: 4,
+    borderRadius: BORDER_RADIUS.md,
+    padding: SPACING.md,
+    marginBottom: SPACING.sm + 2,
+    marginHorizontal: SPACING.xs,
     flex: 1/3,
-    height: 60,
+    height: scaleModerate(60),
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: '#000',
@@ -238,15 +244,15 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   boardName: {
-    fontSize: 13,
+    fontSize: FONT_SIZE.sm,
     fontWeight: '500',
     color: '#333',
     textAlign: 'center',
   },
   boardDesc: {
-    fontSize: 11,
+    fontSize: FONT_SIZE.xs,
     color: '#999',
-    marginTop: 2,
+    marginTop: SPACING.xs / 2,
     textAlign: 'center',
   },
   loadingContainer: {
@@ -258,27 +264,27 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 60,
+    paddingVertical: scaleModerate(60),
   },
   emptyTitle: {
-    fontSize: 18,
+    fontSize: FONT_SIZE.xxl,
     fontWeight: '600',
     color: '#333',
-    marginBottom: 8,
+    marginBottom: SPACING.sm,
   },
   emptyText: {
-    fontSize: 14,
+    fontSize: FONT_SIZE.md,
     color: '#999',
-    marginBottom: 24,
+    marginBottom: SPACING.xxl,
   },
   loginButton: {
     backgroundColor: '#007AFF',
-    paddingHorizontal: 32,
-    paddingVertical: 12,
-    borderRadius: 8,
+    paddingHorizontal: SPACING.xxxl,
+    paddingVertical: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
   },
   loginButtonText: {
-    fontSize: 16,
+    fontSize: FONT_SIZE.lg,
     fontWeight: '600',
     color: '#fff',
   },

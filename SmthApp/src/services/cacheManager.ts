@@ -16,6 +16,7 @@ interface CacheStore {
   
   // 用户相关缓存
   userInfo?: CacheItem<any>;
+  otherUserInfo: {[key: string]: CacheItem<any>}; // 他人资料缓存
   favoriteBoards?: CacheItem<any[]>;
   
   // 内容相关缓存
@@ -46,6 +47,7 @@ class CacheManager {
     albumPosts: 60 * 1000,         // 1分钟（图览帖子实时性要求高）
     postDetail: 5 * 60 * 1000,     // 5分钟（帖子详情相对稳定）
     topicReplies: 60 * 1000,       // 1分钟（回复实时性要求高）
+    otherUserInfo: 5 * 60 * 1000,  // 5分钟（他人资料相对稳定）
   };
 
   private constructor() {
@@ -57,6 +59,7 @@ class CacheManager {
       topicReplies: {},
       channelPosts: {},
       albumPosts: {},
+      otherUserInfo: {},
     };
   }
 
@@ -173,6 +176,7 @@ class CacheManager {
       topicReplies: {},
       channelPosts: {},
       albumPosts: {},
+      otherUserInfo: {},
     };
     console.log('[Cache] Cleared all caches');
   }
@@ -224,7 +228,7 @@ class CacheManager {
     let cleaned = 0;
 
     // 清理字典类型的缓存
-    const dictCategories: Array<'subBoards' | 'boardPosts' | 'hotPosts' | 'postDetail' | 'topicReplies' | 'channelPosts' | 'albumPosts'> = [
+    const dictCategories: Array<'subBoards' | 'boardPosts' | 'hotPosts' | 'postDetail' | 'topicReplies' | 'channelPosts' | 'albumPosts' | 'otherUserInfo'> = [
       'subBoards',
       'boardPosts',
       'hotPosts',
@@ -232,6 +236,7 @@ class CacheManager {
       'topicReplies',
       'channelPosts',
       'albumPosts',
+      'otherUserInfo',
     ];
 
     for (const category of dictCategories) {

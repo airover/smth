@@ -15,6 +15,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {getMessages} from '../services/api';
 import {Mail} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
+import {
+  SPACING,
+  FONT_SIZE,
+  BORDER_RADIUS,
+  scaleModerate,
+} from '../utils/responsive';
 
 const MailScreen: React.FC = () => {
   const navigation = useNavigation<any>();
@@ -28,11 +34,18 @@ const MailScreen: React.FC = () => {
     checkLoginAndLoadMails();
   }, []);
 
-  // 页面获得焦点时检查登录状态
+  // 页面获得焦点时检查登录状态并刷新消息列表
   useFocusEffect(
     React.useCallback(() => {
-      checkLoginStatus();
-    }, [])
+      const refreshOnFocus = async () => {
+        await checkLoginStatus();
+        // 如果已登录，刷新消息列表
+        if (isLoggedIn) {
+          await loadMails();
+        }
+      };
+      refreshOnFocus();
+    }, [isLoggedIn])
   );
 
   const checkLoginAndLoadMails = async () => {
@@ -213,7 +226,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#f5f5f5',
   },
   content: {
-    padding: 16,
+    padding: SPACING.lg,
   },
   loadingContainer: {
     flex: 1,
@@ -222,9 +235,9 @@ const styles = StyleSheet.create({
   },
   mailItem: {
     backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: BORDER_RADIUS.md,
+    padding: SPACING.lg,
+    marginBottom: SPACING.md,
     shadowColor: '#000',
     shadowOffset: {width: 0, height: 1},
     shadowOpacity: 0.05,
@@ -246,36 +259,36 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: SPACING.xs,
   },
   mailFrom: {
-    fontSize: 15,
+    fontSize: FONT_SIZE.lg,
     fontWeight: '600',
     color: '#000',
     flex: 1,
   },
   mailTime: {
-    fontSize: 11,
+    fontSize: FONT_SIZE.xs,
     color: '#999',
-    marginLeft: 8,
+    marginLeft: SPACING.sm,
   },
   mailSubject: {
-    fontSize: 14,
+    fontSize: FONT_SIZE.md,
     color: '#333',
-    marginBottom: 4,
+    marginBottom: SPACING.xs,
     fontWeight: '500',
   },
   mailPreview: {
-    fontSize: 13,
+    fontSize: FONT_SIZE.sm,
     color: '#666',
-    lineHeight: 18,
+    lineHeight: FONT_SIZE.xl,
   },
   unreadBadge: {
-    marginTop: 6,
+    marginTop: SPACING.xs + 2,
     alignSelf: 'flex-start',
   },
   unreadText: {
-    fontSize: 11,
+    fontSize: FONT_SIZE.xs,
     color: '#007AFF',
     fontWeight: '500',
   },
@@ -283,27 +296,27 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 60,
+    paddingVertical: scaleModerate(60),
   },
   emptyTitle: {
-    fontSize: 18,
+    fontSize: FONT_SIZE.xxl,
     fontWeight: '600',
     color: '#333',
-    marginBottom: 8,
+    marginBottom: SPACING.sm,
   },
   emptyText: {
-    fontSize: 14,
+    fontSize: FONT_SIZE.md,
     color: '#999',
-    marginBottom: 24,
+    marginBottom: SPACING.xxl,
   },
   loginButton: {
     backgroundColor: '#007AFF',
-    paddingHorizontal: 32,
-    paddingVertical: 12,
-    borderRadius: 8,
+    paddingHorizontal: SPACING.xxxl,
+    paddingVertical: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
   },
   loginButtonText: {
-    fontSize: 16,
+    fontSize: FONT_SIZE.lg,
     fontWeight: '600',
     color: '#fff',
   },

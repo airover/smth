@@ -951,7 +951,21 @@ export const searchBoards = async (keyword: string): Promise<any[]> => {
 
 // 获取对话详情（对话中的所有消息）
 // API: GET https://wap.newsmth.net/wap/api/message/conversation/{conversationId}?t={timestamp}
-export const getConversationMessages = async (conversationId: string): Promise<any[]> => {
+// 获取会话消息
+// API: GET https://wap.newsmth.net/wap/api/message/{speakerId}/messages/{page}
+// 参数说明：
+// - speakerId: 对话用户ID
+// - page: 页码（从1开始）
+export const getConversationMessages = async (
+  speakerId: string,
+  page: number = 1
+): Promise<{
+  messages: any[];
+  speaker: any;
+  account: any;
+  hasMore: boolean;
+  total: number;
+}> => {
   try {
     const cookies = await getCookies();
     
@@ -961,23 +975,27 @@ export const getConversationMessages = async (conversationId: string): Promise<a
       throw new Error('NOT_LOGGED_IN');
     }
     
-    const timestamp = Date.now();
-    const url = `${WAP_BASE_URL}/wap/api/message/conversation/${conversationId}?t=${timestamp}`;
+    const url = `${WAP_BASE_URL}/wap/api/message/${speakerId}/messages/${page}`;
     
     console.log('Fetching conversation messages from API:', url);
     
     const headers: Record<string, string> = {
-      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15',
-      'Accept': 'application/json, text/plain, */*',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      'Authorization': 'Basic Og==',
+      'accept': 'application/json, text/plain, */*',
+      'accept-language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+      'access-control-allow-origin': '*',
+      'authorization': 'Basic Og==',
+      'cache-control': 'no-cache',
+      'pragma': 'no-cache',
+      'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
+      'referer': `https://wap.newsmth.net/conversation/${speakerId}`,
+      'origin': 'https://wap.newsmth.net',
       'Cookie': cookies,
     };
 
     const response = await fetchWithRetry(url, {
       headers,
       credentials: 'include',
-    });
+    }, DEFAULT_TIMEOUT);
     
     // 检查HTTP状态码
     if (response.status === 401 || response.status === 403) {
@@ -1001,40 +1019,223 @@ export const getConversationMessages = async (conversationId: string): Promise<a
       throw new Error(json.message || 'API_ERROR');
     }
 
-    if (json.data?.messages) {
-      const messages = json.data.messages;
-      const currentUserId = json.data.accountId; // 当前用户ID
+    if (json.data) {
+      const messages = json.data.messages || [];
+      const speaker = json.data.speaker || {};
+      const account = json.data.account || {};
+      const pager = json.data.pager || {};
       
-      return messages.map((msg: any) => {
-        const sender = msg.sender || {};
-        let avatar = sender.k3sUrl || sender.ks3Url || sender.avatarUrl || '';
-        if (avatar && avatar.startsWith('http:')) {
-          avatar = avatar.replace('http:', 'https:');
+      // 当前用户ID
+      const currentUserId = account.id;
+      
+      // 处理头像URL
+      const processAvatar = (avatarUrl: string | undefined): string => {
+        if (!avatarUrl) return '';
+        if (avatarUrl.startsWith('http:')) {
+          return avatarUrl.replace('http:', 'https:');
         }
+        return avatarUrl;
+      };
+      
+      const processedMessages = messages.map((msg: any) => {
+        // 判断是发送方还是接收方
+        const isSender = msg.senderId === currentUserId;
+        // 获取对方的信息（speaker是对话的对方）
+        const senderInfo = isSender ? account : speaker;
         
         return {
           id: msg.id,
           senderId: msg.senderId,
-          senderName: sender.name || '',
-          senderNick: sender.nick || sender.name || '',
-          senderAvatar: avatar,
+          recipientId: msg.recipientId,
+          senderName: senderInfo.name || '',
+          senderNick: senderInfo.nick || senderInfo.name || '',
+          senderAvatar: processAvatar(senderInfo.avatarUrl || senderInfo.k3sUrl),
           subject: msg.subject || '',
           body: msg.body || '',
           sendTime: msg.sendTime || Date.now(),
-          isMe: msg.senderId === currentUserId,
+          status: msg.status,
+          isMe: isSender,
         };
       });
+      
+      // 计算是否还有更多
+      const total = pager.total || 0;
+      const pageSize = pager.size || 20;
+      const currentPage = pager.page || page;
+      const hasMore = currentPage * pageSize < total;
+      
+      return {
+        messages: processedMessages,
+        speaker: {
+          id: speaker.id,
+          name: speaker.name,
+          nick: speaker.nick || speaker.name,
+          avatar: processAvatar(speaker.avatarUrl || speaker.k3sUrl),
+          levelTitle: speaker.levelTitle,
+        },
+        account: {
+          id: account.id,
+          name: account.name,
+          nick: account.nick || account.name,
+          avatar: processAvatar(account.avatarUrl || account.k3sUrl),
+        },
+        hasMore,
+        total,
+      };
     }
     
-    return [];
+    return {
+      messages: [],
+      speaker: {},
+      account: {},
+      hasMore: false,
+      total: 0,
+    };
   } catch (error: any) {
     console.error('Get conversation messages error:', error);
     // 登录相关错误需要抛出，让调用方处理
     if (error.message === 'NOT_LOGGED_IN' || error.message === 'LOGIN_EXPIRED') {
       throw error;
     }
-    // 其他错误返回空数组
-    return [];
+    // 其他错误返回空数据
+    return {
+      messages: [],
+      speaker: {},
+      account: {},
+      hasMore: false,
+      total: 0,
+    };
+  }
+};
+
+// 标记消息已读
+// API: GET https://wap.newsmth.net/wap/api/message/read?t={timestamp}&speakId={speakerId}
+export const markMessageAsRead = async (speakerId: string): Promise<{success: boolean, message?: string}> => {
+  try {
+    const cookies = await getCookies();
+    
+    if (!cookies) {
+      console.error('markMessageAsRead: 未登录，无Cookie');
+      return {success: false, message: '请先登录'};
+    }
+    
+    const timestamp = Date.now();
+    const url = `${WAP_BASE_URL}/wap/api/message/read?t=${timestamp}&speakId=${speakerId}`;
+    
+    console.log('Marking message as read:', url);
+    
+    const headers: Record<string, string> = {
+      'accept': 'application/json, text/plain, */*',
+      'accept-language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+      'access-control-allow-origin': '*',
+      'authorization': 'Basic Og==',
+      'cache-control': 'no-cache',
+      'pragma': 'no-cache',
+      'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
+      'referer': `https://wap.newsmth.net/conversation/${speakerId}`,
+      'origin': 'https://wap.newsmth.net',
+      'Cookie': cookies,
+    };
+
+    const response = await fetchWithRetry(url, {
+      headers,
+      credentials: 'include',
+    }, DEFAULT_TIMEOUT);
+    
+    if (response.status === 401 || response.status === 403) {
+      console.error('markMessageAsRead: Cookie已过期或无权限');
+      await AsyncStorage.removeItem('isLoggedIn');
+      await AsyncStorage.removeItem('cookies');
+      throw new Error('LOGIN_EXPIRED');
+    }
+
+    const json = await response.json();
+    console.log('markMessageAsRead API response:', json);
+    
+    if (json.code === 1) {
+      return {success: true, message: json.message || '标记成功'};
+    }
+    
+    return {success: false, message: json.message || '标记失败'};
+  } catch (error: any) {
+    console.error('Mark message as read error:', error);
+    if (error.message === 'LOGIN_EXPIRED') {
+      throw error;
+    }
+    return {success: false, message: '标记失败'};
+  }
+};
+
+// 发送站内消息
+// API: POST https://wap.newsmth.net/wap/api/message/send
+// Body: body={content}&recipientName={username}&subject={subject}&t={timestamp}
+export const sendMessage = async (
+  recipientName: string,
+  body: string,
+  subject: string = ''
+): Promise<{success: boolean, message?: string}> => {
+  try {
+    const cookies = await getCookies();
+    
+    if (!cookies) {
+      console.error('sendMessage: 未登录，无Cookie');
+      return {success: false, message: '请先登录'};
+    }
+    
+    const timestamp = Date.now();
+    const url = `${WAP_BASE_URL}/wap/api/message/send`;
+    
+    // 构造表单数据
+    const formData = new URLSearchParams();
+    formData.append('body', body);
+    formData.append('recipientName', recipientName);
+    formData.append('subject', subject);
+    formData.append('t', timestamp.toString());
+    
+    console.log('Sending message:', {recipientName, body, subject});
+    
+    const headers: Record<string, string> = {
+      'accept': 'application/json, text/plain, */*',
+      'accept-language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+      'access-control-allow-origin': '*',
+      'authorization': 'Basic Og==',
+      'cache-control': 'no-cache',
+      'content-type': 'application/x-www-form-urlencoded',
+      'pragma': 'no-cache',
+      'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
+      'referer': `https://wap.newsmth.net/conversation/${recipientName}`,
+      'origin': 'https://wap.newsmth.net',
+      'Cookie': cookies,
+    };
+
+    const response = await fetchWithRetry(url, {
+      method: 'POST',
+      headers,
+      body: formData.toString(),
+      credentials: 'include',
+    }, DEFAULT_TIMEOUT);
+    
+    if (response.status === 401 || response.status === 403) {
+      console.error('sendMessage: Cookie已过期或无权限');
+      await AsyncStorage.removeItem('isLoggedIn');
+      await AsyncStorage.removeItem('cookies');
+      throw new Error('LOGIN_EXPIRED');
+    }
+
+    const json = await response.json();
+    console.log('sendMessage API response:', json);
+    
+    if (json.code === 1) {
+      return {success: true, message: json.message || '发送成功'};
+    }
+    
+    return {success: false, message: json.message || '发送失败'};
+  } catch (error: any) {
+    console.error('Send message error:', error);
+    if (error.message === 'LOGIN_EXPIRED') {
+      throw error;
+    }
+    return {success: false, message: '发送失败'};
   }
 };
 

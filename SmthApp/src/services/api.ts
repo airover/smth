@@ -299,7 +299,7 @@ export const getCaptchaImage = async (): Promise<string | null> => {
 };
 
 // 重新导出数据获取函数（使用新的实现）
-export {getTopTen, getHotPosts, getHotBoards, getBoards, getSubBoards, getBoardPosts, getPostDetail, getTopicReplies, getFavoriteBoards, getMessages, getConversationMessages, fetchUserInfo} from './dataFetcher';
+export {getTopTen, getHotPosts, getHotBoards, getBoards, getSubBoards, getBoardPosts, getPostDetail, getTopicReplies, getFavoriteBoards, getMessages, getConversationMessages, markMessageAsRead, sendMessage, fetchUserInfo} from './dataFetcher';
 
 // 获取收藏版面（已移至 dataFetcher，此处保留类型定义兼容性，如果需要的话可以删除）
 // export const getFavoriteBoards = async (): Promise<any[]> => { ... };
@@ -912,5 +912,123 @@ export const logout = async () => {
   await clearUserInfoCache();
   
   console.log('Logout completed, all data cleared');
+};
+
+// 我的文章/回复数据类型
+export interface MyArticle {
+  id: string;
+  title: string;
+  board: string;
+  boardName: string;
+  author: string;
+  time: number;
+  replyCount?: number;
+  content?: string;
+  topicId?: string;  // 所属主题ID（用于回复时跳转到帖子详情）
+}
+
+// 获取我的文章/回复
+// API: GET https://wap.newsmth.net/wap/api/profile/myarticle?t=xxx&type=0&page=1&sort=DESC
+// 参数说明：
+// - type: 0=帖子, 1=回复
+// - page: 页码
+// - sort: 排序方式，DESC=倒序，ASC=正序
+export const getMyArticles = async (
+  type: 0 | 1 = 0,  // 0=帖子, 1=回复
+  page: number = 1,
+  sort: 'DESC' | 'ASC' = 'DESC'
+): Promise<{
+  articles: MyArticle[];
+  total: number;
+  hasMore: boolean;
+  page: number;
+  pageSize: number;
+}> => {
+  try {
+    const timestamp = Date.now();
+    const cookies = await getCookies();
+    
+    if (!cookies) {
+      console.log('getMyArticles: No cookies found');
+      return {
+        articles: [],
+        total: 0,
+        hasMore: false,
+        page,
+        pageSize: 20,
+      };
+    }
+    
+    const params = new URLSearchParams({
+      t: timestamp.toString(),
+      type: type.toString(),
+      page: page.toString(),
+      sort: sort,
+    });
+    
+    const headers: Record<string, string> = {
+      'accept': 'application/json, text/plain, */*',
+      'accept-language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+      'access-control-allow-origin': '*',
+      'authorization': 'Basic Og==',
+      'cache-control': 'no-cache',
+      'pragma': 'no-cache',
+      'priority': 'u=1, i',
+      'referer': 'https://wap.newsmth.net/myArticle',
+      'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
+      'origin': 'https://wap.newsmth.net',
+      'Cookie': cookies,
+    };
+    
+    const url = `${WAP_BASE_URL}/wap/api/profile/myarticle?${params.toString()}`;
+    console.log('getMyArticles URL:', url);
+    
+    const response = await fetchWithRetry(url, {
+      method: 'GET',
+      headers,
+    }, DEFAULT_TIMEOUT);
+    
+    const json = await response.json();
+    console.log('getMyArticles response:', JSON.stringify(json).substring(0, 500));
+    
+    if (json.code === 1 && json.data) {
+      const articles = (json.data.articles || []).map((article: any) => ({
+        id: article.id,
+        title: article.title,
+        board: article.board,
+        boardName: article.boardName || article.board,
+        author: article.author,
+        time: article.time,
+        replyCount: article.replyCount,
+        content: article.content,
+        topicId: article.topicId,
+      }));
+      
+      const pager = json.data.pager || {};
+      const total = pager.total || 0;
+      const pageSize = pager.size || 20;
+      const currentPage = pager.page || page;
+      const hasMore = currentPage * pageSize < total;
+      
+      return {
+        articles,
+        total,
+        hasMore,
+        page: currentPage,
+        pageSize,
+      };
+    }
+    
+    return {
+      articles: [],
+      total: 0,
+      hasMore: false,
+      page,
+      pageSize: 20,
+    };
+  } catch (error) {
+    console.error('getMyArticles error:', error);
+    throw error;
+  }
 };
 

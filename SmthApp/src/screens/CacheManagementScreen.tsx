@@ -38,6 +38,12 @@ import {
 } from 'react-native';
 import {getCacheStats, clearCache} from '../services/cacheManager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  SPACING,
+  FONT_SIZE,
+  BORDER_RADIUS,
+  scaleModerate,
+} from '../utils/responsive';
 
 const CacheManagementScreen: React.FC = () => {
   const [cacheStats, setCacheStats] = useState<{
@@ -424,20 +430,20 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   section: {
-    marginTop: 20,
-    paddingHorizontal: 16,
+    marginTop: SPACING.xl,
+    paddingHorizontal: SPACING.lg,
   },
   sectionTitle: {
-    fontSize: 13,
+    fontSize: FONT_SIZE.sm,
     fontWeight: '600',
     color: '#8E8E93',
-    marginBottom: 8,
+    marginBottom: SPACING.sm,
     textTransform: 'uppercase',
   },
   card: {
     backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
+    borderRadius: BORDER_RADIUS.lg,
+    padding: SPACING.lg,
     shadowColor: '#000',
     shadowOffset: {width: 0, height: 1},
     shadowOpacity: 0.05,
@@ -448,14 +454,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 12,
+    paddingVertical: SPACING.md,
   },
   summaryLabel: {
-    fontSize: 15,
+    fontSize: FONT_SIZE.lg,
     color: '#000',
   },
   summaryValue: {
-    fontSize: 15,
+    fontSize: FONT_SIZE.lg,
     fontWeight: '600',
     color: '#007AFF',
   },
@@ -463,40 +469,40 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 14,
+    paddingVertical: SPACING.md,
   },
   statItemLeft: {
     flex: 1,
   },
   statItemName: {
-    fontSize: 14,
+    fontSize: FONT_SIZE.md,
     color: '#000',
-    marginBottom: 4,
+    marginBottom: SPACING.xs,
   },
   statItemValue: {
-    fontSize: 12,
+    fontSize: FONT_SIZE.sm,
     color: '#8E8E93',
   },
   clearButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.xs + 2,
     backgroundColor: '#f0f0f0',
-    borderRadius: 6,
+    borderRadius: BORDER_RADIUS.xs + 2,
   },
   clearButtonText: {
-    fontSize: 13,
+    fontSize: FONT_SIZE.sm,
     color: '#007AFF',
   },
   emptyState: {
-    paddingVertical: 20,
+    paddingVertical: SPACING.xl,
     alignItems: 'center',
   },
   emptyText: {
-    fontSize: 14,
+    fontSize: FONT_SIZE.md,
     color: '#8E8E93',
   },
   actionButton: {
-    paddingVertical: 12,
+    paddingVertical: SPACING.md,
   },
   actionButtonContent: {
     flexDirection: 'row',
@@ -504,17 +510,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   actionButtonText: {
-    fontSize: 16,
+    fontSize: FONT_SIZE.lg,
     color: '#000',
     fontWeight: '500',
-    marginBottom: 4,
+    marginBottom: SPACING.xs,
   },
   actionButtonDesc: {
-    fontSize: 13,
+    fontSize: FONT_SIZE.sm,
     color: '#8E8E93',
   },
   chevron: {
-    fontSize: 24,
+    fontSize: FONT_SIZE.xxxl,
     color: '#C7C7CC',
     fontWeight: '300',
   },
@@ -524,7 +530,7 @@ const styles = StyleSheet.create({
   divider: {
     height: StyleSheet.hairlineWidth,
     backgroundColor: '#f0f0f0',
-    marginVertical: 8,
+    marginVertical: SPACING.sm,
   },
 });
 

@@ -11,15 +11,31 @@ import {
   Alert,
   ImageBackground,
   Dimensions,
+  Modal,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import {useRoute, useNavigation} from '@react-navigation/native';
-import {getUserInfo, fetchUserInfo} from '../services/api';
+import {getUserInfo, fetchUserInfo, sendMessage} from '../services/api';
 import {User} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {getCache, setCache, getCacheWithTimestamp} from '../services/cacheManager';
+import {
+  RESPONSIVE,
+  scaleWidth,
+  scaleHeight,
+  scaleFont,
+  scaleModerate,
+  SPACING,
+  FONT_SIZE,
+  BORDER_RADIUS,
+  responsiveSize,
+} from '../utils/responsive';
 
-const SCREEN_WIDTH = Dimensions.get('window').width;
+const SCREEN_WIDTH = RESPONSIVE.SCREEN_WIDTH;
 
 // 辅助函数：移除HTML标签
 const stripHtmlTags = (html: string): string => {
@@ -65,6 +81,10 @@ const UserProfileScreen: React.FC = () => {
   const [isCurrentUser, setIsCurrentUser] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [backgroundImage, setBackgroundImage] = useState<string | null>(null);
+  const [showMessageModal, setShowMessageModal] = useState(false);
+  const [messageSubject, setMessageSubject] = useState('');
+  const [messageBody, setMessageBody] = useState('');
+  const [sendingMessage, setSendingMessage] = useState(false);
 
   const checkAndLoadUserInfo = async () => {
     try {
@@ -92,7 +112,7 @@ const UserProfileScreen: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [username]);
 
-  const loadUserInfo = async (isSelf: boolean = isCurrentUser) => {
+  const loadUserInfo = async (isSelf: boolean = isCurrentUser, forceRefresh: boolean = false) => {
     try {
       setLoading(true);
       setError(null);
@@ -105,8 +125,38 @@ const UserProfileScreen: React.FC = () => {
       } else {
         // 查看他人资料，使用fetchUserInfo
         console.log('Fetching user info for:', username);
+        
+        // 如果不是强制刷新，先尝试从缓存获取
+        if (!forceRefresh) {
+          const cachedData = getCacheWithTimestamp<any>('otherUserInfo', username!);
+          if (cachedData) {
+            console.log('UserProfileScreen: Using cached data for', username, 'age:', Math.floor((Date.now() - cachedData.timestamp) / 1000), 's');
+            setUser(cachedData.data);
+            setLoading(false);
+            
+            // 异步更新缓存
+            fetchUserInfo(username!).then(freshData => {
+              if (freshData) {
+                console.log('UserProfileScreen: Background update for', username);
+                setUser(freshData);
+                setCache('otherUserInfo', username!, freshData);
+              }
+            }).catch(err => {
+              console.error('Background update error:', err);
+            });
+            
+            return;
+          }
+        }
+        
+        // 没有缓存或强制刷新，从API获取
         userInfo = await fetchUserInfo(username!);
         console.log('UserProfileScreen fetchUserInfo result:', userInfo);
+        
+        // 保存到缓存
+        if (userInfo) {
+          setCache('otherUserInfo', username!, userInfo);
+        }
       }
       
       if (userInfo) {
@@ -125,8 +175,61 @@ const UserProfileScreen: React.FC = () => {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadUserInfo(isCurrentUser);
+    // 下拉刷新时强制从API获取最新数据
+    await loadUserInfo(isCurrentUser, true);
     setRefreshing(false);
+  };
+
+  // 发送消息
+  const handleSendMessage = async () => {
+    if (!messageSubject.trim()) {
+      Alert.alert('提示', '请输入主题');
+      return;
+    }
+    if (!messageBody.trim()) {
+      Alert.alert('提示', '请输入消息内容');
+      return;
+    }
+
+    try {
+      setSendingMessage(true);
+      const result = await sendMessage(
+        user?.username || username || '',
+        messageBody.trim(),
+        messageSubject.trim()
+      );
+
+      if (result.success) {
+        Alert.alert('成功', result.message || '消息发送成功');
+        setShowMessageModal(false);
+        setMessageSubject('');
+        setMessageBody('');
+      } else {
+        Alert.alert('失败', result.message || '消息发送失败');
+      }
+    } catch (err: any) {
+      console.error('Send message error:', err);
+      if (err.message === 'LOGIN_EXPIRED') {
+        Alert.alert(
+          '登录已过期',
+          '请重新登录后发送消息',
+          [
+            {
+              text: '去登录',
+              onPress: () => navigation.navigate('Login' as never),
+            },
+            {
+              text: '取消',
+              style: 'cancel',
+            },
+          ]
+        );
+      } else {
+        Alert.alert('错误', '发送消息失败，请稍后重试');
+      }
+    } finally {
+      setSendingMessage(false);
+    }
   };
 
   if (loading) {
@@ -357,7 +460,7 @@ const UserProfileScreen: React.FC = () => {
               </TouchableOpacity>
               <TouchableOpacity 
                 style={styles.secondaryButton}
-                onPress={() => Alert.alert('提示', '发消息功能开发中')}
+                onPress={() => setShowMessageModal(true)}
               >
                 <Text style={styles.secondaryButtonText}>✉️ 发消息</Text>
               </TouchableOpacity>
@@ -459,6 +562,90 @@ const UserProfileScreen: React.FC = () => {
           </View>
         ) : null}
       </ScrollView>
+
+      {/* 发消息弹窗 */}
+      <Modal
+        visible={showMessageModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowMessageModal(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.modalOverlay}
+        >
+          <TouchableOpacity
+            style={styles.modalBackground}
+            activeOpacity={1}
+            onPress={() => setShowMessageModal(false)}
+          >
+            <TouchableOpacity
+              activeOpacity={1}
+              onPress={(e) => e.stopPropagation()}
+              style={styles.modalContainer}
+            >
+              {/* 标题栏 */}
+              <View style={styles.modalHeader}>
+                <TouchableOpacity
+                  onPress={() => setShowMessageModal(false)}
+                  style={styles.modalCloseButton}
+                >
+                  <Text style={styles.modalCloseText}>取消</Text>
+                </TouchableOpacity>
+                <Text style={styles.modalTitle}>发送消息</Text>
+                <View style={styles.modalPlaceholder} />
+              </View>
+
+              {/* 收件人 */}
+              <View style={styles.modalRecipient}>
+                <Text style={styles.modalRecipientLabel}>收件人：</Text>
+                <Text style={styles.modalRecipientName}>{user?.username || username}</Text>
+              </View>
+
+              {/* 主题输入框 */}
+              <View style={styles.modalInputContainer}>
+                <TextInput
+                  style={styles.modalSubjectInput}
+                  placeholder="主题"
+                  placeholderTextColor="#999"
+                  value={messageSubject}
+                  onChangeText={setMessageSubject}
+                  maxLength={100}
+                />
+              </View>
+
+              {/* 内容输入框 */}
+              <View style={styles.modalBodyContainer}>
+                <TextInput
+                  style={styles.modalBodyInput}
+                  placeholder="请输入消息内容"
+                  placeholderTextColor="#999"
+                  value={messageBody}
+                  onChangeText={setMessageBody}
+                  multiline
+                  textAlignVertical="top"
+                  maxLength={5000}
+                />
+                {/* 发送按钮 */}
+                <TouchableOpacity
+                  style={[
+                    styles.modalSendButton,
+                    (!messageSubject.trim() || !messageBody.trim() || sendingMessage) && styles.modalSendButtonDisabled
+                  ]}
+                  onPress={handleSendMessage}
+                  disabled={!messageSubject.trim() || !messageBody.trim() || sendingMessage}
+                >
+                  {sendingMessage ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={styles.modalSendButtonText}>发送</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 };
@@ -494,7 +681,7 @@ const styles = StyleSheet.create({
   // 新的背景图片区域
   headerBackground: {
     width: SCREEN_WIDTH,
-    height: 240,
+    height: responsiveSize(200, 240, 260, 300),
     backgroundColor: '#E8F4FF', // 淡蓝色背景，与项目主题一致
   },
   headerBackgroundImage: {
@@ -505,14 +692,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 50, // 状态栏高度
-    paddingBottom: 8,
+    paddingHorizontal: SPACING.lg,
+    paddingTop: RESPONSIVE.STATUS_BAR_HEIGHT + SPACING.sm,
+    paddingBottom: SPACING.sm,
   },
   topBarButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: scaleModerate(40),
+    height: scaleModerate(40),
+    borderRadius: scaleModerate(20),
     backgroundColor: 'rgba(255, 255, 255, 0.9)', // 更不透明的白色背景
     justifyContent: 'center',
     alignItems: 'center',
@@ -523,21 +710,21 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   topBarIcon: {
-    fontSize: 20,
+    fontSize: FONT_SIZE.xl,
     color: '#333',
   },
   topBarActions: {
     flexDirection: 'row',
   },
   topBarSpacer: {
-    width: 12,
+    width: SPACING.md,
   },
   // 底部头像区域
   headerBottomSection: {
     flex: 1,
     justifyContent: 'flex-end',
-    paddingBottom: 20,
-    paddingLeft: 20,
+    paddingBottom: SPACING.xl,
+    paddingLeft: SPACING.xl,
   },
   avatarAndNicknameRow: {
     flexDirection: 'row',
@@ -547,29 +734,29 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   avatar: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
+    width: responsiveSize(80, 100, 110, 120),
+    height: responsiveSize(80, 100, 110, 120),
+    borderRadius: responsiveSize(40, 50, 55, 60),
   },
   avatarPlaceholder: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
+    width: responsiveSize(80, 100, 110, 120),
+    height: responsiveSize(80, 100, 110, 120),
+    borderRadius: responsiveSize(40, 50, 55, 60),
     backgroundColor: '#007AFF',
     justifyContent: 'center',
     alignItems: 'center',
   },
   avatarText: {
-    fontSize: 40,
+    fontSize: responsiveSize(32, 40, 44, 48),
     fontWeight: '600',
     color: '#fff',
   },
   nicknameContainer: {
-    marginLeft: 16,
+    marginLeft: SPACING.lg,
     flex: 1,
   },
   nicknameOnHeader: {
-    fontSize: 24,
+    fontSize: responsiveSize(20, 24, 26, 28),
     fontWeight: 'bold',
     color: '#000',
     textShadowColor: 'rgba(255, 255, 255, 0.8)',
@@ -579,22 +766,22 @@ const styles = StyleSheet.create({
   // 用户信息区域
   userInfoSection: {
     backgroundColor: '#fff',
-    padding: 20,
-    paddingTop: 16,
+    padding: SPACING.xl,
+    paddingTop: SPACING.lg,
   },
   userNameRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: SPACING.sm,
   },
   username: {
-    fontSize: 22,
+    fontSize: FONT_SIZE.xxl,
     fontWeight: 'bold',
     color: '#000',
-    marginRight: 8,
+    marginRight: SPACING.sm,
   },
   genderIcon: {
-    fontSize: 20,
+    fontSize: FONT_SIZE.xl,
     fontWeight: 'bold',
   },
   genderMale: {
@@ -607,28 +794,28 @@ const styles = StyleSheet.create({
   badgesRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: SPACING.md,
     flexWrap: 'wrap',
   },
   levelBadge: {
     backgroundColor: '#E8F4FF', // 淡蓝色背景
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 4,
-    marginRight: 6,
-    marginBottom: 4,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: SPACING.xs,
+    borderRadius: BORDER_RADIUS.sm,
+    marginRight: SPACING.xs + 2,
+    marginBottom: SPACING.xs,
   },
   levelText: {
-    fontSize: 11,
+    fontSize: FONT_SIZE.xs,
     color: '#007AFF', // 蓝色文字
     fontWeight: '600',
   },
   titleText: {
-    fontSize: 12,
+    fontSize: FONT_SIZE.sm,
     color: '#FF8C00', // 橙色
     fontWeight: '600',
-    marginRight: 6,
-    marginBottom: 4,
+    marginRight: SPACING.xs + 2,
+    marginBottom: SPACING.xs,
   },
   customBadge: {
     backgroundColor: '#FFF7E6',
@@ -664,28 +851,28 @@ const styles = StyleSheet.create({
   },
   registerTimeBadge: {
     backgroundColor: '#F5F5F5',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    marginLeft: 8,
-    marginBottom: 4,
+    paddingHorizontal: SPACING.sm + 2,
+    paddingVertical: SPACING.xs,
+    borderRadius: BORDER_RADIUS.md,
+    marginLeft: SPACING.sm,
+    marginBottom: SPACING.xs,
   },
   registerTimeText: {
-    fontSize: 11,
+    fontSize: FONT_SIZE.xs,
     color: '#666',
     fontWeight: '500',
   },
   longNickname: {
-    fontSize: 14,
+    fontSize: FONT_SIZE.md,
     color: '#666',
-    lineHeight: 20,
-    marginTop: 8,
-    marginBottom: 8,
+    lineHeight: FONT_SIZE.xl,
+    marginTop: SPACING.sm,
+    marginBottom: SPACING.sm,
   },
   loginTimeText: {
-    fontSize: 13,
+    fontSize: FONT_SIZE.sm,
     color: '#666',
-    marginBottom: 8,
+    marginBottom: SPACING.sm,
   },
   postLocationText: {
     fontSize: 13,
@@ -693,21 +880,21 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   signatureText: {
-    fontSize: 14,
+    fontSize: FONT_SIZE.md,
     color: '#666',
-    lineHeight: 20,
-    marginBottom: 8,
+    lineHeight: FONT_SIZE.xl,
+    marginBottom: SPACING.sm,
   },
   locationText: {
-    fontSize: 13,
+    fontSize: FONT_SIZE.sm,
     color: '#999',
   },
   // 统计数据区域
   statsSection: {
     flexDirection: 'row',
     backgroundColor: '#fff',
-    paddingVertical: 16,
-    paddingHorizontal: 40,
+    paddingVertical: SPACING.lg,
+    paddingHorizontal: SPACING.xxxl + 8,
     justifyContent: 'space-around',
     alignItems: 'center',
     borderTopWidth: 1,
@@ -717,81 +904,81 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   statNumber: {
-    fontSize: 20,
+    fontSize: FONT_SIZE.xl,
     fontWeight: 'bold',
     color: '#000',
-    marginBottom: 4,
+    marginBottom: SPACING.xs,
   },
   statLabel: {
-    fontSize: 13,
+    fontSize: FONT_SIZE.sm,
     color: '#666',
   },
   statDivider: {
     width: 1,
-    height: 30,
+    height: scaleModerate(30),
     backgroundColor: '#e0e0e0',
   },
   // 操作按钮区域
   actionButtonsRow: {
     flexDirection: 'row',
     backgroundColor: '#fff',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingHorizontal: SPACING.xl,
+    paddingVertical: SPACING.lg,
   },
   primaryButton: {
     flex: 1,
     backgroundColor: '#007AFF', // 蓝色主按钮
-    paddingVertical: 12,
-    borderRadius: 8,
+    paddingVertical: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
+    marginRight: SPACING.md,
   },
   primaryButtonText: {
-    fontSize: 15,
+    fontSize: FONT_SIZE.lg,
     fontWeight: '600',
     color: '#fff',
   },
   secondaryButton: {
     flex: 1,
     backgroundColor: '#fff',
-    paddingVertical: 12,
-    borderRadius: 8,
+    paddingVertical: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#007AFF', // 蓝色边框
   },
   secondaryButtonText: {
-    fontSize: 15,
+    fontSize: FONT_SIZE.lg,
     fontWeight: '600',
     color: '#007AFF', // 蓝色文字
   },
   fullWidthButton: {
     flex: 1,
     backgroundColor: '#fff',
-    paddingVertical: 12,
-    borderRadius: 8,
+    paddingVertical: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#007AFF',
   },
   section: {
-    marginTop: 20,
-    paddingHorizontal: 16,
+    marginTop: SPACING.xl,
+    paddingHorizontal: SPACING.lg,
   },
   sectionTitle: {
-    fontSize: 13,
+    fontSize: FONT_SIZE.sm,
     fontWeight: '600',
     color: '#8E8E93',
-    marginBottom: 8,
+    marginBottom: SPACING.sm,
     textTransform: 'uppercase',
   },
   card: {
     backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
+    borderRadius: BORDER_RADIUS.lg,
+    padding: SPACING.lg,
     shadowColor: '#000',
     shadowOffset: {width: 0, height: 1},
     shadowOpacity: 0.05,
@@ -802,18 +989,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 12,
+    paddingVertical: SPACING.md,
   },
   infoLabel: {
-    fontSize: 15,
+    fontSize: FONT_SIZE.lg,
     color: '#000',
   },
   infoValue: {
-    fontSize: 15,
+    fontSize: FONT_SIZE.lg,
     color: '#666',
     textAlign: 'right',
     flex: 1,
-    marginLeft: 16,
+    marginLeft: SPACING.lg,
   },
   divider: {
     height: StyleSheet.hairlineWidth,
@@ -823,44 +1010,44 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: SPACING.sm,
   },
   postCountBadge: {
-    fontSize: 13,
+    fontSize: FONT_SIZE.sm,
     color: '#666',
     backgroundColor: '#f0f0f0',
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderRadius: 12,
+    paddingHorizontal: SPACING.sm + 2,
+    paddingVertical: SPACING.xs,
+    borderRadius: BORDER_RADIUS.md,
   },
   emptyPostsContainer: {
-    paddingVertical: 40,
+    paddingVertical: SPACING.xxxl + 8,
     alignItems: 'center',
   },
   emptyPostsText: {
-    fontSize: 15,
+    fontSize: FONT_SIZE.lg,
     color: '#999',
-    marginBottom: 8,
+    marginBottom: SPACING.sm,
   },
   emptyPostsHint: {
-    fontSize: 13,
+    fontSize: FONT_SIZE.sm,
     color: '#ccc',
   },
   postItem: {
-    paddingVertical: 12,
+    paddingVertical: SPACING.md,
   },
   postSubject: {
-    fontSize: 15,
+    fontSize: FONT_SIZE.lg,
     fontWeight: '500',
     color: '#333',
-    marginBottom: 6,
-    lineHeight: 20,
+    marginBottom: SPACING.xs + 2,
+    lineHeight: FONT_SIZE.xl,
   },
   postBody: {
-    fontSize: 14,
+    fontSize: FONT_SIZE.md,
     color: '#666',
-    lineHeight: 20,
-    marginBottom: 8,
+    lineHeight: FONT_SIZE.xl,
+    marginBottom: SPACING.sm,
   },
   postMeta: {
     flexDirection: 'row',
@@ -868,18 +1055,135 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   postBoard: {
-    fontSize: 13,
+    fontSize: FONT_SIZE.sm,
     color: '#007AFF',
-    marginRight: 12,
+    marginRight: SPACING.md,
   },
   postTime: {
-    fontSize: 13,
+    fontSize: FONT_SIZE.sm,
     color: '#999',
-    marginRight: 12,
+    marginRight: SPACING.md,
   },
   postReplyCount: {
-    fontSize: 13,
+    fontSize: FONT_SIZE.sm,
     color: '#999',
+  },
+  // 发消息弹窗样式
+  modalOverlay: {
+    flex: 1,
+  },
+  modalBackground: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContainer: {
+    width: SCREEN_WIDTH * 0.9,
+    maxWidth: responsiveSize(400, 500, 550, 600),
+    backgroundColor: '#fff',
+    borderRadius: BORDER_RADIUS.xl,
+    overflow: 'hidden',
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.lg,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#e0e0e0',
+  },
+  modalCloseButton: {
+    paddingVertical: SPACING.xs,
+    paddingHorizontal: SPACING.sm,
+  },
+  modalCloseText: {
+    fontSize: FONT_SIZE.lg,
+    color: '#007AFF',
+  },
+  modalTitle: {
+    fontSize: FONT_SIZE.xl,
+    fontWeight: '600',
+    color: '#000',
+  },
+  modalPlaceholder: {
+    width: scaleModerate(50),
+  },
+  modalRecipient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md,
+    backgroundColor: '#f8f8f8',
+  },
+  modalRecipientLabel: {
+    fontSize: FONT_SIZE.lg,
+    color: '#666',
+  },
+  modalRecipientName: {
+    fontSize: FONT_SIZE.lg,
+    color: '#000',
+    fontWeight: '500',
+  },
+  modalInputContainer: {
+    paddingHorizontal: SPACING.lg,
+    paddingTop: SPACING.lg,
+  },
+  modalSubjectInput: {
+    fontSize: FONT_SIZE.lg,
+    color: '#000',
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.md,
+    backgroundColor: '#f8f8f8',
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  modalBodyContainer: {
+    paddingHorizontal: SPACING.lg,
+    paddingTop: SPACING.md,
+    paddingBottom: SPACING.lg,
+    minHeight: responsiveSize(180, 200, 220, 250),
+  },
+  modalBodyInput: {
+    fontSize: FONT_SIZE.lg,
+    color: '#000',
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.md,
+    backgroundColor: '#f8f8f8',
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    minHeight: responsiveSize(130, 150, 170, 200),
+    maxHeight: responsiveSize(250, 300, 350, 400),
+  },
+  modalSendButton: {
+    position: 'absolute',
+    right: SPACING.xxl + 8,
+    bottom: SPACING.xxl + 8,
+    backgroundColor: '#007AFF',
+    paddingHorizontal: SPACING.xl,
+    paddingVertical: SPACING.sm + 2,
+    borderRadius: BORDER_RADIUS.md,
+    minWidth: scaleModerate(70),
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  modalSendButtonDisabled: {
+    backgroundColor: '#ccc',
+    opacity: 0.6,
+  },
+  modalSendButtonText: {
+    fontSize: FONT_SIZE.lg,
+    fontWeight: '600',
+    color: '#fff',
   },
 });
 

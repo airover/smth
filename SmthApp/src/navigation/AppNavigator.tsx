@@ -21,6 +21,7 @@ import BrowsingHistoryScreen from '../screens/BrowsingHistoryScreen';
 import SearchScreen from '../screens/SearchScreen';
 import CreatePostScreen from '../screens/CreatePostScreen';
 import WebViewPostScreen from '../screens/WebViewPostScreen';
+import MyArticlesScreen from '../screens/MyArticlesScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -206,6 +207,13 @@ const AppNavigator = () => {
           component={CreatePostScreen}
           options={{
             title: '',
+          }}
+        />
+        <Stack.Screen
+          name="MyArticles"
+          component={MyArticlesScreen}
+          options={{
+            title: '我的文章',
           }}
         />
       </Stack.Navigator>

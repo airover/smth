@@ -7,6 +7,7 @@
     "ios": "react-native run-ios --simulator='iPhone 17 Pro'",
     "ios:boot": "react-native run-ios --simulator='iPhone 17 Pro'",
     "ios:device": "react-native run-ios --device",
+    "ios:device:release": "react-native run-ios --device --mode Release",
     "ios:device:wifi": "react-native run-ios --device --udid 7B895AF7-23D9-55A6-8FAB-9768D3AC628E",
     "ios:verbose": "react-native run-ios --verbose",
     "ios:debug": "REACT_NATIVE_LOG_LEVEL=debug react-native run-ios",

@@ -16,6 +16,11 @@ import {formatRelativeTime} from '../utils/timeFormat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {cacheManager} from '../services/cacheManager';
 import {useTheme} from '../components/ThemedComponents';
+import {
+  SPACING,
+  FONT_SIZE,
+  BORDER_RADIUS,
+} from '../utils/responsive';
 
 const HomeScreen: React.FC = () => {
   const navigation = useNavigation<any>();
@@ -518,7 +523,7 @@ const styles = StyleSheet.create({
     // backgroundColor 由主题动态控制
   },
   content: {
-    padding: 16,
+    padding: SPACING.lg,
   },
   loadingContainer: {
     flex: 1,
@@ -526,19 +531,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   section: {
-    marginBottom: 24,
+    marginBottom: SPACING.xxl,
     // backgroundColor 由主题动态控制
-    borderRadius: 8,
-    padding: 16,
+    borderRadius: BORDER_RADIUS.md,
+    padding: SPACING.lg,
   },
   sectionTitle: {
-    fontSize: 18,
+    fontSize: FONT_SIZE.xl,
     fontWeight: '600',
     // color 由主题动态控制
-    marginBottom: 12,
+    marginBottom: SPACING.md,
   },
   topTenItem: {
-    paddingVertical: 12,
+    paddingVertical: SPACING.md,
     borderBottomWidth: 1,
     // borderBottomColor 由主题动态控制
   },
@@ -546,9 +551,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: 0,
   },
   topTenTitle: {
-    fontSize: 16,
+    fontSize: FONT_SIZE.lg,
     // color 由主题动态控制
-    marginBottom: 8,
+    marginBottom: SPACING.sm,
     fontWeight: '500',
   },
   topTenMeta: {
@@ -556,42 +561,42 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   metaText: {
-    fontSize: 12,
+    fontSize: FONT_SIZE.sm,
     // color 由主题动态控制
-    marginRight: 12,
+    marginRight: SPACING.md,
   },
   boardLink: {
     // color 由主题动态控制
     fontWeight: '500',
   },
   hotBoardsList: {
-    paddingVertical: 8,
+    paddingVertical: SPACING.sm,
   },
   hotBoardItem: {
     // backgroundColor 由主题动态控制
-    borderRadius: 8,
-    padding: 12,
-    marginRight: 12,
+    borderRadius: BORDER_RADIUS.md,
+    padding: SPACING.md,
+    marginRight: SPACING.md,
     minWidth: 100,
   },
   hotBoardName: {
-    fontSize: 16,
+    fontSize: FONT_SIZE.lg,
     fontWeight: '500',
     // color 由主题动态控制
-    marginBottom: 4,
+    marginBottom: SPACING.xs,
   },
   hotBoardDesc: {
-    fontSize: 12,
+    fontSize: FONT_SIZE.sm,
     // color 由主题动态控制
   },
   emptyText: {
-    fontSize: 14,
+    fontSize: FONT_SIZE.md,
     // color 由主题动态控制
     textAlign: 'center',
-    paddingVertical: 20,
+    paddingVertical: SPACING.xl,
   },
   footerContainer: {
-    paddingVertical: 20,
+    paddingVertical: SPACING.xl,
     alignItems: 'center',
   },
 });

@@ -25,6 +25,14 @@ import {saveBrowsingHistory} from './BrowsingHistoryScreen';
 import {useSettings} from '../context/SettingsContext';
 import {getTheme, getFontSizes} from '../utils/theme';
 import {normalizeImageUrl, isImageUrl, isVideoUrl} from '../utils/imageUtils';
+import {
+  SPACING,
+  FONT_SIZE,
+  BORDER_RADIUS,
+  scaleModerate,
+  responsiveSize,
+  RESPONSIVE,
+} from '../utils/responsive';
 
 // 格式化具体时间（用于主帖）
 const formatDateTime = (time: string): string => {
@@ -45,7 +53,8 @@ const formatDateTime = (time: string): string => {
   }
 };
 
-const {width: SCREEN_WIDTH, height: SCREEN_HEIGHT} = Dimensions.get('window');
+const SCREEN_WIDTH = RESPONSIVE.SCREEN_WIDTH;
+const SCREEN_HEIGHT = RESPONSIVE.SCREEN_HEIGHT;
 
 const PostDetailScreen: React.FC = () => {
   const route = useRoute();
@@ -745,11 +754,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#f5f5f5',
   },
   headerMenuButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 4,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.xs,
   },
   headerMenuButtonText: {
-    fontSize: 24,
+    fontSize: FONT_SIZE.xxxl,
     color: '#007AFF',
   },
   modalOverlay: {
@@ -759,18 +768,18 @@ const styles = StyleSheet.create({
   },
   menuContainer: {
     backgroundColor: '#fff',
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    paddingBottom: 20,
+    borderTopLeftRadius: BORDER_RADIUS.xl,
+    borderTopRightRadius: BORDER_RADIUS.xl,
+    paddingBottom: SPACING.xl,
   },
   menuItem: {
-    paddingVertical: 16,
-    paddingHorizontal: 20,
+    paddingVertical: SPACING.lg,
+    paddingHorizontal: SPACING.xl,
     borderBottomWidth: 0.5,
     borderBottomColor: '#e0e0e0',
   },
   menuItemText: {
-    fontSize: 16,
+    fontSize: FONT_SIZE.lg,
     color: '#333',
     textAlign: 'center',
   },
@@ -778,14 +787,14 @@ const styles = StyleSheet.create({
     color: '#FF3B30',
   },
   cancelButton: {
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    marginTop: 8,
-    borderTopWidth: 6,
+    paddingVertical: SPACING.lg,
+    paddingHorizontal: SPACING.xl,
+    marginTop: SPACING.sm,
+    borderTopWidth: SPACING.xs + 2,
     borderTopColor: '#f0f0f0',
   },
   cancelButtonText: {
-    fontSize: 16,
+    fontSize: FONT_SIZE.lg,
     color: '#666',
     textAlign: 'center',
     fontWeight: '500',
@@ -796,122 +805,122 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   content: {
-    padding: 16,
+    padding: SPACING.lg,
   },
   postContainer: {
     backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 16,
+    borderRadius: BORDER_RADIUS.md,
+    padding: SPACING.lg,
+    marginBottom: SPACING.lg,
   },
   postTitle: {
-    fontSize: 20,
+    fontSize: FONT_SIZE.xxl,
     fontWeight: 'bold',
     color: '#000',
-    marginBottom: 12,
+    marginBottom: SPACING.md,
   },
   postMeta: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    marginBottom: 12,
+    marginBottom: SPACING.md,
   },
   metaText: {
-    fontSize: 12,
+    fontSize: FONT_SIZE.sm,
     color: '#666',
-    marginRight: 12,
+    marginRight: SPACING.md,
   },
   divider: {
     height: 1,
     backgroundColor: '#e0e0e0',
-    marginVertical: 16,
+    marginVertical: SPACING.lg,
   },
   authorContainer: {
-    marginBottom: 16,
+    marginBottom: SPACING.lg,
   },
   authorInfo: {
     flexDirection: 'row',
     alignItems: 'flex-start',
   },
   authorAvatarPlaceholder: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+    width: responsiveSize(44, 50, 54, 60),
+    height: responsiveSize(44, 50, 54, 60),
+    borderRadius: responsiveSize(22, 25, 27, 30),
     backgroundColor: '#007AFF',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
+    marginRight: SPACING.md,
   },
   authorAvatarText: {
     color: '#fff',
-    fontSize: 20,
+    fontSize: FONT_SIZE.xl,
     fontWeight: 'bold',
   },
   authorDetails: {
     flex: 1,
   },
   authorName: {
-    fontSize: 12,
+    fontSize: FONT_SIZE.sm,
     fontWeight: '600',
     color: '#333',
-    marginBottom: 2,
+    marginBottom: SPACING.xs / 2,
   },
   authorID: {
-    fontSize: 10,
+    fontSize: FONT_SIZE.xs,
     color: '#999',
   },
   authorMetaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 2,
+    marginTop: SPACING.xs / 2,
   },
   authorMetaSeparator: {
-    fontSize: 10,
+    fontSize: FONT_SIZE.xs,
     color: '#999',
   },
   authorCity: {
-    fontSize: 10,
+    fontSize: FONT_SIZE.xs,
     color: '#666',
   },
   signature: {
-    fontSize: 12,
+    fontSize: FONT_SIZE.sm,
     color: '#999',
     fontStyle: 'italic',
-    marginBottom: 8,
+    marginBottom: SPACING.sm,
   },
   contentBody: {
-    marginBottom: 16,
+    marginBottom: SPACING.lg,
   },
   replyContentBody: {
-    marginBottom: 8,
+    marginBottom: SPACING.sm,
   },
   textContainer: {
-    marginVertical: 4,
+    marginVertical: SPACING.xs,
   },
   quoteContainer: {
     backgroundColor: '#f8f9fa',
-    borderLeftWidth: 4,
+    borderLeftWidth: SPACING.xs,
     borderLeftColor: '#dee2e6',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    marginVertical: 8,
-    borderRadius: 4,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+    marginVertical: SPACING.sm,
+    borderRadius: BORDER_RADIUS.sm,
   },
   contentText: {
-    fontSize: 16,
+    fontSize: FONT_SIZE.lg,
     color: '#333',
-    lineHeight: 26,
+    lineHeight: scaleModerate(26),
   },
   quoteText: {
-    fontSize: 14,
+    fontSize: FONT_SIZE.md,
     color: '#666',
-    lineHeight: 22,
+    lineHeight: scaleModerate(22),
   },
   attachmentsContainer: {
-    marginTop: 16,
+    marginTop: SPACING.lg,
   },
   imageContainer: {
-    marginBottom: 16,
-    marginHorizontal: -16,
+    marginBottom: SPACING.lg,
+    marginHorizontal: -SPACING.lg,
     borderRadius: 0,
     overflow: 'hidden',
     backgroundColor: '#000',
@@ -919,15 +928,15 @@ const styles = StyleSheet.create({
   },
   attachmentImage: {
     width: SCREEN_WIDTH,
-    minHeight: 200,
+    minHeight: responsiveSize(180, 200, 220, 250),
     backgroundColor: '#eee',
   },
   videoContainer: {
-    width: SCREEN_WIDTH - 64,
-    height: 200,
-    borderRadius: 8,
+    width: SCREEN_WIDTH - scaleModerate(64),
+    height: responsiveSize(180, 200, 220, 250),
+    borderRadius: BORDER_RADIUS.md,
     overflow: 'hidden',
-    marginBottom: 12,
+    marginBottom: SPACING.md,
     backgroundColor: '#000',
   },
   attachmentVideo: {
@@ -935,52 +944,52 @@ const styles = StyleSheet.create({
   },
   videoTip: {
     position: 'absolute',
-    bottom: 8,
-    right: 8,
+    bottom: SPACING.sm,
+    right: SPACING.sm,
     color: '#fff',
-    fontSize: 10,
+    fontSize: FONT_SIZE.xs,
     backgroundColor: 'rgba(0,0,0,0.5)',
-    paddingHorizontal: 4,
-    borderRadius: 2,
+    paddingHorizontal: SPACING.xs,
+    borderRadius: BORDER_RADIUS.xs,
   },
   fileAttachment: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#f0f0f0',
-    padding: 10,
-    borderRadius: 4,
-    marginBottom: 8,
+    padding: SPACING.sm + 2,
+    borderRadius: BORDER_RADIUS.sm,
+    marginBottom: SPACING.sm,
   },
   fileName: {
-    fontSize: 14,
+    fontSize: FONT_SIZE.md,
     color: '#007AFF',
   },
   likesContainer: {
-    marginTop: 20,
-    paddingTop: 16,
+    marginTop: SPACING.xl,
+    paddingTop: SPACING.lg,
     borderTopWidth: 1,
     borderTopColor: '#f0f0f0',
   },
   likesHeader: {
-    marginBottom: 12,
+    marginBottom: SPACING.md,
   },
   likesTitle: {
-    fontSize: 14,
+    fontSize: FONT_SIZE.md,
     fontWeight: '600',
     color: '#666',
   },
   likeItem: {
-    marginBottom: 12,
+    marginBottom: SPACING.md,
   },
   likeUserInfo: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   likeAvatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    marginRight: 10,
+    width: scaleModerate(32),
+    height: scaleModerate(32),
+    borderRadius: scaleModerate(16),
+    marginRight: SPACING.sm + 2,
   },
   likeAvatarPlaceholder: {
     backgroundColor: '#E1E1E1',
@@ -988,7 +997,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   likeAvatarText: {
-    fontSize: 14,
+    fontSize: FONT_SIZE.md,
     color: '#fff',
     fontWeight: 'bold',
   },
@@ -996,53 +1005,53 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   likeContent: {
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: FONT_SIZE.sm,
+    lineHeight: FONT_SIZE.xl,
   },
   likeAuthor: {
-    fontSize: 13,
+    fontSize: FONT_SIZE.sm,
     fontWeight: '600',
     color: '#333',
   },
   likeScore: {
-    fontSize: 12,
+    fontSize: FONT_SIZE.sm,
     fontWeight: '600',
     color: '#FF6B6B',
   },
   likeColon: {
-    fontSize: 13,
+    fontSize: FONT_SIZE.sm,
     color: '#666',
   },
   likeBody: {
-    fontSize: 13,
+    fontSize: FONT_SIZE.sm,
     color: '#444',
   },
   likeMetaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 4,
+    marginTop: SPACING.xs,
   },
   likeMetaSeparator: {
-    fontSize: 9,
+    fontSize: FONT_SIZE.xs - 1,
     color: '#999',
   },
   likeTime: {
-    fontSize: 9,
+    fontSize: FONT_SIZE.xs - 1,
     color: '#999',
   },
   likeCity: {
-    fontSize: 9,
+    fontSize: FONT_SIZE.xs - 1,
     color: '#999',
   },
   likesExpandButton: {
-    paddingVertical: 12,
+    paddingVertical: SPACING.md,
     alignItems: 'center',
     borderTopWidth: 0.5,
     borderTopColor: '#f0f0f0',
-    marginTop: 4,
+    marginTop: SPACING.sm,
   },
   likesExpandText: {
-    fontSize: 13,
+    fontSize: FONT_SIZE.sm,
     color: '#007AFF',
     fontWeight: '500',
   },

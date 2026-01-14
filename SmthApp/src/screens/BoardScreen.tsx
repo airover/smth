@@ -1118,16 +1118,18 @@ const BoardScreen: React.FC = () => {
         setPosts(combinedPosts);
         setPage(1);
         
-        // Save cache
-        try {
-          const cacheData = {
-            data: topics,
-            tops: tops,
-            totalPages: totalPages
-          };
-          setCache('boardPosts', cacheKey, cacheData);
-        } catch (e) {
-          console.error('Failed to save cache:', e);
+        // Save cache - 只有成功获取到数据时才写入缓存
+        if (topics.length > 0 || tops.length > 0) {
+          try {
+            const cacheData = {
+              data: topics,
+              tops: tops,
+              totalPages: totalPages
+            };
+            setCache('boardPosts', cacheKey, cacheData);
+          } catch (e) {
+            console.error('Failed to save cache:', e);
+          }
         }
       } else {
         // 使用Set来去重，确保不会有重复的id

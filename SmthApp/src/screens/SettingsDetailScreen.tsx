@@ -18,6 +18,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {logout} from '../services/api';
 import {useSettings} from '../context/SettingsContext';
 import {useTheme} from '../components/ThemedComponents';
+import {
+  SPACING,
+  FONT_SIZE,
+  BORDER_RADIUS,
+  scaleModerate,
+} from '../utils/responsive';
 
 const SettingsDetailScreen: React.FC = () => {
   const navigation = useNavigation<any>();
@@ -383,30 +389,30 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   firstSection: {
-    marginTop: 12,
-    paddingHorizontal: 12,
+    marginTop: SPACING.md,
+    paddingHorizontal: SPACING.md,
   },
   section: {
-    marginTop: 16,
-    paddingHorizontal: 12,
+    marginTop: SPACING.lg,
+    paddingHorizontal: SPACING.md,
   },
   sectionTitle: {
-    fontSize: 13,
+    fontSize: FONT_SIZE.sm,
     // color 由主题动态控制
-    marginBottom: 8,
-    marginLeft: 4,
+    marginBottom: SPACING.sm,
+    marginLeft: SPACING.xs,
   },
   card: {
     // backgroundColor 由主题动态控制
-    borderRadius: 8,
+    borderRadius: BORDER_RADIUS.md,
     overflow: 'hidden',
   },
   menuItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.lg,
   },
   menuItemLeft: {
     flexDirection: 'row',
@@ -418,22 +424,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   menuIcon: {
-    fontSize: 22,
-    marginRight: 14,
-    width: 28,
+    fontSize: FONT_SIZE.xxl,
+    marginRight: SPACING.md,
+    width: scaleModerate(28),
     textAlign: 'center',
   },
   menuItemText: {
-    fontSize: 17,
+    fontSize: FONT_SIZE.xl,
     // color 由主题动态控制
   },
   menuValue: {
-    fontSize: 15,
+    fontSize: FONT_SIZE.lg,
     // color 由主题动态控制
-    marginRight: 8,
+    marginRight: SPACING.sm,
   },
   chevron: {
-    fontSize: 20,
+    fontSize: FONT_SIZE.xl,
     // color 由主题动态控制
     fontWeight: '300',
   },
@@ -441,50 +447,50 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   switchItemDescription: {
-    fontSize: 13,
+    fontSize: FONT_SIZE.sm,
     // color 由主题动态控制
-    marginTop: 4,
+    marginTop: SPACING.xs,
   },
   infoRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.lg,
   },
   infoLabel: {
-    fontSize: 17,
+    fontSize: FONT_SIZE.xl,
     // color 由主题动态控制
   },
   infoValue: {
-    fontSize: 17,
+    fontSize: FONT_SIZE.xl,
     // color 由主题动态控制
   },
   divider: {
     height: StyleSheet.hairlineWidth,
     // backgroundColor 由主题动态控制
-    marginLeft: 16,
+    marginLeft: SPACING.lg,
   },
   // 切换帐号按钮
   switchAccountButton: {
     // backgroundColor 由主题动态控制
-    borderRadius: 8,
-    paddingVertical: 14,
+    borderRadius: BORDER_RADIUS.md,
+    paddingVertical: SPACING.md,
     alignItems: 'center',
   },
   switchAccountButtonText: {
-    fontSize: 17,
+    fontSize: FONT_SIZE.xl,
     // color 由主题动态控制
   },
   // 退出登录按钮
   logoutButton: {
     // backgroundColor 由主题动态控制
-    borderRadius: 8,
-    paddingVertical: 14,
+    borderRadius: BORDER_RADIUS.md,
+    paddingVertical: SPACING.md,
     alignItems: 'center',
   },
   logoutButtonText: {
-    fontSize: 17,
+    fontSize: FONT_SIZE.xl,
     // color 由主题动态控制
   },
   // 模态框样式
@@ -496,20 +502,20 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     // backgroundColor 由主题动态控制
-    borderRadius: 12,
+    borderRadius: BORDER_RADIUS.lg,
     width: '80%',
-    maxWidth: 320,
+    maxWidth: scaleModerate(320),
     overflow: 'hidden',
   },
   modalHeader: {
-    paddingVertical: 16,
-    paddingHorizontal: 20,
+    paddingVertical: SPACING.lg,
+    paddingHorizontal: SPACING.xl,
     borderBottomWidth: StyleSheet.hairlineWidth,
     // borderBottomColor 由主题动态控制
     alignItems: 'center',
   },
   modalTitle: {
-    fontSize: 18,
+    fontSize: FONT_SIZE.xxl,
     fontWeight: '600',
     // color 由主题动态控制
   },
@@ -517,8 +523,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
+    paddingVertical: SPACING.lg,
+    paddingHorizontal: SPACING.xl,
     borderBottomWidth: StyleSheet.hairlineWidth,
     // borderBottomColor 由主题动态控制
   },
@@ -526,11 +532,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: 0,
   },
   modalOptionText: {
-    fontSize: 16,
+    fontSize: FONT_SIZE.lg,
     // color 由主题动态控制
   },
   modalCheckmark: {
-    fontSize: 18,
+    fontSize: FONT_SIZE.xxl,
     // color 由主题动态控制
     fontWeight: 'bold',
   },

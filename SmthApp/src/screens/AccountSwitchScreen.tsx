@@ -13,6 +13,12 @@ import {useNavigation} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {logout} from '../services/api';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
+import {
+  SPACING,
+  FONT_SIZE,
+  BORDER_RADIUS,
+  scaleModerate,
+} from '../utils/responsive';
 
 interface SavedAccount {
   username: string;
@@ -299,21 +305,21 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   section: {
-    marginTop: 16,
-    paddingHorizontal: 12,
+    marginTop: SPACING.lg,
+    paddingHorizontal: SPACING.md,
   },
   sectionTitle: {
-    fontSize: 13,
+    fontSize: FONT_SIZE.sm,
     fontWeight: '600',
     color: '#8E8E93',
-    marginBottom: 8,
-    marginLeft: 4,
+    marginBottom: SPACING.sm,
+    marginLeft: SPACING.xs,
   },
   // 当前账号卡片
   currentAccountCard: {
     backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 16,
+    borderRadius: BORDER_RADIUS.md,
+    padding: SPACING.lg,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -321,15 +327,15 @@ const styles = StyleSheet.create({
   // 账号列表卡片
   card: {
     backgroundColor: '#fff',
-    borderRadius: 8,
+    borderRadius: BORDER_RADIUS.md,
     overflow: 'hidden',
   },
   accountItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.lg,
   },
   accountLeft: {
     flexDirection: 'row',
@@ -337,88 +343,88 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   avatar: {
-    width: 50,
-    height: 50,
-    borderRadius: 6,
+    width: scaleModerate(50),
+    height: scaleModerate(50),
+    borderRadius: BORDER_RADIUS.xs + 2,
   },
   avatarPlaceholder: {
-    width: 50,
-    height: 50,
-    borderRadius: 6,
+    width: scaleModerate(50),
+    height: scaleModerate(50),
+    borderRadius: BORDER_RADIUS.xs + 2,
     backgroundColor: '#007AFF',
     justifyContent: 'center',
     alignItems: 'center',
   },
   avatarText: {
-    fontSize: 22,
+    fontSize: FONT_SIZE.xxl,
     fontWeight: '600',
     color: '#fff',
   },
   accountInfo: {
-    marginLeft: 12,
+    marginLeft: SPACING.md,
     flex: 1,
   },
   accountName: {
-    fontSize: 17,
+    fontSize: FONT_SIZE.xl,
     fontWeight: '600',
     color: '#000',
-    marginBottom: 4,
+    marginBottom: SPACING.xs,
   },
   accountUsername: {
-    fontSize: 14,
+    fontSize: FONT_SIZE.md,
     color: '#888',
   },
   currentBadge: {
     backgroundColor: '#007AFF',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 4,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.xs,
+    borderRadius: BORDER_RADIUS.sm,
   },
   currentBadgeText: {
-    fontSize: 13,
+    fontSize: FONT_SIZE.sm,
     color: '#fff',
     fontWeight: '600',
   },
   removeButton: {
-    width: 28,
-    height: 28,
+    width: scaleModerate(28),
+    height: scaleModerate(28),
     justifyContent: 'center',
     alignItems: 'center',
   },
   removeButtonText: {
-    fontSize: 20,
+    fontSize: FONT_SIZE.xl,
     color: '#C7C7CC',
   },
   divider: {
     height: StyleSheet.hairlineWidth,
     backgroundColor: '#E5E5E5',
-    marginLeft: 78,
+    marginLeft: scaleModerate(78),
   },
   // 添加账号按钮
   addButton: {
     backgroundColor: '#fff',
-    borderRadius: 8,
-    paddingVertical: 14,
+    borderRadius: BORDER_RADIUS.md,
+    paddingVertical: SPACING.md,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
   },
   addButtonIcon: {
-    fontSize: 20,
+    fontSize: FONT_SIZE.xl,
     color: '#007AFF',
-    marginRight: 6,
+    marginRight: SPACING.xs + 2,
   },
   addButtonText: {
-    fontSize: 17,
+    fontSize: FONT_SIZE.xl,
     color: '#007AFF',
     fontWeight: '600',
   },
   // 提示文字
   hintText: {
-    fontSize: 13,
+    fontSize: FONT_SIZE.sm,
     color: '#8E8E93',
     textAlign: 'center',
-    lineHeight: 18,
+    lineHeight: FONT_SIZE.xl,
   },
 });
 

@@ -13,6 +13,12 @@ import {useNavigation, useFocusEffect} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {SwipeListView} from 'react-native-swipe-list-view';
 import {formatRelativeTime} from '../utils/timeFormat';
+import {
+  SPACING,
+  FONT_SIZE,
+  BORDER_RADIUS,
+  scaleModerate,
+} from '../utils/responsive';
 
 interface BrowsingHistoryItem {
   postId: string;
@@ -230,7 +236,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   list: {
-    padding: 12,
+    padding: SPACING.md,
   },
   emptyList: {
     flex: 1,
@@ -239,23 +245,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 4,
-    paddingVertical: 12,
+    paddingHorizontal: SPACING.xs,
+    paddingVertical: SPACING.md,
   },
   headerText: {
-    fontSize: 14,
+    fontSize: FONT_SIZE.md,
     color: '#666',
   },
   clearAllText: {
-    fontSize: 14,
+    fontSize: FONT_SIZE.md,
     color: '#FF3B30',
     fontWeight: '500',
   },
   historyItem: {
     backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: BORDER_RADIUS.md,
+    padding: SPACING.lg,
+    marginBottom: SPACING.md,
     flexDirection: 'row',
     alignItems: 'center',
   },
@@ -263,48 +269,48 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   title: {
-    fontSize: 16,
+    fontSize: FONT_SIZE.lg,
     fontWeight: '500',
     color: '#000',
-    marginBottom: 8,
-    lineHeight: 22,
+    marginBottom: SPACING.sm,
+    lineHeight: FONT_SIZE.xxl,
   },
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 6,
+    marginBottom: SPACING.xs + 2,
   },
   metaText: {
-    fontSize: 12,
+    fontSize: FONT_SIZE.sm,
     color: '#999',
-    marginRight: 6,
+    marginRight: SPACING.xs + 2,
   },
   timeText: {
-    fontSize: 11,
+    fontSize: FONT_SIZE.xs,
     color: '#BBB',
   },
   chevron: {
-    fontSize: 20,
+    fontSize: FONT_SIZE.xl,
     color: '#C7C7CC',
-    marginLeft: 8,
+    marginLeft: SPACING.sm,
   },
   emptyContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 40,
+    paddingHorizontal: scaleModerate(40),
   },
   emptyIcon: {
-    fontSize: 64,
-    marginBottom: 16,
+    fontSize: scaleModerate(64),
+    marginBottom: SPACING.lg,
   },
   emptyText: {
-    fontSize: 16,
+    fontSize: FONT_SIZE.lg,
     color: '#666',
-    marginBottom: 8,
+    marginBottom: SPACING.sm,
   },
   emptyHint: {
-    fontSize: 14,
+    fontSize: FONT_SIZE.md,
     color: '#999',
     textAlign: 'center',
   },
@@ -314,22 +320,22 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     justifyContent: 'flex-end',
-    paddingRight: 12,
-    marginBottom: 12,
-    borderRadius: 8,
+    paddingRight: SPACING.md,
+    marginBottom: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
   },
   deleteButton: {
     backgroundColor: '#FF3B30',
     justifyContent: 'center',
     alignItems: 'center',
-    width: 75,
+    width: scaleModerate(75),
     height: '100%',
-    borderTopRightRadius: 8,
-    borderBottomRightRadius: 8,
+    borderTopRightRadius: BORDER_RADIUS.md,
+    borderBottomRightRadius: BORDER_RADIUS.md,
   },
   deleteButtonText: {
     color: '#fff',
-    fontSize: 14,
+    fontSize: FONT_SIZE.md,
     fontWeight: '600',
   },
 });

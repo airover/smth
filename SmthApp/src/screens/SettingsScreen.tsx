@@ -16,6 +16,12 @@ import {getUserInfo, logout} from '../services/api';
 import {User} from '../types';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {useTheme} from '../components/ThemedComponents';
+import {
+  SPACING,
+  FONT_SIZE,
+  BORDER_RADIUS,
+  scaleModerate,
+} from '../utils/responsive';
 
 const SettingsScreen: React.FC = () => {
   const navigation = useNavigation<any>();
@@ -195,7 +201,7 @@ const SettingsScreen: React.FC = () => {
             <View style={[styles.divider, {backgroundColor: theme.border}]} />
             <TouchableOpacity 
               style={styles.menuItem}
-              onPress={() => Alert.alert('提示', '我的文章功能开发中')}>
+              onPress={() => navigation.navigate('MyArticles')}>
               <View style={styles.menuItemLeft}>
                 <Text style={styles.menuIcon}>📝</Text>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>我的文章</Text>
@@ -291,18 +297,18 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   firstSection: {
-    marginTop: 12,
-    paddingHorizontal: 12,
+    marginTop: SPACING.md,
+    paddingHorizontal: SPACING.md,
   },
   section: {
-    marginTop: 16,
-    paddingHorizontal: 12,
+    marginTop: SPACING.lg,
+    paddingHorizontal: SPACING.md,
   },
   // 个人信息卡片 - 微信风格
   profileCard: {
     // backgroundColor 由主题动态控制
-    borderRadius: 8,
-    padding: 16,
+    borderRadius: BORDER_RADIUS.md,
+    padding: SPACING.lg,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -313,49 +319,49 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   avatar: {
-    width: 64,
-    height: 64,
-    borderRadius: 6,
+    width: scaleModerate(64),
+    height: scaleModerate(64),
+    borderRadius: BORDER_RADIUS.xs + 2,
   },
   avatarPlaceholder: {
-    width: 64,
-    height: 64,
-    borderRadius: 6,
+    width: scaleModerate(64),
+    height: scaleModerate(64),
+    borderRadius: BORDER_RADIUS.xs + 2,
     // backgroundColor 由主题动态控制
     justifyContent: 'center',
     alignItems: 'center',
   },
   avatarText: {
-    fontSize: 28,
+    fontSize: FONT_SIZE.xxxl,
     fontWeight: '600',
     color: '#fff',
   },
   profileInfo: {
-    marginLeft: 16,
+    marginLeft: SPACING.lg,
     flex: 1,
   },
   username: {
-    fontSize: 22,
+    fontSize: FONT_SIZE.xxl,
     fontWeight: '600',
     // color 由主题动态控制
-    marginBottom: 4,
+    marginBottom: SPACING.xs,
   },
   userId: {
-    fontSize: 14,
+    fontSize: FONT_SIZE.md,
     // color 由主题动态控制
   },
   // 功能卡片
   card: {
     // backgroundColor 由主题动态控制
-    borderRadius: 8,
+    borderRadius: BORDER_RADIUS.md,
     overflow: 'hidden',
   },
   menuItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.lg,
   },
   menuItemLeft: {
     flexDirection: 'row',
@@ -363,24 +369,24 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   menuIcon: {
-    fontSize: 22,
-    marginRight: 14,
-    width: 28,
+    fontSize: FONT_SIZE.xxl,
+    marginRight: SPACING.md,
+    width: scaleModerate(28),
     textAlign: 'center',
   },
   menuItemText: {
-    fontSize: 17,
+    fontSize: FONT_SIZE.xl,
     // color 由主题动态控制
   },
   chevron: {
-    fontSize: 20,
+    fontSize: FONT_SIZE.xl,
     // color 由主题动态控制
     fontWeight: '300',
   },
   divider: {
     height: StyleSheet.hairlineWidth,
     // backgroundColor 由主题动态控制
-    marginLeft: 16,
+    marginLeft: SPACING.lg,
   },
 });
 
