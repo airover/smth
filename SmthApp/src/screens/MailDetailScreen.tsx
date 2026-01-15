@@ -83,6 +83,33 @@ const MailDetailScreen: React.FC = () => {
       .trim();
   };
 
+  // 提取本人消息的实际内容（去掉邮件头）
+  const extractMessageContent = (body: string, isMe: boolean) => {
+    if (!isMe) {
+      return cleanBody(body);
+    }
+    
+    // 本人消息格式：
+    // 寄信人: xxx
+    // 标  题: xxx
+    // 发信站: xxx
+    // 来  源: IP地址
+    // 
+    // 实际内容
+    
+    // 使用正则表达式匹配IP地址后的内容
+    // 匹配模式：来  源: [IP地址]\n\n[实际内容]
+    const ipPattern = /来\s+源:\s+[\d.]+\s*\n\s*\n(.+)/s;
+    const match = body.match(ipPattern);
+    
+    if (match && match[1]) {
+      return cleanBody(match[1]);
+    }
+    
+    // 如果没有匹配到，返回清理后的原始内容
+    return cleanBody(body);
+  };
+
   // 加载消息
   const loadMessages = useCallback(async (pageNum: number = 1, isRefresh: boolean = false) => {
     if (isLoadingRef.current && !isRefresh) {
@@ -190,24 +217,22 @@ const MailDetailScreen: React.FC = () => {
     
     return (
       <View style={[styles.messageContainer, isMe && styles.myMessageContainer]}>
-        {!isMe && (
-          <View style={styles.avatarContainer}>
-            {item.senderAvatar ? (
-              <ImageWithPlaceholder
-                uri={item.senderAvatar}
-                style={styles.avatar}
-                resizeMode="cover"
-                isAvatar={true}
-              />
-            ) : (
-              <View style={[styles.avatarPlaceholder, {backgroundColor: theme.border}]}>
-                <Text style={styles.avatarText}>
-                  {(item.senderNick || item.senderName).charAt(0).toUpperCase()}
-                </Text>
-              </View>
-            )}
-          </View>
-        )}
+        <View style={styles.avatarContainer}>
+          {item.senderAvatar ? (
+            <ImageWithPlaceholder
+              uri={item.senderAvatar}
+              style={styles.avatar}
+              resizeMode="cover"
+              isAvatar={true}
+            />
+          ) : (
+            <View style={[styles.avatarPlaceholder, {backgroundColor: isMe ? theme.primary : theme.border}]}>
+              <Text style={styles.avatarText}>
+                {(item.senderNick || item.senderName).charAt(0).toUpperCase()}
+              </Text>
+            </View>
+          )}
+        </View>
         
         <View style={[
           styles.messageBubble,
@@ -216,7 +241,7 @@ const MailDetailScreen: React.FC = () => {
           {item.subject && item.subject !== '(无主题)' && (
             <Text style={[
               styles.messageSubject,
-              isMe ? styles.myMessageText : {color: theme.text}
+              isMe ? [styles.myMessageText, styles.myMessageSubject] : {color: theme.text}
             ]}>
               {item.subject}
             </Text>
@@ -225,7 +250,7 @@ const MailDetailScreen: React.FC = () => {
             styles.messageBody,
             isMe ? styles.myMessageText : {color: theme.text}
           ]}>
-            {cleanBody(item.body)}
+            {extractMessageContent(item.body, isMe)}
           </Text>
           <Text style={[
             styles.messageTime,
@@ -234,8 +259,6 @@ const MailDetailScreen: React.FC = () => {
             {formatRelativeTime(item.sendTime)}
           </Text>
         </View>
-        
-        {isMe && <View style={styles.avatarContainer} />}
       </View>
     );
   };
@@ -462,6 +485,9 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZE.md,
     fontWeight: '600',
     marginBottom: SPACING.xs + 2,
+  },
+  myMessageSubject: {
+    fontWeight: 'bold',
   },
   messageBody: {
     fontSize: FONT_SIZE.lg,

@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import {useRoute, useNavigation} from '@react-navigation/native';
 import {WebView} from 'react-native-webview';
-import {getPostDetail, getTopicReplies, deletePost, getUserInfo} from '../services/api';
+import {getPostDetail, getTopicReplies, deletePost, getUserInfo, addFavoriteTopic} from '../services/api';
 import {Post, Reply, Attachment, Like} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
@@ -267,6 +267,26 @@ const PostDetailScreen: React.FC = () => {
         }
       ]
     );
+  };
+
+  const handleFavorite = async () => {
+    setMenuVisible(false);
+    
+    if (!post?.id) {
+      Alert.alert('错误', '无法获取帖子ID');
+      return;
+    }
+    
+    try {
+      const result = await addFavoriteTopic(post.id);
+      if (result.success) {
+        Alert.alert('成功', result.message || '收藏成功');
+      } else {
+        Alert.alert('失败', result.message || '收藏失败');
+      }
+    } catch (error) {
+      Alert.alert('错误', '收藏失败，请稍后重试');
+    }
   };
 
   const handleReply = () => {
@@ -726,6 +746,13 @@ const PostDetailScreen: React.FC = () => {
               activeOpacity={0.7}
             >
               <Text style={[styles.menuItemText, {color: theme.text}]}>💬 回复</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.menuItem, {borderBottomColor: theme.border}]}
+              onPress={handleFavorite}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.menuItemText, {color: theme.text}]}>⭐ 收藏</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.menuItem}

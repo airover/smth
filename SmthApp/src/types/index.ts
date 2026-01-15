@@ -127,6 +127,20 @@ export interface Mail {
   items: number; // 对话中的消息数量
 }
 
+export interface FavoriteTopic {
+  id: string;
+  topicId: string;
+  boardId: string;
+  boardName: string;
+  boardTitle?: string;
+  subject: string;
+  author: string;
+  authorNick?: string;
+  postTime: number;
+  replyCount?: number;
+  lastReplyTime?: number;
+}
+
 export interface LoginCredentials {
   username: string;
   password: string;

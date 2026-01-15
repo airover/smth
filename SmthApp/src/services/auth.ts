@@ -1,5 +1,6 @@
 // 认证服务 - 管理登录状态和 Cookie
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { buildGetHeaders } from '../utils/requestUtils';
 
 const STORAGE_KEYS = {
   IS_LOGGED_IN: 'isLoggedIn',
@@ -86,12 +87,10 @@ export const validateCookies = async (): Promise<boolean> => {
     }
 
     // 尝试访问用户页面验证 Cookie
+    const headers = buildGetHeaders(cookies);
     const response = await fetch('https://wap.newsmth.net/user', {
       method: 'GET',
-      headers: {
-        'Cookie': cookies,
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15',
-      },
+      headers,
     });
 
     const text = await response.text();

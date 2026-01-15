@@ -6,6 +6,9 @@ import {
   DEFAULT_TIMEOUT,
   logRequest,
   safeJsonParse,
+  buildGetHeaders,
+  buildPostHeaders,
+  buildDeleteHeaders,
 } from '../utils/requestUtils';
 
 const WAP_BASE_URL = 'https://wap.newsmth.net';
@@ -21,17 +24,10 @@ const requestWithCookies = async (
   options: RequestInit = {},
 ): Promise<Response> => {
   const cookies = await getCookies();
-  const headers: Record<string, string> = {
-    'User-Agent':
-      'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+  const headers = {
+    ...buildGetHeaders(cookies),
     ...(options.headers as Record<string, string>),
   };
-
-  if (cookies) {
-    headers.Cookie = cookies;
-  }
 
   const fullUrl = url.startsWith('http') ? url : `${WAP_BASE_URL}${url}`;
   
@@ -59,16 +55,7 @@ export const getHotPosts = async (
     
     console.log('Fetching Hot Posts from API:', url);
     
-    const headers: Record<string, string> = {
-      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15',
-      'Accept': 'application/json, text/plain, */*',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      'Authorization': 'Basic Og==',
-    };
-
-    if (cookies) {
-      headers.Cookie = cookies;
-    }
+    const headers = buildGetHeaders(cookies);
 
     const response = await fetchWithRetry(url, {
       headers,
@@ -121,17 +108,7 @@ export const getTopTen = async (): Promise<any[] | null> => {
     
     console.log('Fetching Top Ten from API:', url);
     
-    const headers: Record<string, string> = {
-      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15',
-      'Accept': 'application/json, text/plain, */*',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      'Authorization': 'Basic Og==',
-      'access-control-allow-origin': '*',
-    };
-
-    if (cookies) {
-      headers.Cookie = cookies;
-    }
+    const headers = buildGetHeaders(cookies);
 
     const response = await fetchWithRetry(url, {
       headers,
@@ -192,16 +169,7 @@ export const getHotBoards = async (): Promise<any[]> => {
     
     console.log('Fetching Hot Boards from API:', url);
     
-    const headers: Record<string, string> = {
-      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15',
-      'Accept': 'application/json, text/plain, */*',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      'Authorization': 'Basic Og==',
-    };
-
-    if (cookies) {
-      headers.Cookie = cookies;
-    }
+    const headers = buildGetHeaders(cookies);
 
     const response = await fetchWithRetry(url, {
       headers,
@@ -229,7 +197,7 @@ export const getHotBoards = async (): Promise<any[]> => {
 
 // 获取收藏版面
 // 使用新的 JSON API 获取
-export const getFavoriteBoards = async (): Promise<any[]> => {
+export const getFavoriteBoards = async (forceRefresh: boolean = false): Promise<any[]> => {
   try {
     const cookies = await getCookies();
     
@@ -239,23 +207,48 @@ export const getFavoriteBoards = async (): Promise<any[]> => {
       throw new Error('NOT_LOGGED_IN');
     }
     
+    // 检查缓存（5分钟有效期）
+    if (!forceRefresh) {
+      const CACHE_KEY = 'favorite_boards_cache';
+      const CACHE_DURATION = 5 * 60 * 1000; // 5分钟
+      
+      try {
+        const cachedData = await AsyncStorage.getItem(CACHE_KEY);
+        if (cachedData) {
+          const parsed = JSON.parse(cachedData);
+          const age = Date.now() - parsed.timestamp;
+          
+          if (age < CACHE_DURATION) {
+            console.log(`[Cache] Using favorite boards cache, age: ${Math.floor(age / 1000)}s`);
+            
+            // 如果缓存超过1分钟，异步更新
+            if (age > 60 * 1000) {
+              console.log('[Cache] Favorite boards cache needs background refresh');
+              // 异步更新缓存
+              getFavoriteBoards(true).catch(err => {
+                console.error('[Cache] Background refresh failed:', err);
+              });
+            }
+            
+            return parsed.data;
+          }
+        }
+      } catch (error) {
+        console.error('[Cache] Read favorite boards cache error:', error);
+      }
+    }
+    
     const timestamp = Date.now();
     const url = `${WAP_BASE_URL}/wap/api/profile/fav/boards?t=${timestamp}`;
     
     console.log('Fetching Favorite Boards from API:', url);
     
-    const headers: Record<string, string> = {
-      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15',
-      'Accept': 'application/json, text/plain, */*',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      'Authorization': 'Basic Og==',
-      'Cookie': cookies,
-    };
+    const headers = buildGetHeaders(cookies);
 
     const response = await fetchWithRetry(url, {
       headers,
       credentials: 'include',
-    });
+    }, 10000); // 10秒超时
     
     // 检查HTTP状态码，401/403表示未登录或Cookie过期
     if (response.status === 401 || response.status === 403) {
@@ -328,6 +321,19 @@ export const getFavoriteBoards = async (): Promise<any[]> => {
 
       collect(folders);
       console.log('Extracted fav boards count:', allFavBoards.length);
+      
+      // 保存到缓存
+      const CACHE_KEY = 'favorite_boards_cache';
+      try {
+        await AsyncStorage.setItem(CACHE_KEY, JSON.stringify({
+          data: allFavBoards,
+          timestamp: Date.now(),
+        }));
+        console.log('[Cache] Saved favorite boards to cache');
+      } catch (error) {
+        console.error('[Cache] Failed to save favorite boards cache:', error);
+      }
+      
       return allFavBoards;
     }
     
@@ -338,6 +344,22 @@ export const getFavoriteBoards = async (): Promise<any[]> => {
     if (error.message === 'NOT_LOGGED_IN' || error.message === 'LOGIN_EXPIRED') {
       throw error;
     }
+    
+    // 其他错误时，尝试返回缓存数据
+    if (error.message === '请求超时') {
+      const CACHE_KEY = 'favorite_boards_cache';
+      try {
+        const cachedData = await AsyncStorage.getItem(CACHE_KEY);
+        if (cachedData) {
+          const parsed = JSON.parse(cachedData);
+          console.log('[Cache] Using stale cache due to timeout');
+          return parsed.data;
+        }
+      } catch (cacheError) {
+        console.error('[Cache] Failed to read cache on error:', cacheError);
+      }
+    }
+    
     // 其他错误返回空数组
     return [];
   }
@@ -354,16 +376,7 @@ export const getBoards = async (): Promise<any[]> => {
     
     console.log('Fetching Sections from API:', url);
     
-    const headers: Record<string, string> = {
-      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15',
-      'Accept': 'application/json, text/plain, */*',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      'Authorization': 'Basic Og==',
-    };
-
-    if (cookies) {
-      headers.Cookie = cookies;
-    }
+    const headers = buildGetHeaders(cookies);
 
     const response = await fetchWithRetry(url, {
       headers,
@@ -399,16 +412,7 @@ export const getSubBoards = async (sectionId: string): Promise<any[]> => {
     // API: https://wap.newsmth.net/wap/api/section/subs?t=:t&id=:id
     const url = `${WAP_BASE_URL}/wap/api/section/subs?t=${timestamp}&id=${sectionId}`;
     
-    const headers: Record<string, string> = {
-      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15',
-      'Accept': 'application/json, text/plain, */*',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      'Authorization': 'Basic Og==',
-    };
-
-    if (cookies) {
-      headers.Cookie = cookies;
-    }
+    const headers = buildGetHeaders(cookies);
 
     const response = await fetchWithRetry(url, {
       headers,
@@ -490,16 +494,7 @@ export const getBoardPosts = async (
     
     console.log('Fetching Board Posts from API:', url);
     
-    const headers: Record<string, string> = {
-      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15',
-      'Accept': 'application/json, text/plain, */*',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      'Authorization': 'Basic Og==',
-    };
-
-    if (cookies) {
-      headers.Cookie = cookies;
-    }
+    const headers = buildGetHeaders(cookies);
 
     const response = await fetchWithRetry(url, {
       headers,
@@ -577,16 +572,7 @@ export const getPostDetail = async (
     
     console.log('Fetching Post Detail from API:', url);
     
-    const headers: Record<string, string> = {
-      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15',
-      'Accept': 'application/json, text/plain, */*',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      'Authorization': 'Basic Og==',
-    };
-
-    if (cookies) {
-      headers.Cookie = cookies;
-    }
+    const headers = buildGetHeaders(cookies);
 
     const response = await fetchWithRetry(url, {
       headers,
@@ -723,16 +709,7 @@ export const getTopicReplies = async (
     
     console.log('Fetching Topic Replies from API:', url);
     
-    const headers: Record<string, string> = {
-      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15',
-      'Accept': 'application/json, text/plain, */*',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      'Authorization': 'Basic Og==',
-    };
-
-    if (cookies) {
-      headers.Cookie = cookies;
-    }
+    const headers = buildGetHeaders(cookies);
 
     const response = await fetchWithRetry(url, {
       headers,
@@ -826,17 +803,7 @@ export const fetchUserInfo = async (username: string): Promise<any> => {
     
     console.log('Fetching user info from API:', url);
     
-    const headers: Record<string, string> = {
-      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15',
-      'Accept': 'application/json, text/plain, */*',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      'Authorization': 'Basic Og==',
-      'access-control-allow-origin': '*',
-    };
-
-    if (cookies) {
-      headers.Cookie = cookies;
-    }
+    const headers = buildGetHeaders(cookies);
 
     const response = await fetchWithRetry(url, {
       headers,
@@ -979,18 +946,7 @@ export const getConversationMessages = async (
     
     console.log('Fetching conversation messages from API:', url);
     
-    const headers: Record<string, string> = {
-      'accept': 'application/json, text/plain, */*',
-      'accept-language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-      'access-control-allow-origin': '*',
-      'authorization': 'Basic Og==',
-      'cache-control': 'no-cache',
-      'pragma': 'no-cache',
-      'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
-      'referer': `https://wap.newsmth.net/conversation/${speakerId}`,
-      'origin': 'https://wap.newsmth.net',
-      'Cookie': cookies,
-    };
+    const headers = buildGetHeaders(cookies, `https://wap.newsmth.net/conversation/${speakerId}`);
 
     const response = await fetchWithRetry(url, {
       headers,
@@ -1124,18 +1080,7 @@ export const markMessageAsRead = async (speakerId: string): Promise<{success: bo
     
     console.log('Marking message as read:', url);
     
-    const headers: Record<string, string> = {
-      'accept': 'application/json, text/plain, */*',
-      'accept-language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-      'access-control-allow-origin': '*',
-      'authorization': 'Basic Og==',
-      'cache-control': 'no-cache',
-      'pragma': 'no-cache',
-      'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
-      'referer': `https://wap.newsmth.net/conversation/${speakerId}`,
-      'origin': 'https://wap.newsmth.net',
-      'Cookie': cookies,
-    };
+    const headers = buildGetHeaders(cookies, `https://wap.newsmth.net/conversation/${speakerId}`);
 
     const response = await fetchWithRetry(url, {
       headers,
@@ -1194,19 +1139,11 @@ export const sendMessage = async (
     
     console.log('Sending message:', {recipientName, body, subject});
     
-    const headers: Record<string, string> = {
-      'accept': 'application/json, text/plain, */*',
-      'accept-language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-      'access-control-allow-origin': '*',
-      'authorization': 'Basic Og==',
-      'cache-control': 'no-cache',
-      'content-type': 'application/x-www-form-urlencoded',
-      'pragma': 'no-cache',
-      'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
-      'referer': `https://wap.newsmth.net/conversation/${recipientName}`,
-      'origin': 'https://wap.newsmth.net',
-      'Cookie': cookies,
-    };
+    const headers = buildPostHeaders(
+      cookies,
+      'application/x-www-form-urlencoded',
+      `https://wap.newsmth.net/conversation/${recipientName}`
+    );
 
     const response = await fetchWithRetry(url, {
       method: 'POST',
@@ -1256,13 +1193,7 @@ export const getMessages = async (_page: number = 0): Promise<Mail[]> => {
     
     console.log('Fetching messages from API:', url);
     
-    const headers: Record<string, string> = {
-      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15',
-      'Accept': 'application/json, text/plain, */*',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      'Authorization': 'Basic Og==',
-      'Cookie': cookies,
-    };
+    const headers = buildGetHeaders(cookies);
 
     const response = await fetchWithRetry(url, {
       headers,
@@ -1348,13 +1279,7 @@ export const checkBoardFavorite = async (boardId: string): Promise<boolean> => {
     
     console.log('Checking board favorite status:', url);
     
-    const headers: Record<string, string> = {
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
-      'Accept': 'application/json, text/plain, */*',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-      'Authorization': 'Basic Og==',
-      'Cookie': cookies,
-    };
+    const headers = buildGetHeaders(cookies);
 
     const response = await fetchWithRetry(url, {
       headers,
@@ -1390,14 +1315,7 @@ export const addBoardFavorite = async (boardId: string): Promise<{success: boole
     
     console.log('Adding board to favorites:', boardId);
     
-    const headers: Record<string, string> = {
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
-      'Accept': 'application/json, text/plain, */*',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-      'Authorization': 'Basic Og==',
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Cookie': cookies,
-    };
+    const headers = buildPostHeaders(cookies, 'application/x-www-form-urlencoded');
 
     const body = `id=${boardId}&t=${timestamp}`;
 
@@ -1439,15 +1357,9 @@ export const removeBoardFavorite = async (boardId: string): Promise<{success: bo
     
     console.log('Removing board from favorites:', boardId);
     
-    const headers: Record<string, string> = {
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
-      'Accept': 'application/json, text/plain, */*',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-      'Authorization': 'Basic Og==',
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Content-Length': '0',
-      'Cookie': cookies,
-    };
+    const headers = buildDeleteHeaders(cookies, undefined, {
+      'content-length': '0',
+    });
 
     const response = await fetchWithRetry(url, {
       method: 'DELETE',
@@ -1469,5 +1381,86 @@ export const removeBoardFavorite = async (boardId: string): Promise<{success: bo
       return {success: false, message: '请求超时，请重试'};
     }
     return {success: false, message: '取消收藏失败'};
+  }
+};
+
+// 获取收藏的文章列表
+// API: GET https://wap.newsmth.net/wap/api/profile/favTopic/asc/0/20
+export const getFavoriteTopics = async (
+  page: number = 0,
+  pageSize: number = 20
+): Promise<{topics: any[], totalPages: number, totalItems: number}> => {
+  try {
+    const cookies = await getCookies();
+    
+    // 严格校验登录态：必须有Cookie才能调用
+    if (!cookies) {
+      console.error('getFavoriteTopics: 未登录，无Cookie');
+      throw new Error('NOT_LOGGED_IN');
+    }
+    
+    const url = `${WAP_BASE_URL}/wap/api/profile/favTopic/asc/${page}/${pageSize}`;
+    
+    console.log('Fetching favorite topics from API:', url);
+    
+    const headers = buildGetHeaders(cookies, 'https://wap.newsmth.net/collect');
+
+    const response = await fetchWithRetry(url, {
+      method: 'GET',
+      headers,
+      credentials: 'include',
+    }, 10000); // 10秒超时
+
+    const json = await safeJsonParse(response);
+    console.log('getFavoriteTopics API response:', json);
+
+    if (json.code === 1 && json.data) {
+      const favTopics = json.data.favTopic || [];
+      const pager = json.data.pager || {};
+      
+      // 解析嵌套的数据结构，提取需要的字段
+      const topics = favTopics.map((item: any) => {
+        const wrapper = item.topicWrapper || {};
+        const article = wrapper.article || {};
+        const board = wrapper.board || {};
+        const account = article.account || {};
+        
+        return {
+          id: item.id,
+          topicId: wrapper.id,
+          boardId: board.id,
+          boardName: board.name,
+          boardTitle: board.title,
+          subject: wrapper.subject || article.subject,
+          author: account.name,
+          authorNick: account.nick,
+          postTime: article.postTime,
+          replyCount: wrapper.availables || 0,
+          lastReplyTime: wrapper.lastPostTime,
+          hasNewReply: item.hasNewReply,
+          readOrder: item.readOrder,
+        };
+      });
+      
+      return {
+        topics,
+        totalPages: pager.totalPages || 1,
+        totalItems: pager.totalItems || 0,
+      };
+    }
+    
+    throw new Error(json.message || '获取收藏文章失败');
+  } catch (error: any) {
+    console.error('Get favorite topics error:', error);
+    
+    if (error.message === 'NOT_LOGGED_IN') {
+      throw error;
+    }
+    
+    if (error.message === '请求超时') {
+      throw new Error('请求超时，请检查网络连接');
+    }
+    
+    throw new Error('获取收藏文章失败');
   }
 };

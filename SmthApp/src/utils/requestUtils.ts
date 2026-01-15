@@ -212,3 +212,240 @@ export const logRequest = {
     }
   },
 };
+
+/**
+ * HTTP Header 构建工具
+ * 统一封装所有后台接口访问的通用 header
+ * 
+ * 使用示例：
+ * 
+ * // 1. GET 请求 - 获取数据
+ * const cookies = await getCookies();
+ * const headers = buildGetHeaders(cookies, 'https://wap.newsmth.net/board/123');
+ * const response = await fetchWithRetry(url, { headers });
+ * 
+ * // 2. POST 请求 - 提交表单
+ * const cookies = await getCookies();
+ * const headers = buildPostHeaders(
+ *   cookies,
+ *   'application/x-www-form-urlencoded',
+ *   'https://wap.newsmth.net/post/123'
+ * );
+ * const response = await fetchWithRetry(url, {
+ *   method: 'POST',
+ *   headers,
+ *   body: formData.toString()
+ * });
+ * 
+ * // 3. DELETE 请求 - 删除资源
+ * const cookies = await getCookies();
+ * const headers = buildDeleteHeaders(
+ *   cookies,
+ *   'https://wap.newsmth.net/article/123'
+ * );
+ * const response = await fetchWithRetry(url, { method: 'DELETE', headers });
+ * 
+ * // 4. 登录请求
+ * const cookies = await getCookies();
+ * const headers = buildLoginHeaders(cookies);
+ * const response = await fetchWithRetry(loginUrl, {
+ *   method: 'POST',
+ *   headers,
+ *   body: formData.toString()
+ * });
+ * 
+ * // 5. 自定义配置
+ * const headers = buildHeaders({
+ *   cookie: cookies,
+ *   acceptType: 'html',
+ *   referer: 'https://wap.newsmth.net/board/123',
+ *   customHeaders: {
+ *     'X-Custom-Header': 'custom-value'
+ *   }
+ * });
+ */
+
+// User-Agent 常量
+export const USER_AGENT = 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15';
+
+// Accept 类型常量
+export const ACCEPT_TYPE = {
+  JSON: 'application/json, text/plain, */*',
+  HTML: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+};
+
+// 基础 URL
+export const BASE_URL = 'https://wap.newsmth.net';
+
+/**
+ * 构建通用 HTTP Headers
+ * @param options 配置选项
+ * @returns Headers 对象
+ */
+export interface BuildHeadersOptions {
+  /** Cookie 字符串 */
+  cookie?: string | null;
+  /** Accept 类型，默认为 JSON */
+  acceptType?: 'json' | 'html';
+  /** Content-Type，用于 POST/PUT 请求 */
+  contentType?: string;
+  /** Referer URL */
+  referer?: string;
+  /** Origin URL，默认为 BASE_URL */
+  origin?: string;
+  /** 是否包含 Authorization header，默认为 true */
+  includeAuth?: boolean;
+  /** 是否包含 X-Requested-With header，默认为 false */
+  includeXRequestedWith?: boolean;
+  /** 额外的自定义 headers */
+  customHeaders?: Record<string, string>;
+}
+
+export const buildHeaders = (options: BuildHeadersOptions = {}): Record<string, string> => {
+  const {
+    cookie,
+    acceptType = 'json',
+    contentType,
+    referer,
+    origin,
+    includeAuth = true,
+    includeXRequestedWith = false,
+    customHeaders = {},
+  } = options;
+
+  const headers: Record<string, string> = {
+    // User-Agent (必需)
+    'User-Agent': USER_AGENT,
+    
+    // Accept (必需)
+    'Accept': acceptType === 'html' ? ACCEPT_TYPE.HTML : ACCEPT_TYPE.JSON,
+    
+    // Accept-Language (必需)
+    'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+    
+    // Authorization (大部分接口需要)
+    ...(includeAuth && { 'Authorization': 'Basic Og==' }),
+    
+    // Cache Control
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache',
+    
+    // Access Control
+    'Access-Control-Allow-Origin': '*',
+  };
+
+  // Cookie (如果提供)
+  if (cookie) {
+    headers['Cookie'] = cookie;
+  }
+
+  // Content-Type (POST/PUT 请求)
+  if (contentType) {
+    headers['Content-Type'] = contentType;
+  }
+
+  // Referer (部分接口需要)
+  if (referer) {
+    headers['Referer'] = referer;
+  }
+
+  // Origin (POST/DELETE 请求需要)
+  if (origin !== undefined) {
+    headers['Origin'] = origin;
+  } else if (contentType || referer) {
+    // 如果有 Content-Type 或 Referer，自动添加 Origin
+    headers['Origin'] = BASE_URL;
+  }
+
+  // X-Requested-With (AJAX 请求标识)
+  if (includeXRequestedWith) {
+    headers['X-Requested-With'] = 'XMLHttpRequest';
+  }
+
+  // 合并自定义 headers (会覆盖默认值)
+  return {
+    ...headers,
+    ...customHeaders,
+  };
+};
+
+/**
+ * 构建 GET 请求的 Headers
+ * @param cookie Cookie 字符串
+ * @param referer Referer URL
+ * @param customHeaders 自定义 headers
+ * @returns Headers 对象
+ */
+export const buildGetHeaders = (
+  cookie?: string | null,
+  referer?: string,
+  customHeaders?: Record<string, string>
+): Record<string, string> => {
+  return buildHeaders({
+    cookie,
+    referer,
+    customHeaders,
+  });
+};
+
+/**
+ * 构建 POST 请求的 Headers
+ * @param cookie Cookie 字符串
+ * @param contentType Content-Type，默认为 application/x-www-form-urlencoded
+ * @param referer Referer URL
+ * @param customHeaders 自定义 headers
+ * @returns Headers 对象
+ */
+export const buildPostHeaders = (
+  cookie?: string | null,
+  contentType: string = 'application/x-www-form-urlencoded',
+  referer?: string,
+  customHeaders?: Record<string, string>
+): Record<string, string> => {
+  return buildHeaders({
+    cookie,
+    contentType,
+    referer,
+    origin: BASE_URL,
+    customHeaders,
+  });
+};
+
+/**
+ * 构建 DELETE 请求的 Headers
+ * @param cookie Cookie 字符串
+ * @param referer Referer URL
+ * @param customHeaders 自定义 headers
+ * @returns Headers 对象
+ */
+export const buildDeleteHeaders = (
+  cookie?: string | null,
+  referer?: string,
+  customHeaders?: Record<string, string>
+): Record<string, string> => {
+  return buildHeaders({
+    cookie,
+    contentType: 'application/x-www-form-urlencoded',
+    referer,
+    origin: BASE_URL,
+    customHeaders,
+  });
+};
+
+/**
+ * 构建登录请求的 Headers
+ * @param cookie Cookie 字符串
+ * @returns Headers 对象
+ */
+export const buildLoginHeaders = (cookie?: string | null): Record<string, string> => {
+  return buildHeaders({
+    cookie,
+    contentType: 'application/x-www-form-urlencoded',
+    referer: `${BASE_URL}/login`,
+    origin: BASE_URL,
+    includeXRequestedWith: true,
+    customHeaders: {
+      'Accept': 'application/json, text/plain, */*',
+    },
+  });
+};

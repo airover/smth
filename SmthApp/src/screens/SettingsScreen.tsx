@@ -191,7 +191,7 @@ const SettingsScreen: React.FC = () => {
             <View style={[styles.divider, {backgroundColor: theme.border}]} />
             <TouchableOpacity 
               style={styles.menuItem}
-              onPress={() => Alert.alert('提示', '我的收藏功能开发中')}>
+              onPress={() => navigation.navigate('Favorites')}>
               <View style={styles.menuItemLeft}>
                 <Text style={styles.menuIcon}>⭐</Text>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>我的收藏</Text>

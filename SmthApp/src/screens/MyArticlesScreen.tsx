@@ -319,40 +319,40 @@ const MyArticlesScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
-      {/* Tab切换栏 */}
+      {/* Tab切换栏 - 横向滚动胶囊样式 */}
       <View style={[styles.tabContainer, {backgroundColor: theme.cardBackground, borderBottomColor: theme.border}]}>
         <TouchableOpacity
           style={[
             styles.tab,
-            activeTab === 0 && [styles.activeTab, {borderBottomColor: theme.primary}],
+            activeTab === 0 && [styles.activeTab, {backgroundColor: theme.primary}],
+            {backgroundColor: activeTab === 0 ? theme.primary : theme.background},
           ]}
           onPress={() => setActiveTab(0)}
         >
           <Text
             style={[
               styles.tabText,
-              {color: theme.secondaryText},
-              activeTab === 0 && [styles.activeTabText, {color: theme.primary}],
+              {color: activeTab === 0 ? '#fff' : theme.text},
             ]}
           >
-            我的帖子
+            帖子
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[
             styles.tab,
-            activeTab === 1 && [styles.activeTab, {borderBottomColor: theme.primary}],
+            activeTab === 1 && [styles.activeTab, {backgroundColor: theme.primary}],
+            {backgroundColor: activeTab === 1 ? theme.primary : theme.background},
           ]}
           onPress={() => setActiveTab(1)}
         >
           <Text
             style={[
               styles.tabText,
-              {color: theme.secondaryText},
-              activeTab === 1 && [styles.activeTabText, {color: theme.primary}],
+              {color: activeTab === 1 ? '#fff' : theme.text},
             ]}
           >
-            我的回复
+            回复
           </Text>
         </TouchableOpacity>
       </View>
@@ -396,26 +396,29 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  // Tab 样式
+  // Tab 样式 - 横向胶囊样式
   tabContainer: {
     flexDirection: 'row',
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md,
     borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: SPACING.sm,
   },
   tab: {
     flex: 1,
-    paddingVertical: SPACING.md,
+    paddingVertical: SPACING.sm + 2,
+    paddingHorizontal: SPACING.lg,
     alignItems: 'center',
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
+    justifyContent: 'center',
+    borderRadius: BORDER_RADIUS.lg,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
   },
   activeTab: {
-    borderBottomWidth: 2,
+    borderColor: 'transparent',
   },
   tabText: {
-    fontSize: FONT_SIZE.lg,
-    fontWeight: '500',
-  },
-  activeTabText: {
+    fontSize: FONT_SIZE.md,
     fontWeight: '600',
   },
   // 列表样式
@@ -434,11 +437,19 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZE.sm,
   },
   articleItem: {
-    borderRadius: BORDER_RADIUS.md,
+    borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.lg,
     marginBottom: SPACING.md,
     flexDirection: 'row',
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
   itemContent: {
     flex: 1,

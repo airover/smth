@@ -22,6 +22,7 @@ import SearchScreen from '../screens/SearchScreen';
 import CreatePostScreen from '../screens/CreatePostScreen';
 import WebViewPostScreen from '../screens/WebViewPostScreen';
 import MyArticlesScreen from '../screens/MyArticlesScreen';
+import FavoritesScreen from '../screens/FavoritesScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -214,6 +215,13 @@ const AppNavigator = () => {
           component={MyArticlesScreen}
           options={{
             title: '我的文章',
+          }}
+        />
+        <Stack.Screen
+          name="Favorites"
+          component={FavoritesScreen}
+          options={{
+            title: '我的收藏',
           }}
         />
       </Stack.Navigator>

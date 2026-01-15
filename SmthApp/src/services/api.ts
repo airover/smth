@@ -7,6 +7,10 @@ import {
   SEARCH_TIMEOUT,
   logRequest,
   safeJsonParse,
+  buildGetHeaders,
+  buildPostHeaders,
+  buildDeleteHeaders,
+  buildLoginHeaders,
 } from '../utils/requestUtils';
 
 const BASE_URL = 'https://wap.newsmth.net';
@@ -139,10 +143,8 @@ const request = async (
 ): Promise<Response> => {
   const cookies = await getCookies();
   const headers = {
-    'User-Agent':
-      'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15',
+    ...buildGetHeaders(cookies),
     ...options.headers,
-    ...(cookies ? {Cookie: cookies} : {}),
   };
 
   const response = await fetchWithRetry(`${BASE_URL}${url}`, {
@@ -200,19 +202,7 @@ export const login = async (
 
     // 补全 Header，完全模拟浏览器抓包
     const cookies = await getCookies();
-    const headers: Record<string, string> = {
-      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15',
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Accept': 'application/json, text/plain, */*',
-      'X-Requested-With': 'XMLHttpRequest',
-      'Authorization': 'Basic Og==', // 关键验证头
-      'Origin': BASE_URL,
-      'Referer': BASE_URL + '/login',
-    };
-    
-    if (cookies) {
-      headers.Cookie = cookies;
-    }
+    const headers = buildLoginHeaders(cookies);
     
     // 根据抓包数据，使用正确的正式登录接口
     const loginUrl = BASE_URL + '/wap/authorize/sign-in';
@@ -342,15 +332,7 @@ const fetchUserInfoFromServer = async (): Promise<any> => {
       return null;
     }
     
-    const headers: Record<string, string> = {
-      'User-Agent':
-        'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15',
-      'Accept': 'application/json, text/plain, */*',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Authorization': 'Basic Og==',
-      'Cookie': cookies,
-    };
+    const headers = buildPostHeaders(cookies, 'application/x-www-form-urlencoded');
     
     const response = await fetchWithRetry(`${WAP_BASE_URL}/wap/api/profile`, {
       method: 'POST',
@@ -585,25 +567,7 @@ export const searchArticles = async (
     });
     
     const cookies = await getCookies();
-    const headers: Record<string, string> = {
-      'accept': 'application/json, text/plain, */*',
-      'accept-language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-      'access-control-allow-origin': '*',
-      'authorization': 'Basic Og==',
-      'cache-control': 'no-cache',
-      'pragma': 'no-cache',
-      'priority': 'u=1, i',
-      'sec-ch-ua': '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
-      'sec-ch-ua-mobile': '?0',
-      'sec-fetch-dest': 'empty',
-      'sec-fetch-mode': 'cors',
-      'sec-fetch-site': 'same-origin',
-      'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
-    };
-    
-    if (cookies) {
-      headers['cookie'] = cookies;
-    }
+    const headers = buildGetHeaders(cookies);
     
     const url = `${WAP_BASE_URL}/wap/api/search/article?${params.toString()}`;
     const response = await fetchWithRetry(url, {
@@ -648,25 +612,7 @@ export const searchBoards = async (
     });
     
     const cookies = await getCookies();
-    const headers: Record<string, string> = {
-      'accept': 'application/json, text/plain, */*',
-      'accept-language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-      'access-control-allow-origin': '*',
-      'authorization': 'Basic Og==',
-      'cache-control': 'no-cache',
-      'pragma': 'no-cache',
-      'priority': 'u=1, i',
-      'sec-ch-ua': '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
-      'sec-ch-ua-mobile': '?0',
-      'sec-fetch-dest': 'empty',
-      'sec-fetch-mode': 'cors',
-      'sec-fetch-site': 'same-origin',
-      'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
-    };
-    
-    if (cookies) {
-      headers['cookie'] = cookies;
-    }
+    const headers = buildGetHeaders(cookies);
     
     const url = `${WAP_BASE_URL}/wap/api/search/board?${params.toString()}`;
     const response = await fetchWithRetry(url, {
@@ -709,25 +655,7 @@ export const searchAccounts = async (
     });
     
     const cookies = await getCookies();
-    const headers: Record<string, string> = {
-      'accept': 'application/json, text/plain, */*',
-      'accept-language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-      'access-control-allow-origin': '*',
-      'authorization': 'Basic Og==',
-      'cache-control': 'no-cache',
-      'pragma': 'no-cache',
-      'priority': 'u=1, i',
-      'sec-ch-ua': '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
-      'sec-ch-ua-mobile': '?0',
-      'sec-fetch-dest': 'empty',
-      'sec-fetch-mode': 'cors',
-      'sec-fetch-site': 'same-origin',
-      'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
-    };
-    
-    if (cookies) {
-      headers['cookie'] = cookies;
-    }
+    const headers = buildGetHeaders(cookies);
     
     const url = `${WAP_BASE_URL}/wap/api/search/account?${params.toString()}`;
     const response = await fetchWithRetry(url, {
@@ -846,22 +774,10 @@ export const deletePost = async (postId: string, title?: string, board?: string)
       }
     }
     
-    const headers: Record<string, string> = {
-      'accept': 'application/json, text/plain, */*',
-      'accept-language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-      'access-control-allow-origin': '*',
-      'authorization': 'Basic Og==',
-      'cache-control': 'no-cache',
+    const headers = buildDeleteHeaders(finalCookies, referer, {
       'content-length': '0',
-      'content-type': 'application/x-www-form-urlencoded',
-      'origin': 'https://wap.newsmth.net',
-      'pragma': 'no-cache',
-      'priority': 'u=1, i',
-      'referer': referer,
       'x-requested-with': 'XMLHttpRequest',
-      'user-agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15',
-      'Cookie': finalCookies,
-    };
+    });
     
     const url = `${WAP_BASE_URL}/wap/api/topic/delete/article/${postId}`;
     console.log('删除帖子 URL:', url);
@@ -966,19 +882,7 @@ export const getMyArticles = async (
       sort: sort,
     });
     
-    const headers: Record<string, string> = {
-      'accept': 'application/json, text/plain, */*',
-      'accept-language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-      'access-control-allow-origin': '*',
-      'authorization': 'Basic Og==',
-      'cache-control': 'no-cache',
-      'pragma': 'no-cache',
-      'priority': 'u=1, i',
-      'referer': 'https://wap.newsmth.net/myArticle',
-      'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
-      'origin': 'https://wap.newsmth.net',
-      'Cookie': cookies,
-    };
+    const headers = buildGetHeaders(cookies, 'https://wap.newsmth.net/myArticle');
     
     const url = `${WAP_BASE_URL}/wap/api/profile/myarticle?${params.toString()}`;
     console.log('getMyArticles URL:', url);
@@ -1029,6 +933,185 @@ export const getMyArticles = async (
   } catch (error) {
     console.error('getMyArticles error:', error);
     throw error;
+  }
+};
+
+// 收藏文章
+// API: POST https://wap.newsmth.net/wap/api/profile/addFavTopic
+// 参数：id=帖子ID&t=时间戳
+export const addFavoriteTopic = async (
+  topicId: string
+): Promise<{success: boolean; message?: string}> => {
+  try {
+    const cookies = await getCookies();
+    
+    if (!cookies) {
+      return {
+        success: false,
+        message: '未登录，无法收藏'
+      };
+    }
+    
+    const timestamp = Date.now();
+    const formData = new URLSearchParams();
+    formData.append('id', topicId);
+    formData.append('t', timestamp.toString());
+    
+    const headers = buildPostHeaders(
+      cookies,
+      'application/x-www-form-urlencoded',
+      `https://wap.newsmth.net/article/${topicId}?from=board`
+    );
+    
+    const url = `${WAP_BASE_URL}/wap/api/profile/addFavTopic`;
+    console.log('收藏文章 URL:', url);
+    console.log('收藏文章参数:', formData.toString());
+    
+    const response = await fetchWithRetry(url, {
+      method: 'POST',
+      headers,
+      body: formData.toString(),
+      credentials: 'include',
+    }, DEFAULT_TIMEOUT);
+    
+    const json = await response.json();
+    console.log('收藏文章响应:', json);
+    
+    if (json.code === 1) {
+      return {
+        success: true,
+        message: json.message || '收藏成功'
+      };
+    } else {
+      return {
+        success: false,
+        message: json.message || '收藏失败'
+      };
+    }
+  } catch (error) {
+    console.error('Add favorite topic error:', error);
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : '收藏失败'
+    };
+  }
+};
+
+// 标记收藏文章为已读
+// API: POST https://wap.newsmth.net/wap/api/profile/favTopic/read/{topicId}
+// 参数：readOrder=已读位置&t=时间戳
+export const markFavoriteTopicRead = async (
+  topicId: string,
+  readOrder: number
+): Promise<{success: boolean; message?: string}> => {
+  try {
+    const cookies = await getCookies();
+    
+    if (!cookies) {
+      return {
+        success: false,
+        message: '未登录，无法操作'
+      };
+    }
+    
+    const timestamp = Date.now();
+    const formData = new URLSearchParams();
+    formData.append('readOrder', readOrder.toString());
+    formData.append('t', timestamp.toString());
+    
+    const headers = buildPostHeaders(
+      cookies,
+      'application/x-www-form-urlencoded',
+      `https://wap.newsmth.net/article/${topicId}?from=board`
+    );
+    
+    const url = `${WAP_BASE_URL}/wap/api/profile/favTopic/read/${topicId}`;
+    console.log('标记已读 URL:', url);
+    console.log('标记已读参数:', formData.toString());
+    
+    const response = await fetchWithRetry(url, {
+      method: 'POST',
+      headers,
+      body: formData.toString(),
+      credentials: 'include',
+    }, DEFAULT_TIMEOUT);
+    
+    const json = await response.json();
+    console.log('标记已读响应:', json);
+    
+    if (json.code === 1) {
+      return {
+        success: true,
+        message: json.message || '已标记为已读'
+      };
+    } else {
+      return {
+        success: false,
+        message: json.message || '操作失败'
+      };
+    }
+  } catch (error) {
+    console.error('Mark favorite topic read error:', error);
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : '操作失败'
+    };
+  }
+};
+
+// 取消收藏文章
+// API: DELETE https://wap.newsmth.net/wap/api/profile/favTopic/topicid/{topicId}
+export const removeFavoriteTopic = async (
+  topicId: string
+): Promise<{success: boolean; message?: string}> => {
+  try {
+    const cookies = await getCookies();
+    
+    if (!cookies) {
+      return {
+        success: false,
+        message: '未登录，无法操作'
+      };
+    }
+    
+    const headers = buildDeleteHeaders(
+      cookies,
+      `https://wap.newsmth.net/article/${topicId}?from=board`,
+      {
+        'content-length': '0',
+        'content-type': 'application/x-www-form-urlencoded',
+      }
+    );
+    
+    const url = `${WAP_BASE_URL}/wap/api/profile/favTopic/topicid/${topicId}`;
+    console.log('取消收藏 URL:', url);
+    
+    const response = await fetchWithRetry(url, {
+      method: 'DELETE',
+      headers,
+      credentials: 'include',
+    }, DEFAULT_TIMEOUT);
+    
+    const json = await response.json();
+    console.log('取消收藏响应:', json);
+    
+    if (json.code === 1) {
+      return {
+        success: true,
+        message: json.message || '已取消收藏'
+      };
+    } else {
+      return {
+        success: false,
+        message: json.message || '操作失败'
+      };
+    }
+  } catch (error) {
+    console.error('Remove favorite topic error:', error);
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : '操作失败'
+    };
   }
 };
 

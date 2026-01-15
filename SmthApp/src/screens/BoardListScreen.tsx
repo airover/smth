@@ -8,6 +8,7 @@ import {
   SafeAreaView,
   ActivityIndicator,
   Alert,
+  RefreshControl,
 } from 'react-native';
 import {useRoute, useNavigation, useFocusEffect} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -29,6 +30,7 @@ const BoardListScreen: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     checkLoginAndLoadBoards();
@@ -77,9 +79,9 @@ const BoardListScreen: React.FC = () => {
     }
   };
 
-  const loadFavoriteBoards = async () => {
+  const loadFavoriteBoards = async (forceRefresh: boolean = false) => {
     try {
-      const data = await getFavoriteBoards();
+      const data = await getFavoriteBoards(forceRefresh);
       setBoards(data);
       setDataLoaded(true);
     } catch (error: any) {
@@ -105,10 +107,11 @@ const BoardListScreen: React.FC = () => {
           ]
         );
       }
-      // 接口失败时不设置dataLoaded，避免显示“暂无收藏版面”
+      // 接口失败时不设置dataLoaded，避免显示"暂无收藏版面"
+    } finally {
+      setRefreshing(false);
     }
   };
-
   const handleLogin = () => {
     navigation.navigate('Login');
   };
@@ -143,6 +146,12 @@ const BoardListScreen: React.FC = () => {
         },
       ]
     );
+  };
+
+  // 下拉刷新
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadFavoriteBoards(true); // 强制刷新
   };
 
   const renderBoardItem = ({item}: {item: Board}) => (
@@ -202,6 +211,14 @@ const BoardListScreen: React.FC = () => {
         renderItem={renderBoardItem}
         keyExtractor={item => item.id}
         numColumns={3}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={['#007AFF']}
+            tintColor="#007AFF"
+          />
+        }
         ListEmptyComponent={
           dataLoaded ? (
             <View style={styles.emptyContainer}>
