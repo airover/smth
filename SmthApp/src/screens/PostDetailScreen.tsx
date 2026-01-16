@@ -12,10 +12,13 @@ import {
   Dimensions,
   Alert,
   Modal,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import {useRoute, useNavigation} from '@react-navigation/native';
 import {WebView} from 'react-native-webview';
-import {getPostDetail, getTopicReplies, deletePost, getUserInfo, addFavoriteTopic} from '../services/api';
+import {getPostDetail, getTopicReplies, deletePost, getUserInfo, addFavoriteTopic, likePost, getPostPermissions, PostPermissions} from '../services/api';
 import {Post, Reply, Attachment, Like} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
@@ -70,16 +73,24 @@ const PostDetailScreen: React.FC = () => {
   const [hasMore, setHasMore] = useState(true);
   const [likesExpanded, setLikesExpanded] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [refreshing, setRefreshing] = useState(false); // 下拉刷新状态
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
   const [selectedImageUri, setSelectedImageUri] = useState('');
   const [imageSizes, setImageSizes] = useState<{[key: string]: {width: number; height: number}}>({});
   const [failedImages, setFailedImages] = useState<Set<string>>(new Set()); // 跟踪加载失败的图片
   const [menuVisible, setMenuVisible] = useState(false);
   const [currentUsername, setCurrentUsername] = useState<string | null>(null);
+  const [ratingModalVisible, setRatingModalVisible] = useState(false);
+  const [ratingType, setRatingType] = useState<'like' | 'dislike'>('like');
+  const [ratingComment, setRatingComment] = useState('');
+  const [ratingScore, setRatingScore] = useState<number | null>(null); // null表示未选择评分
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc'); // 回复排序：asc=正序，desc=倒序
+  const [permissions, setPermissions] = useState<PostPermissions | null>(null);
 
   useEffect(() => {
     loadPostDetail(1);
     loadCurrentUser();
+    loadPermissions();
   }, []);
 
   // 设置导航栏右侧按钮
@@ -108,7 +119,18 @@ const PostDetailScreen: React.FC = () => {
     }
   };
 
-  const loadPostDetail = async (pageNum: number) => {
+  const loadPermissions = async () => {
+    try {
+      const result = await getPostPermissions(postId);
+      if (result.success && result.data) {
+        setPermissions(result.data);
+      }
+    } catch (error) {
+      console.error('Load permissions error:', error);
+    }
+  };
+
+  const loadPostDetail = async (pageNum: number, forceRefresh: boolean = false) => {
     try {
       if (pageNum > 1) {
         setLoadingMore(true);
@@ -119,13 +141,17 @@ const PostDetailScreen: React.FC = () => {
         const postCacheKey = `${board}-${postId}`;
         const repliesCacheKey = `${postId}-1`;
         
-        // 尝试从缓存获取数据
-        let detailData = cacheManager.get('postDetail', postCacheKey, 60 * 1000); // 1分钟缓存
-        let repliesData = cacheManager.get('topicReplies', repliesCacheKey, 60 * 1000);
+        // 尝试从缓存获取数据（下拉刷新时跳过缓存）
+        let detailData = forceRefresh ? null : cacheManager.get('postDetail', postCacheKey, 60 * 1000); // 1分钟缓存
+        let repliesData = forceRefresh ? null : cacheManager.get('topicReplies', repliesCacheKey, 60 * 1000);
         
-        // 如果缓存中没有数据，则从API获取
-        if (!detailData || !repliesData) {
-          console.log('[PostDetail] Cache miss, fetching from API');
+        // 保存旧缓存作为降级方案
+        const oldDetailData = detailData;
+        const oldRepliesData = repliesData;
+        
+        // 如果缓存中没有数据或强制刷新，则从API获取
+        if (!detailData || !repliesData || forceRefresh) {
+          console.log(`[PostDetail] ${forceRefresh ? 'Force refresh' : 'Cache miss'}, fetching from API`);
           
           try {
             const [apiDetailData, apiRepliesData] = await Promise.all([
@@ -133,21 +159,34 @@ const PostDetailScreen: React.FC = () => {
               repliesData ? Promise.resolve(repliesData) : getTopicReplies(postId, 1)
             ]);
             
-            // 🔴 修复：只有成功获取且数据有效时才缓存
-            if (apiDetailData && !detailData) {
+            // ✅ 修复：只有成功获取且数据有效时才缓存和更新
+            if (apiDetailData && apiDetailData !== null) {
               cacheManager.set('postDetail', postCacheKey, apiDetailData);
               detailData = apiDetailData;
+            } else if (!detailData && oldDetailData) {
+              // API失败时使用旧缓存降级
+              console.log('[PostDetail] API failed, using old cache for detail');
+              detailData = oldDetailData;
             }
-            if (apiRepliesData && !repliesData) {
-              // 检查是否是真实的空数据（totalItems为0）还是错误返回
-              if (apiRepliesData.totalItems >= 0) {
-                cacheManager.set('topicReplies', repliesCacheKey, apiRepliesData);
-                repliesData = apiRepliesData;
-              }
+            
+            if (apiRepliesData && (apiRepliesData as {replies: any[], totalItems: number}).totalItems !== -1) {
+              // ✅ 修复：检查 totalItems !== -1 来判断是否成功
+              cacheManager.set('topicReplies', repliesCacheKey, apiRepliesData);
+              repliesData = apiRepliesData;
+            } else if (!repliesData && oldRepliesData) {
+              // API失败时使用旧缓存降级
+              console.log('[PostDetail] API failed, using old cache for replies');
+              repliesData = oldRepliesData;
             }
           } catch (error: any) {
             console.error('[PostDetail] Failed to fetch data:', error.message);
-            // 失败时不更新数据，保留缓存或空状态
+            // 失败时使用旧缓存降级
+            if (!detailData && oldDetailData) {
+              detailData = oldDetailData;
+            }
+            if (!repliesData && oldRepliesData) {
+              repliesData = oldRepliesData;
+            }
           }
         } else {
           console.log('[PostDetail] Cache hit, using cached data');
@@ -183,9 +222,12 @@ const PostDetailScreen: React.FC = () => {
           console.log(`[PostDetail] Cache miss for page ${pageNum}, fetching from API`);
           try {
             repliesData = await getTopicReplies(postId, pageNum);
-            // 🔴 修复：只有成功获取且数据有效时才缓存
-            if (repliesData && repliesData.totalItems >= 0) {
+            // ✅ 修复：只有成功获取且数据有效时才缓存（totalItems !== -1）
+            if (repliesData && (repliesData as {replies: any[], totalItems: number}).totalItems !== -1) {
               cacheManager.set('topicReplies', repliesCacheKey, repliesData);
+            } else {
+              // API返回失败，不更新数据
+              repliesData = null;
             }
           } catch (error: any) {
             console.error(`[PostDetail] Failed to fetch page ${pageNum}:`, error.message);
@@ -213,11 +255,18 @@ const PostDetailScreen: React.FC = () => {
       console.error('Load post detail error:', error);
     } finally {
       if (pageNum === 1) {
-      setLoading(false);
+        setLoading(false);
+        setRefreshing(false);
       } else {
         setLoadingMore(false);
       }
     }
+  };
+
+  // 下拉刷新
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await loadPostDetail(1, true); // 强制刷新，跳过缓存
   };
 
   const loadMore = () => {
@@ -291,12 +340,90 @@ const PostDetailScreen: React.FC = () => {
 
   const handleReply = () => {
     setMenuVisible(false);
+    
+    // 检查写权限
+    if (permissions && !permissions.write.hasPerm) {
+      Alert.alert(
+        '权限不足',
+        permissions.write.cause || '您没有权限进行此操作',
+        [{text: '确定'}]
+      );
+      return;
+    }
+    
     Alert.alert('提示', '回复功能开发中');
   };
 
   const handleShare = () => {
     setMenuVisible(false);
     Alert.alert('提示', '分享功能开发中');
+  };
+
+  const handleLikePress = () => {
+    // 检查写权限
+    if (permissions && !permissions.write.hasPerm) {
+      Alert.alert(
+        '权限不足',
+        permissions.write.cause || '您没有权限进行此操作',
+        [{text: '确定'}]
+      );
+      return;
+    }
+    
+    setRatingType('like');
+    setRatingScore(null); // 默认不选择评分
+    setRatingComment('');
+    setRatingModalVisible(true);
+  };
+
+  const handleDislikePress = () => {
+    // 检查写权限
+    if (permissions && !permissions.write.hasPerm) {
+      Alert.alert(
+        '权限不足',
+        permissions.write.cause || '您没有权限进行此操作',
+        [{text: '确定'}]
+      );
+      return;
+    }
+    
+    setRatingType('dislike');
+    setRatingScore(null); // 默认不选择评分
+    setRatingComment('');
+    setRatingModalVisible(true);
+  };
+
+  const handleSubmitRating = async () => {
+    if (!post?.articleId) {
+      Alert.alert('错误', '无法获取帖子ID');
+      return;
+    }
+
+    if (!ratingComment.trim()) {
+      Alert.alert('提示', '请输入评价内容');
+      return;
+    }
+
+    try {
+      // 如果没有选择评分，根据类型使用默认值：喜欢=1，不喜欢=-1
+      const finalScore = ratingScore !== null ? ratingScore : (ratingType === 'like' ? 1 : -1);
+      const result = await likePost(post.articleId, finalScore, ratingComment.trim());
+      setRatingModalVisible(false);
+      
+      if (result.success) {
+        Alert.alert('成功', result.message || '评价成功');
+        // 刷新帖子详情以显示新的点评
+        await loadPostDetail(1, true);
+      } else {
+        Alert.alert('失败', result.message || '评价失败');
+      }
+    } catch (error) {
+      Alert.alert('错误', '评价失败，请稍后重试');
+    }
+  };
+
+  const toggleSortOrder = () => {
+    setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
   };
 
   const isImage = (url: string, name?: string) => {
@@ -307,7 +434,76 @@ const PostDetailScreen: React.FC = () => {
     return isVideoUrl(url, name);
   };
 
-  const renderContent = (content: string) => {
+  // 生成 WebView 的 HTML 内容
+  const generateSelectableHtml = (content: string) => {
+    const lines = content.split('\n');
+    let htmlContent = '';
+    
+    lines.forEach(line => {
+      const isQuote = line.trim().startsWith(':') || line.includes('在大作中提到:');
+      const escapedLine = line
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+      
+      if (isQuote) {
+        htmlContent += `<p class="quote">${escapedLine}</p>`;
+      } else if (line.trim()) {
+        htmlContent += `<p>${escapedLine}</p>`;
+      }
+    });
+    
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+        <style>
+          * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-user-select: text;
+            user-select: text;
+          }
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: ${fontSizes.content}px;
+            line-height: ${fontSizes.lineHeight / fontSizes.content};
+            color: ${theme.text};
+            background-color: transparent;
+            padding: 0;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+          }
+          p {
+            margin-bottom: 8px;
+          }
+          p:last-child {
+            margin-bottom: 0;
+          }
+          .quote {
+            font-size: ${fontSizes.quote}px;
+            line-height: ${fontSizes.quoteLineHeight / fontSizes.quote};
+            color: ${theme.secondaryText};
+            background-color: ${theme.quoteBackground};
+            padding: 8px 12px;
+            border-left: 3px solid ${theme.quoteBorder || '#dee2e6'};
+            border-radius: 4px;
+            margin: 8px 0;
+          }
+        </style>
+      </head>
+      <body>${htmlContent}</body>
+      </html>
+    `;
+  };
+
+  // 计算 WebView 内容高度的状态
+  const [contentHeights, setContentHeights] = useState<{[key: string]: number}>({});
+
+  const renderContent = (content: string, contentKey?: string) => {
     if (!content) return null;
 
     // 清理HTML标签和检查内容是否为空
@@ -319,46 +515,44 @@ const PostDetailScreen: React.FC = () => {
     // 如果清理后内容为空，不渲染任何内容
     if (!cleanedContent) return null;
 
-    const lines = content.split('\n');
-    const segments: {type: 'text' | 'quote'; text: string}[] = [];
-    let currentSegment: {type: 'text' | 'quote'; text: string} | null = null;
+    const key = contentKey || content.substring(0, 50);
+    const height = contentHeights[key] || 100;
+    const html = generateSelectableHtml(content);
 
-    lines.forEach(line => {
-      const isQuote = line.trim().startsWith(':') || line.includes('在大作中提到:');
-      const type = isQuote ? 'quote' : 'text';
-
-      if (!currentSegment || currentSegment.type !== type) {
-        currentSegment = {type, text: line};
-        segments.push(currentSegment);
-      } else {
-        currentSegment.text += '\n' + line;
-      }
-    });
-
-    return segments
-      .filter(segment => segment.text.trim()) // 过滤掉空的段落
-      .map((segment, index) => (
-        <View
-          key={index}
-          style={[
-            segment.type === 'quote' ? styles.quoteContainer : styles.textContainer,
-            segment.type === 'quote' && {
-              backgroundColor: theme.quoteBackground,
-              borderLeftColor: theme.quoteBorder,
+    return (
+      <WebView
+        key={key}
+        source={{ html }}
+        style={[styles.selectableWebView, { height }]}
+        scrollEnabled={false}
+        showsVerticalScrollIndicator={false}
+        showsHorizontalScrollIndicator={false}
+        originWhitelist={['*']}
+        onMessage={(event) => {
+          const newHeight = parseInt(event.nativeEvent.data, 10);
+          if (newHeight && newHeight !== contentHeights[key]) {
+            setContentHeights(prev => ({ ...prev, [key]: newHeight }));
+          }
+        }}
+        injectedJavaScript={`
+          (function() {
+            function sendHeight() {
+              const height = document.body.scrollHeight;
+              window.ReactNativeWebView.postMessage(String(height));
             }
-          ]}>
-          <Text style={[
-            segment.type === 'quote' ? styles.quoteText : styles.contentText,
-            {
-              fontSize: segment.type === 'quote' ? fontSizes.quote : fontSizes.content,
-              lineHeight: segment.type === 'quote' ? fontSizes.quoteLineHeight : fontSizes.lineHeight,
-              color: segment.type === 'quote' ? theme.secondaryText : theme.text,
-            }
-          ]}>
-            {segment.text.trim()}
-          </Text>
-        </View>
-      ));
+            sendHeight();
+            // 监听内容变化
+            const observer = new MutationObserver(sendHeight);
+            observer.observe(document.body, { childList: true, subtree: true });
+            // 图片加载完成后重新计算
+            document.querySelectorAll('img').forEach(img => {
+              img.onload = sendHeight;
+            });
+          })();
+          true;
+        `}
+      />
+    );
   };
 
   const handleImagePress = (imageUri: string) => {
@@ -534,6 +728,14 @@ const PostDetailScreen: React.FC = () => {
     );
   };
 
+  // 根据排序顺序处理回复列表
+  const getSortedReplies = () => {
+    if (sortOrder === 'desc') {
+      return [...replies].reverse();
+    }
+    return replies;
+  };
+
   const renderReply = ({item}: {item: Reply}) => {
     const isAuthor = post && item.author === post.author;
     
@@ -593,7 +795,7 @@ const PostDetailScreen: React.FC = () => {
         <Text style={[styles.signature, {color: theme.secondaryText}]}>{item.signature}</Text>
       )}
       <View style={styles.replyContentBody}>
-        {renderContent(item.content)}
+        {renderContent(item.content, `reply-${item.id}`)}
       </View>
       {renderAttachments(item.attachments || [])}
       <Text style={[styles.replyTime, {color: theme.secondaryText}]}>{formatRelativeTime(item.postTime)}</Text>
@@ -642,9 +844,11 @@ const PostDetailScreen: React.FC = () => {
   return (
     <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
       <FlatList
-        data={replies}
+        data={getSortedReplies()}
         renderItem={renderReply}
         keyExtractor={(item, index) => `${item.id}-${index}`}
+        refreshing={refreshing}
+        onRefresh={handleRefresh}
         ListHeaderComponent={
           <View style={[styles.postContainer, {backgroundColor: theme.cardBackground}]}>
             <Text style={[styles.postTitle, {color: theme.text}]}>{post.title}</Text>
@@ -697,12 +901,43 @@ const PostDetailScreen: React.FC = () => {
               )}
             </View>
             <View style={styles.contentBody}>
-              {renderContent(post.contentText || post.content || '')}
+              {renderContent(post.contentText || post.content || '', `post-${post.id}`)}
             </View>
             {renderAttachments(post.attachments || [])}
             {renderLikes(post.likes || [])}
             <View style={[styles.divider, {backgroundColor: theme.border}]} />
-            <Text style={[styles.repliesTitle, {color: theme.text}]}>回复 ({post.replyCount})</Text>
+            
+            {/* 回复标题和操作按钮 */}
+            <View style={styles.repliesTitleRow}>
+              <Text style={[styles.repliesTitle, {color: theme.text}]}>回复 ({post.replyCount})</Text>
+              <View style={styles.replyActions}>
+                <TouchableOpacity
+                  style={styles.iconButton}
+                  onPress={handleLikePress}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.actionIcon, {color: theme.secondaryText}]}>👍</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={styles.iconButton}
+                  onPress={handleDislikePress}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.actionIcon, {color: theme.secondaryText}]}>👎</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={styles.iconButton}
+                  onPress={toggleSortOrder}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.sortIcon, {color: theme.secondaryText}]}>
+                    {sortOrder === 'asc' ? '↓' : '↑'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           </View>
         }
         ListFooterComponent={renderFooter}
@@ -716,6 +951,96 @@ const PostDetailScreen: React.FC = () => {
         imageUri={selectedImageUri}
         onClose={() => setImageViewerVisible(false)}
       />
+
+      {/* 评价弹窗 */}
+      <Modal
+        visible={ratingModalVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setRatingModalVisible(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.ratingModalWrapper}
+        >
+          <TouchableOpacity
+            style={styles.ratingModalBackdrop}
+            activeOpacity={1}
+            onPress={() => setRatingModalVisible(false)}
+          />
+          <View style={[styles.ratingModalContainer, {backgroundColor: theme.cardBackground}]}>
+            <View style={styles.ratingModalHeader}>
+              <Text style={[styles.ratingModalTitle, {color: theme.text}]}>
+                {ratingType === 'like' ? '👍 喜欢' : '👎 不喜欢'}
+              </Text>
+              <TouchableOpacity
+                onPress={() => setRatingModalVisible(false)}
+                style={styles.ratingModalClose}
+              >
+                <Text style={[styles.ratingModalCloseText, {color: theme.secondaryText}]}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              {/* 评分选择（可选） */}
+              <View style={styles.scoreSelector}>
+                <Text style={[styles.scoreSelectorLabel, {color: theme.secondaryText}]}>评分（可选）：</Text>
+                <View style={styles.scoreButtons}>
+                  {[1, 2, 3, 4, 5].map((score) => {
+                    const actualScore = ratingType === 'like' ? score : -score;
+                    const isSelected = ratingScore === actualScore;
+                    return (
+                      <TouchableOpacity
+                        key={score}
+                        style={[
+                          styles.scoreButton,
+                          {borderColor: theme.border},
+                          isSelected && {backgroundColor: theme.primary, borderColor: theme.primary}
+                        ]}
+                        onPress={() => setRatingScore(isSelected ? null : actualScore)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[
+                          styles.scoreButtonText,
+                          {color: isSelected ? '#fff' : theme.text}
+                        ]}>
+                          {score}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+              
+              {/* 评论输入框 */}
+              <View style={[styles.commentInputContainer, {borderColor: theme.border}]}>
+                <TextInput
+                  style={[styles.commentInput, {color: theme.text}]}
+                  placeholder="请留下你的评论"
+                  placeholderTextColor={theme.secondaryText}
+                  multiline
+                  numberOfLines={4}
+                  value={ratingComment}
+                  onChangeText={setRatingComment}
+                  maxLength={200}
+                />
+              </View>
+              
+              {/* 提交按钮 */}
+              <TouchableOpacity
+                style={[styles.submitButton, {backgroundColor: theme.primary}]}
+                onPress={handleSubmitRating}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.submitButtonText}>发送</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
 
       {/* 菜单弹窗 */}
       <Modal
@@ -792,6 +1117,17 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'flex-end',
+  },
+  ratingModalWrapper: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  ratingModalBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   menuContainer: {
     backgroundColor: '#fff',
@@ -942,6 +1278,11 @@ const styles = StyleSheet.create({
     color: '#666',
     lineHeight: scaleModerate(22),
   },
+  selectableWebView: {
+    backgroundColor: 'transparent',
+    width: '100%',
+    minHeight: 20,
+  },
   attachmentsContainer: {
     marginTop: SPACING.lg,
   },
@@ -1082,11 +1423,31 @@ const styles = StyleSheet.create({
     color: '#007AFF',
     fontWeight: '500',
   },
+  repliesTitleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: SPACING.sm,
+  },
   repliesTitle: {
     fontSize: 18,
     fontWeight: '600',
     color: '#000',
-    marginTop: 8,
+  },
+  replyActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.xs,
+  },
+  iconButton: {
+    padding: SPACING.sm,
+  },
+  actionIcon: {
+    fontSize: FONT_SIZE.xl,
+  },
+  sortIcon: {
+    fontSize: FONT_SIZE.xxl,
+    fontWeight: 'bold',
   },
   replyContainer: {
     backgroundColor: '#fff',
@@ -1170,6 +1531,131 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#007AFF',
     fontWeight: '500',
+  },
+  actionBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginVertical: SPACING.lg,
+  },
+  actionButtons: {
+    flexDirection: 'row',
+    gap: SPACING.md,
+  },
+  actionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm + 2,
+    borderRadius: BORDER_RADIUS.lg,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    backgroundColor: '#fff',
+  },
+  actionButtonIcon: {
+    fontSize: FONT_SIZE.xl,
+    marginRight: SPACING.xs,
+  },
+  actionButtonText: {
+    fontSize: FONT_SIZE.md,
+    fontWeight: '500',
+  },
+  sortButton: {
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm + 2,
+    borderRadius: BORDER_RADIUS.lg,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    backgroundColor: '#fff',
+  },
+  sortButtonText: {
+    fontSize: FONT_SIZE.md,
+    fontWeight: '500',
+  },
+  ratingModalContainer: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: BORDER_RADIUS.xl,
+    borderTopRightRadius: BORDER_RADIUS.xl,
+    padding: SPACING.xl,
+    maxHeight: SCREEN_HEIGHT * 0.8,
+  },
+  ratingModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: SPACING.xl,
+  },
+  ratingModalTitle: {
+    fontSize: FONT_SIZE.xxl,
+    fontWeight: 'bold',
+  },
+  ratingModalClose: {
+    padding: SPACING.sm,
+  },
+  ratingModalCloseText: {
+    fontSize: FONT_SIZE.xxl,
+    fontWeight: 'bold',
+  },
+  scoreSelector: {
+    marginBottom: SPACING.xl,
+  },
+  scoreSelectorLabel: {
+    fontSize: FONT_SIZE.md,
+    marginBottom: SPACING.md,
+  },
+  scoreButtons: {
+    flexDirection: 'row',
+    gap: SPACING.md,
+  },
+  scoreButton: {
+    width: responsiveSize(44, 48, 52, 56),
+    height: responsiveSize(44, 48, 52, 56),
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  scoreButtonText: {
+    fontSize: FONT_SIZE.lg,
+    fontWeight: '600',
+  },
+  commentInputContainer: {
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: BORDER_RADIUS.md,
+    padding: SPACING.md,
+    marginBottom: SPACING.xl,
+    minHeight: responsiveSize(100, 120, 140, 160),
+  },
+  commentInput: {
+    fontSize: FONT_SIZE.md,
+    textAlignVertical: 'top',
+    minHeight: responsiveSize(80, 100, 120, 140),
+  },
+  submitButton: {
+    backgroundColor: '#007AFF',
+    borderRadius: BORDER_RADIUS.lg,
+    paddingVertical: SPACING.lg,
+    alignItems: 'center',
+  },
+  submitButtonText: {
+    color: '#fff',
+    fontSize: FONT_SIZE.lg,
+    fontWeight: '600',
+  },
+  permissionNotice: {
+    marginTop: SPACING.lg,
+    padding: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    backgroundColor: '#f8f9fa',
+  },
+  permissionText: {
+    fontSize: FONT_SIZE.sm,
+    lineHeight: FONT_SIZE.xl,
+    marginBottom: SPACING.xs,
   },
 });
 

@@ -34,6 +34,7 @@ const BoardListScreen: React.FC = () => {
 
   useEffect(() => {
     checkLoginAndLoadBoards();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [favorites]);
 
   // 页面获得焦点时只检查登录状态，不重新加载数据

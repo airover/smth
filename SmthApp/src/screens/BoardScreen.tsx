@@ -15,7 +15,7 @@ import {
   TouchableWithoutFeedback,
   RefreshControl,
   PanResponder,
-  Image,
+  // Image - 预留用于将来图片功能
   Alert,
 } from 'react-native';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
@@ -130,7 +130,9 @@ const BoardScreen: React.FC = () => {
   const {settings} = useSettings();
   const theme = useTheme();
   const [boards, setBoards] = useState<Board[]>([]);
-  const [favoriteBoards, setFavoriteBoards] = useState<Board[]>([]);
+  // loadFavoriteBoards 用于刷新收藏版面列表
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_favoriteBoards, setFavoriteBoards] = useState<Board[]>([]);
   const [posts, setPosts] = useState<Post[]>([]);
   const [selectedBoard, setSelectedBoard] = useState<Board | null>(null);
   const [showBoardList, setShowBoardList] = useState(false);
@@ -154,7 +156,9 @@ const BoardScreen: React.FC = () => {
   const [showFabMenu, setShowFabMenu] = useState(false); // 浮动按钮菜单显示状态
   const [sortRefreshing, setSortRefreshing] = useState(false); // 排序刷新状态
   const [isBoardFavorited, setIsBoardFavorited] = useState(false); // 当前版面是否已收藏
-  const [checkingFavorite, setCheckingFavorite] = useState(false); // 正在检查收藏状态
+  // checkingFavorite 用于显示加载状态
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_checkingFavorite, setCheckingFavorite] = useState(false); // 正在检查收藏状态
 
   // 使用Ref来追踪最新的状态，解决闭包问题
   const selectedBoardRef = useRef(selectedBoard);
@@ -1055,8 +1059,8 @@ const BoardScreen: React.FC = () => {
         const ids = JSON.parse(jsonValue);
         setReadPosts(new Set(ids));
       }
-    } catch (e) {
-      console.error('Failed to load read posts:', e);
+    } catch (_e) {
+      console.error('Failed to load read posts');
     }
   };
 
@@ -1069,8 +1073,8 @@ const BoardScreen: React.FC = () => {
 
     try {
       await AsyncStorage.setItem('read_posts_ids', JSON.stringify(Array.from(newReadPosts)));
-    } catch (e) {
-      console.error('Failed to save read post:', e);
+    } catch (_e) {
+      console.error('Failed to save read post');
     }
   };
 

@@ -13,6 +13,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import WebView from 'react-native-webview';
 import {useRoute, useNavigation} from '@react-navigation/native';
 import {Mail} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
@@ -24,6 +25,7 @@ import {
   FONT_SIZE,
   BORDER_RADIUS,
   scaleModerate,
+  RESPONSIVE,
 } from '../utils/responsive';
 
 interface Message {
@@ -60,6 +62,9 @@ const MailDetailScreen: React.FC = () => {
   const [sending, setSending] = useState(false);
   
   const isLoadingRef = useRef(false);
+  
+  // WebView 内容高度状态
+  const [contentHeights, setContentHeights] = useState<{[key: string]: number}>({});
 
   // 监控messages状态变化
   useEffect(() => {
@@ -108,6 +113,91 @@ const MailDetailScreen: React.FC = () => {
     
     // 如果没有匹配到，返回清理后的原始内容
     return cleanBody(body);
+  };
+
+  // 生成可选择文本的 HTML 内容
+  const generateSelectableHtml = (content: string, isMe: boolean) => {
+    const escapedContent = content
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/\n/g, '<br>');
+    
+    const textColor = isMe ? '#fff' : theme.text;
+    
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+        <style>
+          * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-user-select: text;
+            user-select: text;
+          }
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: ${FONT_SIZE.lg}px;
+            line-height: ${scaleModerate(22) / FONT_SIZE.lg};
+            color: ${textColor};
+            background-color: transparent;
+            padding: 0;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+          }
+        </style>
+      </head>
+      <body>${escapedContent}</body>
+      </html>
+    `;
+  };
+
+  // 渲染可选择的消息内容
+  const renderSelectableContent = (content: string, messageId: string, isMe: boolean) => {
+    if (!content) return null;
+    
+    const key = `msg-${messageId}`;
+    const height = contentHeights[key] || 30;
+    const html = generateSelectableHtml(content, isMe);
+    
+    // 计算气泡最大宽度（与messageBubble的maxWidth一致）
+    const maxBubbleWidth = RESPONSIVE.SCREEN_WIDTH * 0.7 - SPACING.md * 2;
+    
+    return (
+      <View style={{ width: maxBubbleWidth, minHeight: height }}>
+        <WebView
+          key={key}
+          source={{ html }}
+          style={[styles.selectableWebView, { height }]}
+          scrollEnabled={false}
+          showsVerticalScrollIndicator={false}
+          showsHorizontalScrollIndicator={false}
+          originWhitelist={['*']}
+          onMessage={(event) => {
+            const newHeight = parseInt(event.nativeEvent.data, 10);
+            if (newHeight && newHeight !== contentHeights[key]) {
+              setContentHeights(prev => ({ ...prev, [key]: newHeight }));
+            }
+          }}
+          injectedJavaScript={`
+            (function() {
+              function sendHeight() {
+                const height = document.body.scrollHeight;
+                window.ReactNativeWebView.postMessage(String(height));
+              }
+              sendHeight();
+              const observer = new MutationObserver(sendHeight);
+              observer.observe(document.body, { childList: true, subtree: true });
+            })();
+            true;
+          `}
+        />
+      </View>
+    );
   };
 
   // 加载消息
@@ -246,12 +336,7 @@ const MailDetailScreen: React.FC = () => {
               {item.subject}
             </Text>
           )}
-          <Text style={[
-            styles.messageBody,
-            isMe ? styles.myMessageText : {color: theme.text}
-          ]}>
-            {extractMessageContent(item.body, isMe)}
-          </Text>
+          {renderSelectableContent(extractMessageContent(item.body, isMe), item.id, isMe)}
           <Text style={[
             styles.messageTime,
             isMe ? styles.myTimeText : {color: theme.secondaryText}
@@ -552,6 +637,11 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: FONT_SIZE.md,
     fontWeight: '600',
+  },
+  selectableWebView: {
+    backgroundColor: 'transparent',
+    width: '100%',
+    minHeight: 20,
   },
 });
 

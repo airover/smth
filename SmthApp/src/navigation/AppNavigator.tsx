@@ -20,7 +20,7 @@ import MailDetailScreen from '../screens/MailDetailScreen';
 import BrowsingHistoryScreen from '../screens/BrowsingHistoryScreen';
 import SearchScreen from '../screens/SearchScreen';
 import CreatePostScreen from '../screens/CreatePostScreen';
-import WebViewPostScreen from '../screens/WebViewPostScreen';
+// WebViewPostScreen 已移除使用
 import MyArticlesScreen from '../screens/MyArticlesScreen';
 import FavoritesScreen from '../screens/FavoritesScreen';
 
@@ -48,7 +48,6 @@ const MainTabs = () => {
         component={HomeScreen}
         options={{
           title: '首页',
-          headerBackTitle: '',
           tabBarIcon: ({color}) => (
             <Text style={{color, fontSize: 24}}>🏠</Text>
           ),
@@ -59,12 +58,11 @@ const MainTabs = () => {
         component={BoardScreen}
         options={{
           title: '版面',
-          headerBackTitle: '',
           tabBarIcon: ({color}) => (
             <Text style={{color, fontSize: 24}}>📋</Text>
           ),
         }}
-        listeners={({navigation, route}) => ({
+        listeners={({navigation}) => ({
           tabPress: (e) => {
             // 获取当前导航状态
             const state = navigation.getState();
@@ -90,7 +88,6 @@ const MainTabs = () => {
         component={SettingsScreen}
         options={{
           title: '我',
-          headerBackTitle: '',
           tabBarIcon: ({color}) => (
             <Text style={{color, fontSize: 24}}>⚙️</Text>
           ),
@@ -114,8 +111,7 @@ const AppNavigator = () => {
             fontWeight: '600',
             color: '#000', // 标题颜色使用黑色
           },
-          headerBackTitle: undefined, // 完全不显示返回文字
-          headerBackTitleVisible: false, // iOS上完全隐藏返回文字
+          headerBackTitle: '', // 完全不显示返回文字
         }}>
         <Stack.Screen
           name="MainTabs"

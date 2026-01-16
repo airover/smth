@@ -28,8 +28,10 @@ const {width: SCREEN_WIDTH, height: SCREEN_HEIGHT} = Dimensions.get('window');
 
 // 常量定义
 const DOUBLE_TAP_DELAY = 300;
-const SWIPE_THRESHOLD = 150;
-const SWIPE_VELOCITY_THRESHOLD = 0.5;
+const SWIPE_THRESHOLD = 100; // 下滑关闭距离阈值
+const SWIPE_VELOCITY_THRESHOLD = 0.6; // 下滑关闭速度阈值
+const SWIPE_FORCE_CLOSE_THRESHOLD = 220; // 强制关闭的距离阈值（降低到250px）
+const MIN_SWIPE_DISTANCE = 8; // 最小滑动距离才开始响应（降低到8px）
 const MIN_OPACITY = 0.3;
 const ZOOM_IN_DURATION = 400;
 const ZOOM_OUT_DURATION = 600;
@@ -51,6 +53,12 @@ const ImageViewer: React.FC<ImageViewerProps> = ({visible, imageUri, onClose}) =
   const lastTap = useRef<number | null>(null);
   const translateY = useRef(new Animated.Value(0)).current;
   const opacity = useRef(new Animated.Value(1)).current;
+  const currentZoomScale = useRef(1); // 记录当前实际的缩放比例
+  const backgroundPressStart = useRef<{x: number; y: number} | null>(null); // 记录背景按下的位置
+  const gestureDisabled = useRef(false); // 当前手势周期是否禁用（用于处理多指冲突）
+  const isScrolling = useRef(false); // 是否正在滚动/缩放
+  const isPinching = useRef(false); // 是否正在双指缩放
+  const lastPinchTime = useRef(0); // 最后一次双指缩放的时间
 
   React.useEffect(() => {
     if (visible && imageUri) {
@@ -58,7 +66,16 @@ const ImageViewer: React.FC<ImageViewerProps> = ({visible, imageUri, onClose}) =
       setIsZoomed(false);
       translateY.setValue(0);
       opacity.setValue(1);
-      zoomScale.setValue(1);
+      // 重置缩放
+      scrollViewRef.current?.getScrollResponder()?.scrollResponderZoomTo({
+        x: 0, 
+        y: 0, 
+        width: SCREEN_WIDTH, 
+        height: SCREEN_HEIGHT, 
+        animated: false
+      });
+      currentZoomScale.current = 1;
+      
       // 获取图片尺寸
       Image.getSize(
         imageUri,
@@ -70,22 +87,81 @@ const ImageViewer: React.FC<ImageViewerProps> = ({visible, imageUri, onClose}) =
           setLoading(false);
         }
       );
-    } else if (!visible) {
-      // Modal关闭时清理动画监听器
-      cleanupAnimationListener();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, imageUri]);
 
+  // 处理背景按下
+  const handleBackgroundPressIn = (event: any) => {
+    const {pageX, pageY} = event.nativeEvent;
+    backgroundPressStart.current = {x: pageX, y: pageY};
+  };
+
+  // 处理背景抬起
+  const handleBackgroundPressOut = (event: any) => {
+    if (backgroundPressStart.current) {
+      const {pageX, pageY} = event.nativeEvent;
+      const startPos = backgroundPressStart.current;
+      
+      // 计算移动距离
+      const deltaX = Math.abs(pageX - startPos.x);
+      const deltaY = Math.abs(pageY - startPos.y);
+      const totalDistance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+      
+      // 只有移动距离小于10px才认为是点击，才关闭
+      if (totalDistance < 10) {
+        onClose();
+      }
+      
+      backgroundPressStart.current = null;
+    }
+  };
+
   // 下滑关闭手势处理
   const panResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => !isZoomed,
+      onStartShouldSetPanResponder: () => false, // 永远不在开始时捕获
       onMoveShouldSetPanResponder: (_, gestureState) => {
-        // 只在未缩放且垂直滑动时响应
-        return !isZoomed && Math.abs(gestureState.dy) > Math.abs(gestureState.dx);
+        // 如果当前手势周期已被禁用（例如检测到了多指），则不再响应
+        if (gestureDisabled.current) return false;
+        
+        // 如果正在滚动或缩放，不响应
+        if (isScrolling.current) return false;
+        
+        // 如果正在双指缩放，不响应
+        if (isPinching.current) return false;
+        
+        // 如果刚刚完成缩放操作（500ms内），不响应下滑，给用户时间稳定
+        const timeSinceLastPinch = Date.now() - lastPinchTime.current;
+        if (timeSinceLastPinch < 500) return false;
+
+        // 如果检测到多指，立即禁用当前周期的手势响应
+        if (gestureState.numberActiveTouches > 1) {
+          gestureDisabled.current = true;
+          isPinching.current = true;
+          return false;
+        }
+
+        // 严格条件：只在未缩放、单指触摸、垂直滑动且移动距离足够时响应
+        const isSingleTouch = gestureState.numberActiveTouches === 1;
+        const isNotZoomed = currentZoomScale.current <= 1.05; // 增加容差到1.05
+        const isVerticalSwipe = Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * 2; // 提高垂直判断阈值
+        const hasMinDistance = Math.abs(gestureState.dy) > MIN_SWIPE_DISTANCE;
+        const isDownSwipe = gestureState.dy > 0;
+        
+        // 所有条件必须同时满足，确保不干扰双指缩放
+        return isSingleTouch && isNotZoomed && isVerticalSwipe && hasMinDistance && isDownSwipe;
       },
+      onStartShouldSetPanResponderCapture: () => false, // 不捕获开始事件
+      onMoveShouldSetPanResponderCapture: () => false, // 不捕获移动事件
       onPanResponderMove: (_, gestureState) => {
+        // 双重检查
+        if (gestureDisabled.current || isScrolling.current || isPinching.current) return;
+        
+        // 如果缩放比例大于1，不响应
+        if (currentZoomScale.current > 1.05) return;
+
+        // 只响应向下滑动
         if (gestureState.dy > 0) {
           translateY.setValue(gestureState.dy);
           // 根据滑动距离调整透明度
@@ -94,8 +170,22 @@ const ImageViewer: React.FC<ImageViewerProps> = ({visible, imageUri, onClose}) =
         }
       },
       onPanResponderRelease: (_, gestureState) => {
-        // 如果下滑超过阈值或速度足够快，则关闭
-        if (gestureState.dy > SWIPE_THRESHOLD || gestureState.vy > SWIPE_VELOCITY_THRESHOLD) {
+        // 重置禁用状态（但不影响 isPinching，它由 onTouchEnd 处理）
+        gestureDisabled.current = false;
+        
+        // 如果当前是缩放状态，不处理关闭逻辑
+        if (currentZoomScale.current > 1.05) {
+          return;
+        }
+
+        // 关闭条件：
+        // 1. 距离非常大（超过强制关闭阈值）- 无论速度如何都关闭
+        // 2. 距离和速度都达到阈值 - 同时满足才关闭
+        const shouldClose = 
+          gestureState.dy > SWIPE_FORCE_CLOSE_THRESHOLD || // 距离非常大
+          (gestureState.dy > SWIPE_THRESHOLD && gestureState.vy > SWIPE_VELOCITY_THRESHOLD); // 距离和速度都满足
+        
+        if (shouldClose) {
           Animated.parallel([
             Animated.timing(translateY, {
               toValue: SCREEN_HEIGHT,
@@ -124,75 +214,67 @@ const ImageViewer: React.FC<ImageViewerProps> = ({visible, imageUri, onClose}) =
           ]).start();
         }
       },
+      onPanResponderTerminate: () => {
+        // 手势被中断时重置状态（但不影响 isPinching）
+        gestureDisabled.current = false;
+        Animated.parallel([
+          Animated.spring(translateY, {
+            toValue: 0,
+            useNativeDriver: true,
+          }),
+          Animated.spring(opacity, {
+            toValue: 1,
+            useNativeDriver: true,
+          }),
+        ]).start();
+      },
     })
   ).current;
 
   // 双击缩放处理
-  const zoomScale = useRef(new Animated.Value(1)).current;
-  const animationListenerRef = useRef<string | null>(null);
 
-  // 清理动画监听器
-  const cleanupAnimationListener = () => {
-    if (animationListenerRef.current) {
-      zoomScale.removeListener(animationListenerRef.current);
-      animationListenerRef.current = null;
-    }
-  };
 
-  // 组件卸载时清理
-  React.useEffect(() => {
-    return () => {
-      cleanupAnimationListener();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const handleDoubleTap = () => {
+  const handleDoubleTap = (event: any) => {
     const now = Date.now();
 
     if (lastTap.current && now - lastTap.current < DOUBLE_TAP_DELAY) {
-      // 清理之前的监听器
-      cleanupAnimationListener();
-
-      // 双击触发
-      if (isZoomed) {
-        // 缩小到原始大小（使用平滑动画）
-        scrollViewRef.current?.scrollTo({x: 0, y: 0, animated: false});
+      const scrollResponder = (scrollViewRef.current as any)?.getScrollResponder();
+      
+      if (currentZoomScale.current > 1.05) {
+        // 缩小到原始大小
+        scrollResponder?.scrollResponderZoomTo({
+          x: 0,
+          y: 0,
+          width: SCREEN_WIDTH,
+          height: SCREEN_HEIGHT,
+          animated: true,
+        });
+        // 立即更新状态
+        currentZoomScale.current = 1;
         setIsZoomed(false);
-        
-        Animated.timing(zoomScale, {
-          toValue: 1,
-          duration: ZOOM_OUT_DURATION,
-          useNativeDriver: false,
-        }).start(() => {
-          cleanupAnimationListener();
-        });
-        
-        // 监听动画值变化，实时更新 ScrollView 的缩放
-        const listenerId = zoomScale.addListener(({value}) => {
-          scrollViewRef.current?.setNativeProps({
-            zoomScale: value,
-          });
-        });
-        animationListenerRef.current = listenerId;
       } else {
-        // 放大到2倍（使用平滑动画）
-        setIsZoomed(true);
-        Animated.timing(zoomScale, {
-          toValue: 2,
-          duration: ZOOM_IN_DURATION,
-          useNativeDriver: false,
-        }).start(() => {
-          cleanupAnimationListener();
-        });
+        // 放大到2倍，以屏幕中心为中心
+        const zoomFactor = 2;
+        const zoomWidth = SCREEN_WIDTH / zoomFactor;
+        const zoomHeight = SCREEN_HEIGHT / zoomFactor;
         
-        // 监听动画值变化，实时更新 ScrollView 的缩放
-        const listenerId = zoomScale.addListener(({value}) => {
-          scrollViewRef.current?.setNativeProps({
-            zoomScale: value,
-          });
+        // 计算屏幕中心位置
+        // scrollResponderZoomTo 的 x,y 是相对于内容视图左上角的坐标
+        // 由于图片在未缩放状态下是居中的，且 contentSize 至少为屏幕大小
+        // 所以我们以屏幕中心为准
+        const x = (SCREEN_WIDTH - zoomWidth) / 2;
+        const y = (SCREEN_HEIGHT - zoomHeight) / 2;
+        
+        scrollResponder?.scrollResponderZoomTo({
+          x,
+          y,
+          width: zoomWidth,
+          height: zoomHeight,
+          animated: true,
         });
-        animationListenerRef.current = listenerId;
+        // 立即更新状态
+        currentZoomScale.current = 2;
+        setIsZoomed(true);
       }
       lastTap.current = null;
     } else {
@@ -236,7 +318,7 @@ const ImageViewer: React.FC<ImageViewerProps> = ({visible, imageUri, onClose}) =
         );
         return granted === PermissionsAndroid.RESULTS.GRANTED;
       }
-    } catch (err) {
+    } catch {
       return false;
     }
   };
@@ -322,10 +404,10 @@ const ImageViewer: React.FC<ImageViewerProps> = ({visible, imageUri, onClose}) =
         } else {
           return false;
         }
-      } catch (err) {
+      } catch {
         return false;
       }
-    } catch (error) {
+    } catch {
       return false;
     }
   };
@@ -492,7 +574,7 @@ const ImageViewer: React.FC<ImageViewerProps> = ({visible, imageUri, onClose}) =
       } else if (result.action === Share.dismissedAction) {
         // 用户取消分享
       }
-    } catch (error) {
+    } catch {
       Alert.alert('分享失败', '无法分享图片');
     }
   };
@@ -533,11 +615,12 @@ const ImageViewer: React.FC<ImageViewerProps> = ({visible, imageUri, onClose}) =
     >
       <Animated.View style={[styles.container, {opacity}]}>
         <SafeAreaView style={styles.safeArea}>
-          {/* 背景蒙层 - 点击关闭 */}
+          {/* 背景蒙层 - 长按关闭 */}
           <TouchableOpacity
             style={styles.backdrop}
             activeOpacity={1}
-            onPress={onClose}
+            onPressIn={handleBackgroundPressIn}
+            onPressOut={handleBackgroundPressOut}
           >
             {/* ScrollView 支持缩放 */}
             <Animated.View
@@ -553,22 +636,59 @@ const ImageViewer: React.FC<ImageViewerProps> = ({visible, imageUri, onClose}) =
                 showsVerticalScrollIndicator={false}
                 bounces={false}
                 bouncesZoom={true}
-                decelerationRate="fast"
                 scrollEventThrottle={16}
-                onScrollBeginDrag={() => setIsZoomed(true)}
-                onScrollEndDrag={(e) => {
-                  // 检查是否回到了原始缩放级别
-                  if (e.nativeEvent.zoomScale === 1) {
-                    setIsZoomed(false);
+                onScroll={(e) => {
+                  // 实时更新缩放比例
+                  const scale = e.nativeEvent.zoomScale || 1;
+                  currentZoomScale.current = scale;
+                  setIsZoomed(scale > 1.01);
+                }}
+                // 增加手势冲突处理
+                onTouchStart={(e) => {
+                  // 如果检测到多指，立即禁用 PanResponder，标记为正在缩放
+                  if (e.nativeEvent.touches.length > 1) {
+                    gestureDisabled.current = true;
+                    isPinching.current = true;
                   }
                 }}
+                onTouchEnd={(e) => {
+                  // 当触摸结束时检查是否是缩放结束
+                  if (isPinching.current && e.nativeEvent.touches.length === 0) {
+                    isPinching.current = false;
+                    lastPinchTime.current = Date.now();
+                    // 延迟重置 gestureDisabled，给 ScrollView 时间完成缩放动画
+                    setTimeout(() => {
+                      gestureDisabled.current = false;
+                      isScrolling.current = false;
+                    }, 300);
+                  }
+                }}
+                onScrollBeginDrag={() => {
+                  isScrolling.current = true;
+                }}
+                onScrollEndDrag={() => {
+                  // 延迟重置，确保滚动/缩放完全停止
+                  setTimeout(() => {
+                    isScrolling.current = false;
+                  }, 100);
+                }}
+                onMomentumScrollEnd={() => {
+                  // 惯性滚动结束后重置状态
+                  isScrolling.current = false;
+                }}
+                scrollEnabled={true}
+                pinchGestureEnabled={true}
+                directionalLockEnabled={false}
+                alwaysBounceVertical={false}
+                alwaysBounceHorizontal={false}
+                centerContent={true}
               >
                 {/* 图片容器 - 阻止点击穿透到背景，支持双击缩放 */}
                 <TouchableOpacity
                   activeOpacity={1}
                   onPress={(e) => {
                     e.stopPropagation();
-                    handleDoubleTap();
+                    handleDoubleTap(e);
                   }}
                   style={styles.imageWrapper}
                 >

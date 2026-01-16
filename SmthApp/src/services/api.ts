@@ -1115,3 +1115,145 @@ export const removeFavoriteTopic = async (
   }
 };
 
+// 点赞/点踩帖子
+// API: POST https://wap.newsmth.net/wap/api/article/like
+export const likePost = async (
+  articleId: string,
+  score: number,
+  comment: string = ''
+): Promise<{success: boolean; message?: string}> => {
+  try {
+    const cookies = await getCookies();
+    
+    if (!cookies) {
+      return {
+        success: false,
+        message: '未登录，无法操作'
+      };
+    }
+    
+    const timestamp = Date.now();
+    const formData = new URLSearchParams();
+    formData.append('id', articleId);
+    formData.append('score', score.toString());
+    formData.append('body', comment);
+    formData.append('t', timestamp.toString());
+    
+    const headers = buildPostHeaders(
+      cookies,
+      'application/x-www-form-urlencoded',
+      `https://wap.newsmth.net/article/${articleId}`
+    );
+    
+    const url = `${WAP_BASE_URL}/wap/api/article/like`;
+    console.log('点赞/点踩 URL:', url);
+    console.log('点赞/点踩参数:', {articleId, score, comment});
+    
+    const response = await fetchWithRetry(url, {
+      method: 'POST',
+      headers,
+      body: formData.toString(),
+      credentials: 'include',
+    }, DEFAULT_TIMEOUT);
+    
+    const json = await response.json();
+    console.log('点赞/点踩响应:', json);
+    
+    if (json.code === 1) {
+      return {
+        success: true,
+        message: json.message || '操作成功'
+      };
+    } else {
+      return {
+        success: false,
+        message: json.message || '操作失败'
+      };
+    }
+  } catch (error) {
+    console.error('Like post error:', error);
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : '操作失败'
+    };
+  }
+};
+
+// 获取帖子读写权限
+// API: GET https://wap.newsmth.net/wap/api/detail/rw/permissions?t=xxx&topicId=xxx
+// 响应: {
+//   code: 1,
+//   data: {
+//     read: { facet: "VIEW", hasPerm: true },
+//     write: { cause: "本版发文需要 10积分", facet: "POST", hasPerm: false }
+//   }
+// }
+export interface PostPermissions {
+  read: {
+    facet: string;
+    hasPerm: boolean;
+    cause?: string;
+  };
+  write: {
+    facet: string;
+    hasPerm: boolean;
+    cause?: string;
+  };
+}
+
+export const getPostPermissions = async (
+  topicId: string
+): Promise<{success: boolean; data?: PostPermissions; message?: string}> => {
+  try {
+    const cookies = await getCookies();
+    
+    if (!cookies) {
+      return {
+        success: false,
+        message: '未登录，无法获取权限信息'
+      };
+    }
+    
+    const timestamp = Date.now();
+    const params = new URLSearchParams({
+      t: timestamp.toString(),
+      topicId: topicId,
+    });
+    
+    const headers = buildGetHeaders(
+      cookies,
+      `https://wap.newsmth.net/article/${topicId}?from=board`
+    );
+    
+    const url = `${WAP_BASE_URL}/wap/api/detail/rw/permissions?${params.toString()}`;
+    console.log('获取帖子权限 URL:', url);
+    
+    const response = await fetchWithRetry(url, {
+      method: 'GET',
+      headers,
+      credentials: 'include',
+    }, DEFAULT_TIMEOUT);
+    
+    const json = await response.json();
+    console.log('获取帖子权限响应:', json);
+    
+    if (json.code === 1 && json.data) {
+      return {
+        success: true,
+        data: json.data
+      };
+    } else {
+      return {
+        success: false,
+        message: json.message || '获取权限信息失败'
+      };
+    }
+  } catch (error) {
+    console.error('Get post permissions error:', error);
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : '获取权限信息失败'
+    };
+  }
+};
+

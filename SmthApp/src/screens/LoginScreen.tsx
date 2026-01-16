@@ -14,17 +14,15 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {WebView} from 'react-native-webview';
+// 以下工具函数用于 WebView 登录流程
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useNavigation} from '@react-navigation/native';
 import {
   handleWebViewMessage,
   getCookieScript,
-  checkLoginScript,
-  checkTencentCaptcha,
-  initTencentCaptcha,
+  // checkLoginScript, checkTencentCaptcha, initTencentCaptcha - 用于 WebView 登录流程
   showTencentCaptcha,
-  getTencentCaptchaAppId,
-  autoHandleTencentCaptcha,
+  // getTencentCaptchaAppId, autoHandleTencentCaptcha - 用于 WebView 登录流程
 } from '../services/webview';
 import {getSavedCredentials, saveCredentials} from '../utils/storage';
 import {recognizeCaptcha} from '../services/captchaRecognizer';
@@ -71,12 +69,14 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess}) => {
   // 当处于加载状态时，设置超时自动重置，避免卡死
   useEffect(() => {
     let timer: any;
+    // 设置超时自动重置，避免卡死
     if (loading) {
       timer = setTimeout(() => {
         console.log('登录超时，自动重置加载状态');
         setLoading(false);
       }, 20000); // 20秒超时
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     return () => {
       if (timer) clearTimeout(timer);
     };
@@ -94,16 +94,16 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess}) => {
       } else {
         setRememberPassword(false);
       }
-    } catch (error) {
-      console.error('Load saved credentials error:', error);
+  } catch (_error) {
+      console.error('Load saved credentials error:', _error);
     }
   };
 
   const handleSaveCredentials = async () => {
     try {
       await saveCredentials(username, password, rememberPassword);
-    } catch (error) {
-      console.error('Save credentials error:', error);
+  } catch (_error) {
+      console.error('Save credentials error:', _error);
     }
   };
 
@@ -113,7 +113,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess}) => {
       const captchaUrl = 'https://wap.newsmth.net/bbsimg/captcha.png';
       setCaptchaImage(captchaUrl);
       setShowCaptcha(true);
-    } catch (error) {
+    } catch (_error) {
       console.log('No captcha required');
     }
   };

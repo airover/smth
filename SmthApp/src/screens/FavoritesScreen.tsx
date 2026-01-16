@@ -40,7 +40,7 @@ const FavoritesScreen: React.FC = () => {
   const [removingTopic, setRemovingTopic] = useState<string | null>(null);
 
   // 加载收藏的文章
-  const loadTopics = useCallback(async (page: number = 0, isRefresh: boolean = false) => {
+  const loadTopics = useCallback(async (page: number = 0, _isRefresh: boolean = false) => {
     try {
       if (page === 0) {
         setLoading(true);

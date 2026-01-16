@@ -42,7 +42,7 @@ import {
   SPACING,
   FONT_SIZE,
   BORDER_RADIUS,
-  scaleModerate,
+  // scaleModerate - 预留用于响应式布局
 } from '../utils/responsive';
 
 const CacheManagementScreen: React.FC = () => {
@@ -80,11 +80,10 @@ const CacheManagementScreen: React.FC = () => {
           totalSize += size;
 
           if (key === 'read_posts_ids' || key === 'read_posts_details') {
-            if (key === 'read_posts_ids') {
-              try {
+            if (key === 'read_posts_ids') {              try {
                 const ids = JSON.parse(value);
                 readPostsCount = Array.isArray(ids) ? ids.length : 0;
-              } catch (e) {
+              } catch {
                 readPostsCount = 0;
               }
             }
@@ -98,8 +97,8 @@ const CacheManagementScreen: React.FC = () => {
         readPostsCount,
         readPostsSize,
       });
-    } catch (error) {
-      console.error('Get storage size error:', error);
+    } catch {
+      console.error('Get storage size error');
       setStorageSize('未知');
     }
   };
@@ -177,7 +176,7 @@ const CacheManagementScreen: React.FC = () => {
               await AsyncStorage.clear();
               loadStats();
               Alert.alert('成功', '所有数据已清除，请重新登录');
-            } catch (error) {
+            } catch {
               Alert.alert('错误', '清除数据失败');
             }
           },
@@ -245,7 +244,8 @@ const CacheManagementScreen: React.FC = () => {
   const renderCategoryGroup = (
     title: string,
     data: {items: {name: string; count: number; size: string}[]; total: number; keys: string[]},
-    categoryNames: {[key: string]: string}
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _categoryNames: {[key: string]: string}
   ) => {
     if (data.total === 0) return null;
 

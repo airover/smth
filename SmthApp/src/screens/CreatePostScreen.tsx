@@ -356,24 +356,8 @@ const CreatePostScreen: React.FC = () => {
     }
   };
 
-  const handleCancel = () => {
-    if (uploading) {
-      Alert.alert('提示', '图片正在上传中，请稍候');
-      return;
-    }
-    if (title || content || selectedImages.length > 0) {
-      Alert.alert('提示', '确定要放弃当前编辑吗？', [
-        {text: '取消', style: 'cancel'},
-        {
-          text: '放弃',
-          style: 'destructive',
-          onPress: () => navigation.goBack(),
-        },
-      ]);
-    } else {
-      navigation.goBack();
-    }
-  };
+  // handleCancel 函数暂未使用，保留供未来使用
+  // const handleCancel = () => { ... }
 
   if (loadingDraft) {
     return (

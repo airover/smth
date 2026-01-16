@@ -39,6 +39,7 @@ const HomeScreen: React.FC = () => {
   useEffect(() => {
     loadData();
     loadReadPosts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadData = async (forceRefresh = false) => {

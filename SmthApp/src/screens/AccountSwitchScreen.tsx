@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {logout} from '../services/api';
+// logout 功能暂时未使用
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {
   SPACING,
