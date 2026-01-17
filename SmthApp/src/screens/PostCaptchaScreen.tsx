@@ -10,25 +10,27 @@ import {WebView} from 'react-native-webview';
 interface PostCaptchaScreenProps {
   onCaptchaSuccess: (ticket: string, randstr: string) => void;
   onCancel: () => void;
+  captchaId?: string; // 可选，如果不传则使用默认的发帖ID
 }
 
 /**
- * 发帖专用的验证码组件
+ * 发帖/点赞通用的验证码组件
  * 
- * 与登录验证码的区别：
- * - captcha_id 不同：ade4a85345062fda4657d64aa3206cba (发帖专用)
- * - 登录的captcha_id：b01299f3ff24047dc399e650eec51a81
+ * - 发帖 captcha_id：ade4a85345062fda4657d64aa3206cba
+ * - 点赞 captcha_id：3a6990c763f90e33fa62a97faad3a05f
+ * - 登录 captcha_id：b01299f3ff24047dc399e650eec51a81
  */
 const PostCaptchaScreen: React.FC<PostCaptchaScreenProps> = ({
   onCaptchaSuccess,
   onCancel,
+  captchaId,
 }) => {
   const webViewRef = useRef<WebView>(null);
   const [loading, setLoading] = useState(true);
   const sdkReadyRef = useRef(false);
 
-  // 发帖专用的极验 captcha_id
-  const GEETEST_CAPTCHA_ID = 'ade4a85345062fda4657d64aa3206cba';
+  // 默认使用发帖 ID，如果传入了 captchaId 则使用传入的
+  const GEETEST_CAPTCHA_ID = captchaId || 'ade4a85345062fda4657d64aa3206cba';
 
   const captchaHtml = `
 <!DOCTYPE html>

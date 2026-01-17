@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  SafeAreaView,
   ScrollView,
   Alert,
   ActivityIndicator,
@@ -169,16 +168,16 @@ const AccountSwitchScreen: React.FC = () => {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <View style={styles.container}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#007AFF" />
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       <ScrollView style={styles.content}>
         {/* 当前账号 */}
         {currentUsername && (
@@ -287,7 +286,7 @@ const AccountSwitchScreen: React.FC = () => {
         {/* 底部留白 */}
         <View style={{height: 40}} />
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 };
 

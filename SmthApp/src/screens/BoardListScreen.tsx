@@ -5,7 +5,6 @@ import {
   StyleSheet,
   FlatList,
   TouchableOpacity,
-  SafeAreaView,
   ActivityIndicator,
   Alert,
   RefreshControl,
@@ -183,17 +182,17 @@ const BoardListScreen: React.FC = () => {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <View style={styles.container}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#007AFF" />
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   if (!isLoggedIn) {
     return (
-      <SafeAreaView style={styles.container}>
+      <View style={styles.container}>
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyTitle}>未登录</Text>
           <Text style={styles.emptyText}>请先登录以查看收藏版面</Text>
@@ -201,12 +200,12 @@ const BoardListScreen: React.FC = () => {
             <Text style={styles.loginButtonText}>前往登录</Text>
           </TouchableOpacity>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       <FlatList
         data={boards}
         renderItem={renderBoardItem}
@@ -230,7 +229,7 @@ const BoardListScreen: React.FC = () => {
         contentContainerStyle={styles.content}
         columnWrapperStyle={styles.columnWrapper}
       />
-    </SafeAreaView>
+    </View>
   );
 };
 

@@ -33,10 +33,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
-  SafeAreaView,
-  RefreshControl,
-} from 'react-native';
-import {getCacheStats, clearCache} from '../services/cacheManager';
+} from 'react-native';import {getCacheStats, clearCache} from '../services/cacheManager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   SPACING,
@@ -289,7 +286,7 @@ const CacheManagementScreen: React.FC = () => {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       <ScrollView 
         style={styles.scrollView}
         refreshControl={
@@ -417,7 +414,7 @@ const CacheManagementScreen: React.FC = () => {
         </View>
 
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 };
 

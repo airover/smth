@@ -1,5 +1,4 @@
 import React from 'react';
-import {NavigationContainer} from '@react-navigation/native';
 import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import {Text} from 'react-native';
@@ -100,130 +99,127 @@ const MainTabs = () => {
 // 应用导航器
 const AppNavigator = () => {
   return (
-    <NavigationContainer>
-      <Stack.Navigator
-        screenOptions={{
-          headerStyle: {
-            backgroundColor: '#fff',
-          },
-          headerTintColor: '#007AFF', // 统一使用项目蓝色主题（按钮颜色）
-          headerTitleStyle: {
-            fontWeight: '600',
-            color: '#000', // 标题颜色使用黑色
-          },
-          headerBackTitle: '', // 完全不显示返回文字
-        }}>
-        <Stack.Screen
-          name="MainTabs"
-          component={MainTabs}
-          options={{
-            headerShown: false,
-            title: '', // 设置空标题，避免返回时显示 "MainTabs"
-          }}
-        />
-        <Stack.Screen
-          name="PostDetail"
-          component={PostDetailScreen}
-          options={{
-            title: '',
-          }}
-        />
-        <Stack.Screen
-          name="BoardList"
-          component={BoardListScreen}
-          options={{
-            title: '收藏版面',
-          }}
-        />
-        <Stack.Screen
-          name="Mail"
-          component={MailScreen}
-          options={{
-            title: '站内邮箱',
-          }}
-        />
-        <Stack.Screen
-          name="SettingsDetail"
-          component={SettingsDetailScreen}
-          options={{
-            title: '设置',
-          }}
-        />
-        <Stack.Screen
-          name="AccountSwitch"
-          component={AccountSwitchScreen}
-          options={{
-            title: '切换帐号',
-          }}
-        />
-        <Stack.Screen
-          name="CacheManagement"
-          component={CacheManagementScreen}
-          options={{
-            title: '缓存管理',
-          }}
-        />
-        <Stack.Screen
-          name="UserProfile"
-          component={UserProfileScreen}
-          options={{
-            headerShown: false, // 隐藏顶部导航栏
-          }}
-        />
-        <Stack.Screen
-          name="MailDetail"
-          component={MailDetailScreen}
-          options={({route}) => ({
-            title: (route.params as any)?.mail?.fromNickname || '私信详情',
-          })}
-        />
-        <Stack.Screen
-          name="BrowsingHistory"
-          component={BrowsingHistoryScreen}
-          options={{
-            title: '浏览历史',
-          }}
-        />
-        <Stack.Screen
-          name="Search"
-          component={SearchScreen}
-          options={{
-            title: '搜索',
-          }}
-        />
-        <Stack.Screen
-          name="Login"
-          component={LoginScreen}
-          options={{
-            title: '登录',
-            presentation: 'modal',
-          }}
-        />
-        <Stack.Screen
-          name="CreatePost"
-          component={CreatePostScreen}
-          options={{
-            title: '',
-          }}
-        />
-        <Stack.Screen
-          name="MyArticles"
-          component={MyArticlesScreen}
-          options={{
-            title: '我的文章',
-          }}
-        />
-        <Stack.Screen
-          name="Favorites"
-          component={FavoritesScreen}
-          options={{
-            title: '我的收藏',
-          }}
-        />
-      </Stack.Navigator>
-    </NavigationContainer>
+    <Stack.Navigator
+      screenOptions={{
+        headerStyle: {
+          backgroundColor: '#fff',
+        },
+        headerTintColor: '#007AFF', // 统一使用项目蓝色主题（按钮颜色）
+        headerTitleStyle: {
+          fontWeight: '600',
+          color: '#000', // 标题颜色使用黑色
+        },
+        headerBackTitle: '', // 完全不显示返回文字
+      }}>
+      <Stack.Screen
+        name="MainTabs"
+        component={MainTabs}
+        options={{
+          headerShown: false,
+          title: '', // 设置空标题，避免返回时显示 "MainTabs"
+        }}
+      />
+      <Stack.Screen
+        name="PostDetail"
+        component={PostDetailScreen}
+        options={{
+          title: '',
+        }}
+      />
+      <Stack.Screen
+        name="BoardList"
+        component={BoardListScreen}
+        options={{
+          title: '收藏版面',
+        }}
+      />
+      <Stack.Screen
+        name="Mail"
+        component={MailScreen}
+        options={{
+          title: '站内邮箱',
+        }}
+      />
+      <Stack.Screen
+        name="SettingsDetail"
+        component={SettingsDetailScreen}
+        options={{
+          title: '设置',
+        }}
+      />
+      <Stack.Screen
+        name="AccountSwitch"
+        component={AccountSwitchScreen}
+        options={{
+          title: '切换帐号',
+        }}
+      />
+      <Stack.Screen
+        name="CacheManagement"
+        component={CacheManagementScreen}
+        options={{
+          title: '缓存管理',
+        }}
+      />
+      <Stack.Screen
+        name="UserProfile"
+        component={UserProfileScreen}
+        options={{
+          headerShown: false, // 隐藏顶部导航栏
+        }}
+      />
+      <Stack.Screen
+        name="MailDetail"
+        component={MailDetailScreen}
+        options={({route}) => ({
+          title: (route.params as any)?.mail?.fromNickname || '私信详情',
+        })}
+      />
+      <Stack.Screen
+        name="BrowsingHistory"
+        component={BrowsingHistoryScreen}
+        options={{
+          title: '浏览历史',
+        }}
+      />
+      <Stack.Screen
+        name="Search"
+        component={SearchScreen}
+        options={{
+          title: '搜索',
+        }}
+      />
+      <Stack.Screen
+        name="Login"
+        component={LoginScreen}
+        options={{
+          title: '登录',
+          presentation: 'modal',
+        }}
+      />
+      <Stack.Screen
+        name="CreatePost"
+        component={CreatePostScreen}
+        options={{
+          title: '',
+        }}
+      />
+      <Stack.Screen
+        name="MyArticles"
+        component={MyArticlesScreen}
+        options={{
+          title: '我的文章',
+        }}
+      />
+      <Stack.Screen
+        name="Favorites"
+        component={FavoritesScreen}
+        options={{
+          title: '我的收藏',
+        }}
+      />
+    </Stack.Navigator>
   );
 };
 
 export default AppNavigator;
-

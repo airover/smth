@@ -3,7 +3,6 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ActivityIndicator,
   RefreshControl,
   TouchableOpacity,
@@ -358,17 +357,17 @@ const FavoritesScreen: React.FC = () => {
 
   if (loading && (activeTab === 'topics' ? topics.length === 0 : boards.length === 0)) {
     return (
-      <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
+      <View style={[styles.container, {backgroundColor: theme.background}]}>
         {renderTabs()}
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={theme.primary} />
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
+    <View style={[styles.container, {backgroundColor: theme.background}]}>
       {renderTabs()}
       {activeTab === 'topics' ? (
         <SwipeListView
@@ -422,10 +421,9 @@ const FavoritesScreen: React.FC = () => {
           }
         />
       )}
-    </SafeAreaView>
+    </View>
   );
 };
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,

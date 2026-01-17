@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   FlatList,
-  SafeAreaView,
   ActivityIndicator,
   RefreshControl,
   Alert,
@@ -441,16 +440,16 @@ const MailDetailScreen: React.FC = () => {
 
   if (loading) {
     return (
-      <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
+      <View style={[styles.container, {backgroundColor: theme.background}]}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={theme.primary} />
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
+    <View style={[styles.container, {backgroundColor: theme.background}]}>
       <KeyboardAvoidingView 
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -504,7 +503,7 @@ const MailDetailScreen: React.FC = () => {
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </View>
   );
 };
 

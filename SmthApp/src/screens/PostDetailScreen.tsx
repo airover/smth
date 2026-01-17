@@ -1,4 +1,4 @@
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useRef} from 'react';
 import {
   View,
   Text,
@@ -15,10 +15,13 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  Animated,
+  Easing,
 } from 'react-native';
 import {useRoute, useNavigation} from '@react-navigation/native';
 import {WebView} from 'react-native-webview';
-import {getPostDetail, getTopicReplies, deletePost, getUserInfo, addFavoriteTopic, likePost, getPostPermissions, PostPermissions} from '../services/api';
+import {getPostDetail, getTopicReplies, deletePost, getUserInfo, addFavoriteTopic, likePost, addLike, getPostPermissions, PostPermissions} from '../services/api';
+import PostCaptchaScreen from './PostCaptchaScreen';
 import {Post, Reply, Attachment, Like} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
@@ -84,8 +87,40 @@ const PostDetailScreen: React.FC = () => {
   const [ratingType, setRatingType] = useState<'like' | 'dislike'>('like');
   const [ratingComment, setRatingComment] = useState('');
   const [ratingScore, setRatingScore] = useState<number | null>(null); // null表示未选择评分
+  const [captchaParams, setCaptchaParams] = useState<any>(null); // 验证码参数
+  const [showCaptchaModal, setShowCaptchaModal] = useState(false); // 显示验证码弹窗
+  const [captchaVerified, setCaptchaVerified] = useState(false); // 验证码是否已验证
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc'); // 回复排序：asc=正序，desc=倒序
   const [permissions, setPermissions] = useState<PostPermissions | null>(null);
+  const [throwingEgg, setThrowingEgg] = useState(false);
+  const [exploding, setExploding] = useState(false);
+  const [eggButtonLayout, setEggButtonLayout] = useState({x: 0, y: 0});
+  const [explosionPosition, setExplosionPosition] = useState({x: 0, y: 0});
+  const eggButtonRef = useRef<any>(null);
+  const eggAnimX = useRef(new Animated.Value(0)).current;
+  const eggAnimY = useRef(new Animated.Value(0)).current;
+  const eggOpacity = useRef(new Animated.Value(0)).current;
+  const eggRotate = useRef(new Animated.Value(0)).current;
+  const explosionScale = useRef(new Animated.Value(0)).current;
+  const explosionOpacity = useRef(new Animated.Value(0)).current;
+  const modalAnim = useRef(new Animated.Value(0)).current;
+  // 蛋清飞溅粒子动画（20个方向，模拟蛋黄和蛋清）
+  const splashParticles = useRef(
+    Array.from({length: 20}, () => ({
+      x: new Animated.Value(0),
+      y: new Animated.Value(0),
+      opacity: new Animated.Value(0),
+      scale: new Animated.Value(1),
+    }))
+  ).current;  // 蛋壳碎片动画（6个碎片）
+  const shellParticles = useRef(
+    Array.from({length: 6}, () => ({
+      x: new Animated.Value(0),
+      y: new Animated.Value(0),
+      opacity: new Animated.Value(0),
+      rotate: new Animated.Value(0),
+    }))
+  ).current;
 
   useEffect(() => {
     loadPostDetail(1);
@@ -341,17 +376,25 @@ const PostDetailScreen: React.FC = () => {
   const handleReply = () => {
     setMenuVisible(false);
     
+    if (!post) return;
+
     // 检查写权限
-    if (permissions && !permissions.write.hasPerm) {
-      Alert.alert(
-        '权限不足',
-        permissions.write.cause || '您没有权限进行此操作',
-        [{text: '确定'}]
-      );
-      return;
-    }
+    // if (permissions && !permissions.write.hasPerm) {
+    //   Alert.alert(
+    //     '权限不足',
+    //     permissions.write.cause || '您没有权限进行此操作',
+    //     [{text: '确定'}]
+    //   );
+    //   return;
+    // }
     
-    Alert.alert('提示', '回复功能开发中');
+    navigation.navigate('CreatePost', {
+      boardId: board,
+      boardName: post.boardName || board,
+      reId: post.articleId || post.id,
+      reTitle: post.title,
+      mode: 'reply'
+    });
   };
 
   const handleShare = () => {
@@ -361,40 +404,274 @@ const PostDetailScreen: React.FC = () => {
 
   const handleLikePress = () => {
     // 检查写权限
-    if (permissions && !permissions.write.hasPerm) {
-      Alert.alert(
-        '权限不足',
-        permissions.write.cause || '您没有权限进行此操作',
-        [{text: '确定'}]
-      );
-      return;
-    }
+    // if (permissions && !permissions.write.hasPerm) {
+    //   Alert.alert(
+    //     '权限不足',
+    //     permissions.write.cause || '您没有权限进行此操作',
+    //     [{text: '确定'}]
+    //   );
+    //   return;
+    // }
     
     setRatingType('like');
     setRatingScore(null); // 默认不选择评分
     setRatingComment('');
     setRatingModalVisible(true);
+    Animated.timing(modalAnim, {
+      toValue: 1,
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
   };
 
   const handleDislikePress = () => {
     // 检查写权限
-    if (permissions && !permissions.write.hasPerm) {
-      Alert.alert(
-        '权限不足',
-        permissions.write.cause || '您没有权限进行此操作',
-        [{text: '确定'}]
-      );
-      return;
+    // if (permissions && !permissions.write.hasPerm) {
+    //   Alert.alert(
+    //     '权限不足',
+    //     permissions.write.cause || '您没有权限进行此操作',
+    //     [{text: '确定'}]
+    //   );
+    //   return;
+    // }
+    
+    // 获取按钮在屏幕上的绝对位置
+    if (eggButtonRef.current) {
+      eggButtonRef.current.measureInWindow((x: number, y: number, width: number, height: number) => {
+        setEggButtonLayout({x, y});
+        // 播放扔鸡蛋动画，直接传递坐标值
+        playThrowEggAnimation(x, y);
+      });
+    } else {
+      // 如果ref不可用，使用默认位置播放动画
+      playThrowEggAnimation(eggButtonLayout.x, eggButtonLayout.y);
     }
     
+    // 同时显示弹窗
     setRatingType('dislike');
     setRatingScore(null); // 默认不选择评分
     setRatingComment('');
     setRatingModalVisible(true);
+    Animated.timing(modalAnim, {
+      toValue: 1,
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const playThrowEggAnimation = (buttonX: number, buttonY: number) => {
+    // 重置动画值
+    eggAnimX.setValue(0);
+    eggAnimY.setValue(0);
+    eggRotate.setValue(0);
+    eggOpacity.setValue(1);
+    explosionScale.setValue(0);
+    explosionOpacity.setValue(0);
+    splashParticles.forEach(particle => {
+      particle.x.setValue(0);
+      particle.y.setValue(0);
+      particle.opacity.setValue(0);
+      particle.scale.setValue(1);
+    });
+    shellParticles.forEach(particle => {
+      particle.x.setValue(0);
+      particle.y.setValue(0);
+      particle.opacity.setValue(0);
+      particle.rotate.setValue(0);
+    });
+    setThrowingEgg(true);
+    setExploding(false);
+
+    // 定义飞行距离
+    const flyDistanceX = -180;
+    const flyDistanceY = -300;
+
+    // 抛物线动画：向左上方飞向主帖子内容（带旋转）
+    Animated.parallel([
+      // X轴移动（向左，使用线性让水平速度恒定）
+      Animated.timing(eggAnimX, {
+        toValue: flyDistanceX,
+        duration: 800,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
+      // Y轴移动（模拟向上抛出受重力影响减速）
+      Animated.timing(eggAnimY, {
+        toValue: flyDistanceY,
+        duration: 800,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+      // 旋转动画（逆时针旋转2圈）
+      Animated.timing(eggRotate, {
+        toValue: 1,
+        duration: 800,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
+      // 透明度动画（飞行过程保持可见）
+      Animated.sequence([
+        Animated.delay(700),
+        Animated.timing(eggOpacity, {
+          toValue: 0,
+          duration: 100,
+          useNativeDriver: true,
+        }),
+      ]),
+    ]).start(() => {
+      // 计算爆炸位置（鸡蛋最终位置），直接使用传入的坐标
+      const explosionX = buttonX + flyDistanceX;
+      const explosionY = buttonY + flyDistanceY;
+      setExplosionPosition({x: explosionX, y: explosionY});
+      
+      // 鸡蛋消失后播放爆炸动画
+      setThrowingEgg(false);
+      setExploding(true);
+      
+      // 20个方向的蛋清/蛋黄飞溅粒子
+      const splashAnimations = splashParticles.map((particle, index) => {
+        // 前5个是蛋黄（大，粘稠），后15个是蛋清（小，飞得远）
+        const isYolk = index < 5;
+        const angle = (Math.random() * 360) * Math.PI / 180; 
+        const distance = isYolk ? 30 + Math.random() * 30 : 60 + Math.random() * 80;
+        
+        const targetX = Math.cos(angle) * distance;
+        const targetY = Math.sin(angle) * distance;
+        
+        const particleSize = isYolk ? 1.2 + Math.random() * 0.5 : 0.5 + Math.random() * 0.8;
+        
+        // 模拟流体效果：飞溅 -> 停顿 -> 缓慢流下并消失
+        return Animated.sequence([
+          // 1. 快速飞溅
+          Animated.parallel([
+            Animated.timing(particle.x, {
+              toValue: targetX,
+              duration: 300,
+              easing: Easing.out(Easing.cubic),
+              useNativeDriver: true,
+            }),
+            Animated.timing(particle.y, {
+              toValue: targetY,
+              duration: 300,
+              easing: Easing.out(Easing.cubic),
+              useNativeDriver: true,
+            }),
+            Animated.timing(particle.opacity, {
+              toValue: 0.9, // 略微透明
+              duration: 50,
+              useNativeDriver: true,
+            }),
+            Animated.timing(particle.scale, {
+              toValue: particleSize,
+              duration: 300,
+              useNativeDriver: true,
+            }),
+          ]),
+          // 2. 粘在屏幕上稍微停顿
+          Animated.delay(100 + Math.random() * 200),
+          // 3. 缓慢流下并消失
+          Animated.parallel([
+            Animated.timing(particle.y, {
+              toValue: targetY + 50 + Math.random() * 50, // 向下流淌
+              duration: 800,
+              easing: Easing.in(Easing.quad),
+              useNativeDriver: true,
+            }),
+            Animated.timing(particle.opacity, {
+              toValue: 0,
+              duration: 800,
+              useNativeDriver: true,
+            }),
+          ])
+        ]);
+      });
+      
+      // 6个蛋壳碎片（白色，带旋转）
+      const shellAnimations = shellParticles.map((particle, index) => {
+        const angle = (Math.random() * 360) * Math.PI / 180;
+        const distance = 50 + Math.random() * 60;
+        const targetX = Math.cos(angle) * distance;
+        const targetY = Math.sin(angle) * distance;
+        const rotation = (Math.random() - 0.5) * 720;
+        
+        return Animated.parallel([
+          Animated.timing(particle.x, {
+            toValue: targetX,
+            duration: 600,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(particle.y, {
+            toValue: targetY + 100, // 蛋壳受重力影响更大，落得更远
+            duration: 600,
+            easing: Easing.bezier(0.25, 0.46, 0.45, 0.94),
+            useNativeDriver: true,
+          }),
+          Animated.sequence([
+            Animated.timing(particle.opacity, {
+              toValue: 1,
+              duration: 50,
+              useNativeDriver: true,
+            }),
+            Animated.delay(300),
+            Animated.timing(particle.opacity, {
+              toValue: 0,
+              duration: 300,
+              useNativeDriver: true,
+            }),
+          ]),
+          Animated.timing(particle.rotate, {
+            toValue: rotation,
+            duration: 600,
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: true,
+          }),
+        ]);
+      });
+      
+      Animated.parallel([
+        // 爆炸放大
+        Animated.timing(explosionScale, {
+          toValue: 1.5,
+          duration: 300,
+          easing: Easing.out(Easing.back(1.5)),
+          useNativeDriver: true,
+        }),
+        // 爆炸透明度
+        Animated.sequence([
+          Animated.timing(explosionOpacity, {
+            toValue: 1,
+            duration: 50,
+            useNativeDriver: true,
+          }),
+          Animated.delay(100),
+          Animated.timing(explosionOpacity, {
+            toValue: 0,
+            duration: 200,
+            useNativeDriver: true,
+          }),
+        ]),
+        // 蛋清飞溅
+        ...splashAnimations,
+        // 蛋壳碎片
+        ...shellAnimations,
+      ]).start(() => {
+        setExploding(false);
+      });
+    });
+  };
+  const closeModal = () => {
+    Animated.timing(modalAnim, {
+      toValue: 0,
+      duration: 250,
+      useNativeDriver: true,
+    }).start(() => {
+      setRatingModalVisible(false);
+    });
   };
 
   const handleSubmitRating = async () => {
-    if (!post?.articleId) {
+    if (!post?.id) {
       Alert.alert('错误', '无法获取帖子ID');
       return;
     }
@@ -404,22 +681,95 @@ const PostDetailScreen: React.FC = () => {
       return;
     }
 
+    // 检查验证码是否已验证
+    if (!captchaVerified || !captchaParams) {
+      Alert.alert('提示', '请先完成人机验证');
+      return;
+    }
+
     try {
       // 如果没有选择评分，根据类型使用默认值：喜欢=1，不喜欢=-1
       const finalScore = ratingScore !== null ? ratingScore : (ratingType === 'like' ? 1 : -1);
-      const result = await likePost(post.articleId, finalScore, ratingComment.trim());
-      setRatingModalVisible(false);
+      const result = await addLike(
+        post.id, // 使用 topicId
+        post.boardName || board,
+        finalScore,
+        ratingComment.trim(),
+        captchaParams
+      );
+      closeModal();
       
       if (result.success) {
         Alert.alert('成功', result.message || '评价成功');
         // 刷新帖子详情以显示新的点评
         await loadPostDetail(1, true);
+        // 清除验证码状态
+        setCaptchaParams(null);
+        setCaptchaVerified(false);
       } else {
         Alert.alert('失败', result.message || '评价失败');
+        // 验证码失败后清除，需要重新验证
+        setCaptchaParams(null);
+        setCaptchaVerified(false);
       }
     } catch (error) {
       Alert.alert('错误', '评价失败，请稍后重试');
+      // 验证码失败后清除，需要重新验证
+      setCaptchaParams(null);
+      setCaptchaVerified(false);
     }
+  };
+
+  // 显示验证码弹窗
+  const handleCaptchaVerify = () => {
+    // 先关闭评价弹窗，避免 Modal 冲突
+    setRatingModalVisible(false);
+    // 延迟一点打开验证码弹窗，确保前一个 Modal 完全关闭
+    setTimeout(() => {
+      setShowCaptchaModal(true);
+    }, 300);
+  };
+
+  // 验证码验证成功
+  const handleCaptchaSuccess = (ticket: string, randstr: string) => {
+    // 解析验证码参数
+    const parts = ticket.split('|');
+    if (parts.length >= 4) {
+      const params = {
+        captcha_id: '3a6990c763f90e33fa62a97faad3a05f', // 点赞专用的captcha_id
+        lot_number: parts[0],
+        captcha_output: parts[1],
+        pass_token: parts[2],
+        gen_time: parts[3],
+      };
+      setCaptchaParams(params);
+      setCaptchaVerified(true);
+    }
+    setShowCaptchaModal(false);
+    // 验证成功后，重新打开评价弹窗
+    setTimeout(() => {
+      setRatingModalVisible(true);
+      // 确保动画状态正确
+      Animated.timing(modalAnim, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      }).start();
+    }, 300);
+  };
+  // 验证码取消
+  const handleCaptchaCancel = () => {
+    setShowCaptchaModal(false);
+    // 取消验证后，重新打开评价弹窗
+    setTimeout(() => {
+      setRatingModalVisible(true);
+      // 确保动画状态正确
+      Animated.timing(modalAnim, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      }).start();
+    }, 300);
   };
 
   const toggleSortOrder = () => {
@@ -489,9 +839,23 @@ const PostDetailScreen: React.FC = () => {
             color: ${theme.secondaryText};
             background-color: ${theme.quoteBackground};
             padding: 8px 12px;
+            padding-top: 4px;
+            padding-bottom: 4px;
             border-left: 3px solid ${theme.quoteBorder || '#dee2e6'};
+            margin: 0;
+          }
+          .quote:first-of-type {
+            padding-top: 8px;
+            border-top-left-radius: 4px;
+            border-top-right-radius: 4px;
+          }
+          .quote:last-of-type {
+            padding-bottom: 8px;
+            border-bottom-left-radius: 4px;
+            border-bottom-right-radius: 4px;
+          }
+          .quote:only-of-type {
             border-radius: 4px;
-            margin: 8px 0;
           }
         </style>
       </head>
@@ -912,28 +1276,29 @@ const PostDetailScreen: React.FC = () => {
               <Text style={[styles.repliesTitle, {color: theme.text}]}>回复 ({post.replyCount})</Text>
               <View style={styles.replyActions}>
                 <TouchableOpacity
-                  style={styles.iconButton}
+                  style={[styles.actionIconButton, {backgroundColor: theme.background, borderColor: theme.border}]}
                   onPress={handleLikePress}
                   activeOpacity={0.7}
                 >
-                  <Text style={[styles.actionIcon, {color: theme.secondaryText}]}>👍</Text>
+                  <Text style={styles.actionIconEmoji}>👍</Text>
                 </TouchableOpacity>
                 
                 <TouchableOpacity
-                  style={styles.iconButton}
+                  ref={eggButtonRef}
+                  style={[styles.actionIconButton, {backgroundColor: theme.background, borderColor: theme.border}]}
                   onPress={handleDislikePress}
                   activeOpacity={0.7}
                 >
-                  <Text style={[styles.actionIcon, {color: theme.secondaryText}]}>👎</Text>
+                  <Text style={styles.actionIconEmoji}>🥚</Text>
                 </TouchableOpacity>
                 
                 <TouchableOpacity
-                  style={styles.iconButton}
+                  style={[styles.sortIconButton, {backgroundColor: theme.background, borderColor: theme.border}]}
                   onPress={toggleSortOrder}
                   activeOpacity={0.7}
                 >
-                  <Text style={[styles.sortIcon, {color: theme.secondaryText}]}>
-                    {sortOrder === 'asc' ? '↓' : '↑'}
+                  <Text style={[styles.sortTriangleIcon, {color: theme.text}]}>
+                    {sortOrder === 'asc' ? '▼' : '▲'}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -956,25 +1321,144 @@ const PostDetailScreen: React.FC = () => {
       <Modal
         visible={ratingModalVisible}
         transparent={true}
-        animationType="slide"
-        onRequestClose={() => setRatingModalVisible(false)}
+        animationType="none"
+        onRequestClose={closeModal}
       >
+        {/* 飞行的鸡蛋动画（带旋转） */}
+        {throwingEgg && eggButtonLayout.x !== 0 && (
+          <Animated.View
+            style={[
+              styles.flyingEgg,
+              {
+                left: eggButtonLayout.x,
+                top: eggButtonLayout.y,
+                opacity: eggOpacity,
+                transform: [
+                  { translateX: eggAnimX },
+                  { translateY: eggAnimY },
+                  { rotate: eggRotate.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: ['0deg', '-720deg']
+                    }) 
+                  }
+                ]
+              }
+            ]}
+          >
+            <Text style={styles.flyingEggEmoji}>🥚</Text>
+          </Animated.View>
+        )}
+        
+        {/* 爆炸效果 */}
+        {exploding && (
+          <>
+            <Animated.View
+              style={[
+                styles.explosion,
+                {
+                  left: explosionPosition.x - 20,
+                  top: explosionPosition.y - 20,
+                  opacity: explosionOpacity,
+                  transform: [
+                    { scale: explosionScale }
+                  ]
+                }
+              ]}
+            >
+              <Text style={styles.explosionEmoji}>💥</Text>
+            </Animated.View>
+            
+            {/* 蛋清飞溅粒子（前5个蛋黄，后15个蛋清） */}
+            {splashParticles.map((particle, index) => {
+              const isYolk = index < 5;
+              return (
+                <Animated.View
+                  key={`splash-${index}`}
+                  style={[
+                    styles.splashParticle,
+                    {
+                      left: explosionPosition.x,
+                      top: explosionPosition.y,
+                      opacity: particle.opacity,
+                      transform: [
+                        { translateX: particle.x },
+                        { translateY: particle.y },
+                        { scale: particle.scale },
+                      ]
+                    }
+                  ]}
+                >
+                  <View style={[
+                    styles.splashDot,
+                    { 
+                      backgroundColor: isYolk ? '#FF8C00' : '#FFFFE0', // 深橙色蛋黄，淡黄色蛋清
+                      width: isYolk ? 16 : 10,
+                      height: isYolk ? 16 : 10,
+                      borderRadius: isYolk ? 8 : 5,
+                      opacity: isYolk ? 1 : 0.8,
+                    }
+                  ]} />
+                </Animated.View>
+              );
+            })}
+            
+            {/* 蛋壳碎片（白色） */}
+            {shellParticles.map((particle, index) => (
+              <Animated.View
+                key={`shell-${index}`}
+                style={[
+                  styles.shellParticle,
+                  {
+                    left: explosionPosition.x,
+                    top: explosionPosition.y,
+                    opacity: particle.opacity,
+                    transform: [
+                      { translateX: particle.x },
+                      { translateY: particle.y },
+                      { rotate: particle.rotate.interpolate({
+                        inputRange: [0, 360],
+                        outputRange: ['0deg', '360deg']
+                      })},
+                    ]
+                  }
+                ]}
+              >
+                <View style={styles.shellFragment} />
+              </Animated.View>
+            ))}
+          </>
+        )}
+
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.ratingModalWrapper}
+          pointerEvents="box-none"
         >
-          <TouchableOpacity
-            style={styles.ratingModalBackdrop}
-            activeOpacity={1}
-            onPress={() => setRatingModalVisible(false)}
-          />
-          <View style={[styles.ratingModalContainer, {backgroundColor: theme.cardBackground}]}>
+          <Animated.View style={[styles.ratingModalBackdrop, {opacity: modalAnim}]}>
+            <TouchableOpacity
+              style={{flex: 1}}
+              activeOpacity={1}
+              onPress={closeModal}
+            />
+          </Animated.View>
+          <Animated.View style={[
+            styles.ratingModalContainer, 
+            {backgroundColor: theme.cardBackground},
+            {
+              transform: [{
+                translateY: modalAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [300, 0]
+                })
+              }]
+            }
+          ]}>
             <View style={styles.ratingModalHeader}>
               <Text style={[styles.ratingModalTitle, {color: theme.text}]}>
-                {ratingType === 'like' ? '👍 喜欢' : '👎 不喜欢'}
+                {ratingType === 'like' ? '👍 点赞' : '🥚 扔鸡蛋'}
               </Text>
               <TouchableOpacity
-                onPress={() => setRatingModalVisible(false)}
+                onPress={closeModal}
                 style={styles.ratingModalClose}
               >
                 <Text style={[styles.ratingModalCloseText, {color: theme.secondaryText}]}>✕</Text>
@@ -992,6 +1476,7 @@ const PostDetailScreen: React.FC = () => {
                   {[1, 2, 3, 4, 5].map((score) => {
                     const actualScore = ratingType === 'like' ? score : -score;
                     const isSelected = ratingScore === actualScore;
+                    const prefix = ratingType === 'like' ? '+' : '-';
                     return (
                       <TouchableOpacity
                         key={score}
@@ -1007,7 +1492,7 @@ const PostDetailScreen: React.FC = () => {
                           styles.scoreButtonText,
                           {color: isSelected ? '#fff' : theme.text}
                         ]}>
-                          {score}
+                          {prefix}{score}
                         </Text>
                       </TouchableOpacity>
                     );
@@ -1029,16 +1514,36 @@ const PostDetailScreen: React.FC = () => {
                 />
               </View>
               
-              {/* 提交按钮 */}
-              <TouchableOpacity
-                style={[styles.submitButton, {backgroundColor: theme.primary}]}
-                onPress={handleSubmitRating}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.submitButtonText}>发送</Text>
-              </TouchableOpacity>
+              {/* 人机验证和提交按钮 */}
+              <View style={styles.actionButtonsRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.captchaButton,
+                    {
+                      borderColor: captchaVerified ? theme.primary : theme.border,
+                      backgroundColor: captchaVerified ? '#f0fff0' : theme.background
+                    }
+                  ]}
+                  onPress={handleCaptchaVerify}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[
+                    styles.captchaButtonText,
+                    {color: captchaVerified ? '#34C759' : theme.text}
+                  ]}>
+                    {captchaVerified ? '✅ 已验证' : '🤖 人机验证'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.submitButton, {backgroundColor: theme.primary}]}
+                  onPress={handleSubmitRating}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.submitButtonText}>提交</Text>
+                </TouchableOpacity>
+              </View>
             </ScrollView>
-          </View>
+          </Animated.View>
         </KeyboardAvoidingView>
       </Modal>
 
@@ -1095,6 +1600,24 @@ const PostDetailScreen: React.FC = () => {
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
+      </Modal>
+
+      {/* 验证码弹窗 - 放在最后确保显示在最上层 */}
+      <Modal
+        visible={showCaptchaModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={handleCaptchaCancel}
+      >
+        <View style={styles.captchaModalOverlay}>
+          <View style={styles.captchaModalContent}>
+            <PostCaptchaScreen
+              onCaptchaSuccess={handleCaptchaSuccess}
+              onCancel={handleCaptchaCancel}
+              captchaId="3a6990c763f90e33fa62a97faad3a05f"
+            />
+          </View>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -1437,16 +1960,47 @@ const styles = StyleSheet.create({
   replyActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: SPACING.xs,
+    gap: SPACING.sm,
   },
-  iconButton: {
-    padding: SPACING.sm,
+  actionIconButton: {
+    width: responsiveSize(36, 40, 44, 48),
+    height: responsiveSize(36, 40, 44, 48),
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
-  actionIcon: {
-    fontSize: FONT_SIZE.xl,
+  actionIconEmoji: {
+    fontSize: responsiveSize(18, 20, 22, 24),
   },
-  sortIcon: {
-    fontSize: FONT_SIZE.xxl,
+  sortIconButton: {
+    width: responsiveSize(36, 40, 44, 48),
+    height: responsiveSize(36, 40, 44, 48),
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  sortTriangleIcon: {
+    fontSize: responsiveSize(16, 18, 20, 22),
     fontWeight: 'bold',
   },
   replyContainer: {
@@ -1633,7 +2187,24 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
     minHeight: responsiveSize(80, 100, 120, 140),
   },
+  actionButtonsRow: {
+    flexDirection: 'row',
+    gap: SPACING.md,
+    alignItems: 'center',
+  },
+  captchaButton: {
+    flex: 1,
+    borderRadius: BORDER_RADIUS.lg,
+    paddingVertical: SPACING.lg,
+    alignItems: 'center',
+    borderWidth: 1,
+  },
+  captchaButtonText: {
+    fontSize: FONT_SIZE.md,
+    fontWeight: '600',
+  },
   submitButton: {
+    flex: 1,
     backgroundColor: '#007AFF',
     borderRadius: BORDER_RADIUS.lg,
     paddingVertical: SPACING.lg,
@@ -1656,6 +2227,73 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZE.sm,
     lineHeight: FONT_SIZE.xl,
     marginBottom: SPACING.xs,
+  },
+  flyingEgg: {
+    position: 'absolute',
+    zIndex: 99999,
+    elevation: 99999,
+  },
+  flyingEggEmoji: {
+    fontSize: responsiveSize(32, 36, 40, 44),
+  },
+  explosion: {
+    position: 'absolute',
+    zIndex: 100000,
+    elevation: 100000,
+  },
+  explosionEmoji: {
+    fontSize: responsiveSize(48, 56, 64, 72),
+  },
+  splashParticle: {
+    position: 'absolute',
+    zIndex: 100001,
+    elevation: 100001,
+  },
+  splashDot: {
+    width: responsiveSize(10, 12, 14, 16),
+    height: responsiveSize(10, 12, 14, 16),
+    borderRadius: responsiveSize(5, 6, 7, 8),
+    backgroundColor: '#FFD700',
+    shadowColor: '#FFA500',
+    shadowOffset: {
+      width: 0,
+      height: 0,
+    },
+    shadowOpacity: 0.9,
+    shadowRadius: 6,
+    elevation: 8,
+  },
+  shellParticle: {
+    position: 'absolute',
+    zIndex: 100002,
+    elevation: 100002,
+  },
+  shellFragment: {
+    width: responsiveSize(12, 14, 16, 18),
+    height: responsiveSize(8, 10, 12, 14),
+    borderRadius: 2,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#F0F0F0',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+    elevation: 5,
+  },
+  captchaModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  captchaModalContent: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: 'transparent',
   },
 });
 

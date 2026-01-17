@@ -14,6 +14,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
   ) -> Bool {
+    // 立即触发网络权限对话框（主流 App 通用做法）
+    triggerNetworkPermission()
+    
     let delegate = ReactNativeDelegate()
     let factory = RCTReactNativeFactory(delegate: delegate)
     delegate.dependencyProvider = RCTAppDependencyProvider()
@@ -31,6 +34,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     window?.makeKeyAndVisible()
 
     return true
+  }
+  
+  /// 触发网络权限对话框
+  /// 通过发起一个简单的网络请求，iOS 会自动弹出网络权限询问对话框
+  private func triggerNetworkPermission() {
+    guard let url = URL(string: "https://www.apple.com") else { return }
+    let task = URLSession.shared.dataTask(with: url) { _, _, _ in }
+    task.resume()
   }
 }
 

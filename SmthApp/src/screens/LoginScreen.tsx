@@ -11,8 +11,9 @@ import {
   Switch,
   Modal,
   Keyboard,
+  StatusBar,
+  useColorScheme,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import {WebView} from 'react-native-webview';
 // 以下工具函数用于 WebView 登录流程
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -24,7 +25,7 @@ import {
   showTencentCaptcha,
   // getTencentCaptchaAppId, autoHandleTencentCaptcha - 用于 WebView 登录流程
 } from '../services/webview';
-import {getSavedCredentials, saveCredentials} from '../utils/storage';
+import {saveCredentials} from '../utils/storage';
 import {recognizeCaptcha} from '../services/captchaRecognizer';
 import {recognizeCaptchaWithFreeOCR} from '../services/captchaRecognizerLocal';
 import {
@@ -38,18 +39,26 @@ import CaptchaScreen from './CaptchaScreen';
 
 interface LoginScreenProps {
   onLoginSuccess?: () => void;
+  initialCredentials?: {
+    username: string;
+    password: string;
+    remember: boolean;
+  } | null;
 }
 
-const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess}) => {
+const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredentials}) => {
   const navigation = useNavigation<any>();
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+  const colorScheme = useColorScheme();
+  const isDarkMode = colorScheme === 'dark';
+  // 使用预加载的凭据作为初始值，避免异步加载导致闪烁
+  const [username, setUsername] = useState(initialCredentials?.username || '');
+  const [password, setPassword] = useState(initialCredentials?.password || '');
   const [captcha, setCaptcha] = useState('');
   const [captchaImage, setCaptchaImage] = useState<string | null>(null);
   const [showCaptcha, setShowCaptcha] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showWebView, setShowWebView] = useState(false);
-  const [rememberPassword, setRememberPassword] = useState(false);
+  const [rememberPassword, setRememberPassword] = useState(initialCredentials?.remember || false);
   const autoRecognize = true; // 始终自动识别验证码
   const [recognizing, setRecognizing] = useState(false); // 正在识别验证码
   const [tencentCaptchaTicket, setTencentCaptchaTicket] = useState<string | null>(null); // 腾讯验证码 ticket
@@ -61,10 +70,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess}) => {
   const [loginRetryCount, setLoginRetryCount] = useState(0); // 登录重试次数
   const webViewRef = useRef<WebView>(null);
 
-  useEffect(() => {
-    // 从本地缓存加载保存的账号密码
-    loadSavedCredentials();
-  }, []);
+  // 不再需要在组件内部加载凭据，因为已通过 props 传入
 
   // 当处于加载状态时，设置超时自动重置，避免卡死
   useEffect(() => {
@@ -82,22 +88,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess}) => {
     };
   }, [loading]);
 
-  const loadSavedCredentials = async () => {
-    try {
-      const credentials = await getSavedCredentials();
-      if (credentials.username) {
-        setUsername(credentials.username);
-      }
-      if (credentials.remember && credentials.password) {
-        setPassword(credentials.password);
-        setRememberPassword(true);
-      } else {
-        setRememberPassword(false);
-      }
-  } catch (_error) {
-      console.error('Load saved credentials error:', _error);
-    }
-  };
+  // 移除 loadSavedCredentials 函数，凭据已通过 props 传入
 
   const handleSaveCredentials = async () => {
     try {
@@ -997,9 +988,15 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess}) => {
     </Modal>
     );
 
+
+
   // 不再需要 WebView 界面，直接使用主登录界面和 API 登录
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
+      <StatusBar
+        barStyle={isDarkMode ? 'light-content' : 'dark-content'}
+        backgroundColor={isDarkMode ? '#000' : '#fff'}
+      />
       {renderCaptchaModal()}
       <View style={styles.content}>
         <Text style={styles.title}>水木社区</Text>
@@ -1074,7 +1071,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess}) => {
           )}
         </TouchableOpacity>
       </View>
-    </SafeAreaView>
+    </View>
   );
 };
 

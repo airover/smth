@@ -6,7 +6,6 @@ import {
   FlatList,
   TouchableOpacity,
   ActivityIndicator,
-  SafeAreaView,
   TextInput,
   RefreshControl,
 } from 'react-native';
@@ -476,7 +475,7 @@ const SearchScreen: React.FC = () => {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       {/* Tab切换 */}
       <View style={styles.tabContainer}>
         <TouchableOpacity
@@ -551,7 +550,7 @@ const SearchScreen: React.FC = () => {
           )}
         </>
       )}
-    </SafeAreaView>
+    </View>
   );
 };
 

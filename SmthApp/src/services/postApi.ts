@@ -133,8 +133,11 @@ export const createPost = async (params: PostParams): Promise<PostResponse> => {
     logRequest.success(API_URL, result);
 
     // 判断成功
-    // 根据水木社区API，通常code为0或1表示成功
-    if (result.code === 0 || result.code === 1 || result.success === true) {
+    // 根据水木社区API响应格式：
+    // - code: 0 表示HTTP请求成功
+    // - kbsCode: 0 表示业务逻辑成功，非0表示业务失败
+    // - 需要同时检查 kbsCode 来判断真正的成功/失败
+    if ((result.code === 0 || result.code === 1) && (result.kbsCode === 0 || result.kbsCode === undefined)) {
       return {
         code: 1,
         message: result.message || '发帖成功',
@@ -145,6 +148,7 @@ export const createPost = async (params: PostParams): Promise<PostResponse> => {
       if (result.message && result.message.includes('验证码')) {
         throw new Error('需要验证码，请在网页版完成验证后重试');
       }
+      // 返回具体的错误信息
       throw new Error(result.message || result.error || '发帖失败');
     }
   } catch (error: any) {
@@ -156,14 +160,113 @@ export const createPost = async (params: PostParams): Promise<PostResponse> => {
 /**
  * 回复帖子
  * 
- * @param params 回复参数（包含reId）
+ * 基于用户提供的 curl 命令实现：
+ * - URL: https://wap.newsmth.net/wap/api/topic/reply
+ * - 参数: articleId, body, captcha_id 等
+ * 
+ * @param params 回复参数（包含reId作为articleId）
  * @returns 回复响应
  */
 export const replyPost = async (params: PostParams): Promise<PostResponse> => {
-  if (!params.reId) {
-    throw new Error('缺少回复目标ID');
+  try {
+    const API_URL = 'https://wap.newsmth.net/wap/api/topic/reply';
+
+    if (!params.reId) {
+      throw new Error('缺少回复目标ID');
+    }
+
+    // 获取登录凭证
+    const cookies = await AsyncStorage.getItem('cookies');
+    if (!cookies) {
+      throw new Error('未登录，请先登录');
+    }
+
+    // 构建请求头
+    const headers: Record<string, string> = {
+      Accept: 'application/json, text/plain, */*',
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Cookie: cookies,
+      Authorization: 'Basic Og==',
+      Origin: 'https://wap.newsmth.net',
+      // 构造 Referer
+      Referer: `https://wap.newsmth.net/article/${params.reId}?title=${encodeURIComponent(params.subject || '')}&from=board`,
+      'User-Agent':
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
+      'test-uin-only': '1',
+    };
+
+    // 构建Form Data
+    const timestamp = Date.now();
+    const formData = new URLSearchParams();
+    
+    // 关键参数：articleId
+    formData.append('articleId', params.reId);
+    formData.append('body', params.body);
+    formData.append('client', 'wap');
+    formData.append('t', String(timestamp));
+    formData.append('type', String(params.type || 3));
+    
+    // 添加验证码参数（如果有）
+    if (params.captchaParams) {
+      formData.append('captcha_id', params.captchaParams.captcha_id);
+      formData.append('lot_number', params.captchaParams.lot_number);
+      formData.append('captcha_output', params.captchaParams.captcha_output);
+      formData.append('pass_token', params.captchaParams.pass_token);
+      formData.append('gen_time', params.captchaParams.gen_time);
+    }
+
+    // 添加图片上传token（如果有）
+    if (params.uploadToken) {
+      formData.append('uploadToken', params.uploadToken);
+    }
+
+    logRequest.start(API_URL, 'POST');
+    logRequest.params({
+      articleId: params.reId,
+      body: params.body.substring(0, 50) + '...',
+      type: params.type || 3,
+    });
+
+    const response = await fetchWithRetry(API_URL, {
+      method: 'POST',
+      headers,
+      body: formData.toString(),
+    }, 20000);
+
+    // 处理HTTP错误
+    if (!response.ok) {
+      const errorText = await response.text();
+      logRequest.error(API_URL, new Error(`HTTP ${response.status}: ${errorText || '回复失败'}`));
+      throw new Error(`HTTP ${response.status}: ${errorText || '回复失败'}`);
+    }
+
+    const result = await response.json();
+
+    logRequest.success(API_URL, result);
+
+    // 判断成功
+    // 根据水木社区API响应格式：
+    // - code: 0 表示HTTP请求成功
+    // - kbsCode: 0 表示业务逻辑成功，非0表示业务失败
+    // - 需要同时检查 kbsCode 来判断真正的成功/失败
+    if ((result.code === 0 || result.code === 1) && (result.kbsCode === 0 || result.kbsCode === undefined)) {
+      return {
+        code: 1,
+        message: result.message || '回复成功',
+        data: result.data || result,
+      };
+    } else {
+      // 特别处理验证码错误
+      if (result.message && result.message.includes('验证码')) {
+        throw new Error('需要验证码，请在网页版完成验证后重试');
+      }
+      // 返回具体的错误信息
+      throw new Error(result.message || result.error || '回复失败');
+    }
+  } catch (error: any) {
+    console.error('回复错误:', error);
+    throw error;
   }
-  return createPost(params);
 };
 
 /**

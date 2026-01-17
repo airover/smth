@@ -5,14 +5,13 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   Alert,
   ScrollView,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  Modal,
   Image,
+  Modal,
   Keyboard,
 } from 'react-native';
 import {launchImageLibrary} from 'react-native-image-picker';
@@ -361,9 +360,9 @@ const CreatePostScreen: React.FC = () => {
 
   if (loadingDraft) {
     return (
-      <SafeAreaView style={styles.container}>
+      <View style={styles.container}>
         <ActivityIndicator size="large" color="#007AFF" style={{marginTop: 100}} />
-      </SafeAreaView>
+      </View>
     );
   }
 
@@ -418,7 +417,7 @@ const CreatePostScreen: React.FC = () => {
   );
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       {renderCaptchaModal()}
       {renderImageSourceModal()}
       <KeyboardAvoidingView
@@ -559,7 +558,7 @@ const CreatePostScreen: React.FC = () => {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </View>
   );
 };
 

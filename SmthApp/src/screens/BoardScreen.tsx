@@ -7,7 +7,6 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  SafeAreaView,
   Modal,
   TextInput,
   Animated,
@@ -1662,11 +1661,11 @@ const BoardScreen: React.FC = () => {
 
   if (loading) {
     return (
-      <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
+      <View style={[styles.container, {backgroundColor: theme.background}]}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={theme.primary} />
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
@@ -1838,7 +1837,7 @@ const BoardScreen: React.FC = () => {
   };
 
   return (
-    <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
+    <View style={[styles.container, {backgroundColor: theme.background}]}>
       {renderChannelsList()}
       {renderSearchBar()}
       <View style={{flex: 1}} {...channelSwipeResponder.panHandlers}>
@@ -1964,7 +1963,7 @@ const BoardScreen: React.FC = () => {
 
       {/* 浮动按钮菜单 - 仅在查看版面帖子时显示，查看频道时隐藏 */}
       {!selectedChannel && renderFabMenu()}
-    </SafeAreaView>
+    </View>
   );
 };
 

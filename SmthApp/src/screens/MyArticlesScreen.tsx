@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  SafeAreaView,
   ActivityIndicator,
   RefreshControl,
   FlatList,
@@ -318,7 +317,7 @@ const MyArticlesScreen: React.FC = () => {
   const currentData = activeTab === 0 ? articles : replies;
 
   return (
-    <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
+    <View style={[styles.container, {backgroundColor: theme.background}]}>
       {/* Tab切换栏 - 横向滚动胶囊样式 */}
       <View style={[styles.tabContainer, {backgroundColor: theme.cardBackground, borderBottomColor: theme.border}]}>
         <TouchableOpacity
@@ -383,10 +382,9 @@ const MyArticlesScreen: React.FC = () => {
           }
         />
       )}
-    </SafeAreaView>
+    </View>
   );
 };
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,

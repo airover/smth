@@ -5,7 +5,6 @@ import {
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
-  SafeAreaView,
   ScrollView,
   Alert,
   RefreshControl,
@@ -33,78 +32,123 @@ const SettingsScreen: React.FC = () => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
 
   useEffect(() => {
-    loadUserInfo();
+    loadUserInfo(false);
   }, []);
 
   // 页面获得焦点时重新加载用户信息
   useFocusEffect(
     useCallback(() => {
-      loadUserInfo();
+      loadUserInfo(false);
     }, [])
   );
 
-  const loadUserInfo = async () => {
+  const loadUserInfo = async (forceRefresh: boolean = false) => {
     try {
-      // 先从本地存储读取登录状态和用户名
+      // 先检查本地登录状态
       const loginStatus = await AsyncStorage.getItem('isLoggedIn');
-      const storedUsername = await AsyncStorage.getItem('username');
       const isStoredLoggedIn = loginStatus === 'true';
       
-      // 立即设置本地存储的状态
-      setIsLoggedIn(isStoredLoggedIn);
-      
-      if (isStoredLoggedIn && storedUsername) {
-        setUsername(storedUsername);
-        // 如果有本地用户名，先显示基本信息
-        setUser({
-          username: storedUsername,
-        });
-      } else {
-        // 如果未登录，清除状态
+      if (!isStoredLoggedIn) {
+        // 如果明确未登录，清除状态并返回
+        setIsLoggedIn(false);
         setUsername('');
         setUser(null);
-        // 如果明确未登录，就不需要继续请求API了
         setLoading(false);
         return;
       }
       
-      // 尝试从服务器获取用户信息
-      const userInfo = await getUserInfo();
+      // 已登录，调用 getUserInfo（利用其内部的缓存机制）
+      // getUserInfo 会自动处理：内存缓存 -> 持久化缓存 -> 服务器获取
+      // forceRefresh=true 时会跳过缓存直接从服务器获取
+      const userInfo = await getUserInfo(forceRefresh);
       console.log('SettingsScreen getUserInfo result:', userInfo);
       
       if (userInfo && userInfo.username) {
-        // 只有当 API 明确返回 isLoggedIn 为 true 时才更新为已登录
-        // 如果 API 返回 isLoggedIn 为 false，保持本地存储的状态
+        // 更新UI状态
+        setUser(userInfo);
+        setUsername(userInfo.username);
+        
+        // 根据 API 返回的 isLoggedIn 字段更新登录状态
         if (userInfo.isLoggedIn === true) {
-          setUser(userInfo);
-          setUsername(userInfo.username);
           setIsLoggedIn(true);
         } else if (userInfo.isLoggedIn === false) {
           // API 明确返回未登录，可能是 Cookie 过期
           setIsLoggedIn(false);
-          // 清除显示
           setUser(null);
           setUsername('');
         } else {
-          // isLoggedIn 未定义，保持本地状态不变
-          setUser(userInfo);
-          setUsername(userInfo.username);
+          // isLoggedIn 未定义，保持已登录状态（因为本地存储显示已登录）
+          setIsLoggedIn(true);
+        }
+      } else {
+        // API 返回 null，但本地显示已登录，保持登录状态
+        // 显示本地存储的用户名（如果有）
+        const storedUsername = await AsyncStorage.getItem('username');
+        if (storedUsername) {
+          setUsername(storedUsername);
+          setUser({username: storedUsername});
+          setIsLoggedIn(true);
+        } else {
+          // 没有任何用户信息，清除登录状态
+          setIsLoggedIn(false);
+          setUser(null);
+          setUsername('');
         }
       }
-      // 如果 API 返回 null，保持本地存储的状态不变
     } catch (error) {
       console.error('Load user info error:', error);
-      // 出错时保持本地存储的状态不变，不要清除登录状态
+      
+      // 出错时保持本地存储的状态不变（遵循项目规则）
+      try {
+        const storedUserInfo = await AsyncStorage.getItem('userInfo');
+        const storedUsername = await AsyncStorage.getItem('username');
+        
+        if (storedUserInfo) {
+          // 优先使用完整的用户信息缓存
+          const cachedUser = JSON.parse(storedUserInfo);
+          setUser(cachedUser);
+          setUsername(cachedUser.username);
+          setIsLoggedIn(true);
+        } else if (storedUsername) {
+          // 降级方案：只有用户名
+          setUsername(storedUsername);
+          setUser({username: storedUsername});
+          setIsLoggedIn(true);
+        }
+      } catch (e) {
+        console.error('恢复本地用户信息失败:', e);
+      }
+      
+      // 如果是下拉刷新导致的错误，抛出异常让上层处理
+      throw error;
     } finally {
       setLoading(false);
     }
   };
 
-  // 下拉刷新
+  // 下拉刷新 - 遵循项目规则：同步等待后台返回最新数据
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadUserInfo();
-    setRefreshing(false);
+    try {
+      // 使用 forceRefresh=true 强制从服务器获取最新数据
+      // 如果服务器返回失败，getUserInfo 会抛出异常，旧缓存不会被清除
+      await loadUserInfo(true);
+      
+      // 刷新成功
+      console.log('用户信息刷新成功');
+    } catch (error) {
+      console.error('Refresh user info error:', error);
+      
+      // 遵循项目规则：访问接口失败时不更新本地数据
+      // 给用户错误提示
+      Alert.alert(
+        '刷新失败',
+        error instanceof Error ? error.message : '网络请求失败，请稍后重试',
+        [{text: '确定'}]
+      );
+    } finally {
+      setRefreshing(false);
+    }
   }, []);
 
   const handleLogin = () => {
@@ -114,16 +158,16 @@ const SettingsScreen: React.FC = () => {
 
   if (loading) {
     return (
-      <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
+      <View style={[styles.container, {backgroundColor: theme.background}]}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={theme.primary} />
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
+    <View style={[styles.container, {backgroundColor: theme.background}]}>
       <ScrollView 
         style={styles.content}
         refreshControl={
@@ -279,7 +323,7 @@ const SettingsScreen: React.FC = () => {
         {/* 底部留白 */}
         <View style={{height: 40}} />
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 };
 

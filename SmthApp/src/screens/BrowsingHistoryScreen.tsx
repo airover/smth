@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  SafeAreaView,
   ActivityIndicator,
   Alert,
   RefreshControl,
@@ -190,16 +189,16 @@ const BrowsingHistoryScreen: React.FC = () => {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <View style={styles.container}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#007AFF" />
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       <SwipeListView
         data={history}
         renderItem={renderItem}
@@ -221,7 +220,7 @@ const BrowsingHistoryScreen: React.FC = () => {
           />
         }
       />
-    </SafeAreaView>
+    </View>
   );
 };
 

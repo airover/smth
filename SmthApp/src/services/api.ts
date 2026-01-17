@@ -460,8 +460,15 @@ const fetchUserInfoFromServer = async (): Promise<any> => {
 // 2. 内存缓存失效时，使用持久化缓存（AsyncStorage）
 // 3. 持久化缓存过期时，异步更新
 // 4. 无任何缓存时，同步获取
-export const getUserInfo = async (): Promise<any> => {
+// 5. forceRefresh=true 时，跳过缓存直接从服务器获取（用于下拉刷新）
+export const getUserInfo = async (forceRefresh: boolean = false): Promise<any> => {
   const now = Date.now();
+  
+  // 如果强制刷新，跳过所有缓存，直接从服务器获取
+  if (forceRefresh) {
+    console.log('getUserInfo: 强制刷新，跳过缓存直接从服务器获取');
+    return await fetchUserInfoFromServer();
+  }
   
   // 第一层：检查内存缓存（最快）
   if (userInfoCache && (now - userInfoCache.timestamp) < USER_INFO_CACHE_DURATION) {
@@ -1172,6 +1179,105 @@ export const likePost = async (
     }
   } catch (error) {
     console.error('Like post error:', error);
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : '操作失败'
+    };
+  }
+};
+
+// 点赞/扔鸡蛋（新版API）
+// API: POST https://wap.newsmth.net/wap/api/topic/addLike
+export const addLike = async (
+  topicId: string,
+  boardName: string,
+  score: number,
+  comment: string,
+  captchaParams?: {
+    captcha_id: string;
+    lot_number: string;
+    captcha_output: string;
+    pass_token: string;
+    gen_time: string;
+  }
+): Promise<{success: boolean; message?: string; data?: any}> => {
+  try {
+    const cookies = await getCookies();
+    
+    if (!cookies) {
+      return {
+        success: false,
+        message: '未登录，无法操作'
+      };
+    }
+    
+    const timestamp = Date.now();
+    const formData = new URLSearchParams();
+    formData.append('boardName', boardName);
+    formData.append('body', comment);
+    
+    // 添加验证码参数（如果有）
+    if (captchaParams) {
+      formData.append('captcha_id', captchaParams.captcha_id);
+      formData.append('captcha_output', captchaParams.captcha_output);
+    }
+    
+    formData.append('client', 'wap');
+    
+    // 继续添加验证码参数
+    if (captchaParams) {
+      formData.append('gen_time', captchaParams.gen_time);
+    }
+    
+    formData.append('id', topicId);
+    
+    // 继续添加验证码参数
+    if (captchaParams) {
+      formData.append('lot_number', captchaParams.lot_number);
+      formData.append('pass_token', captchaParams.pass_token);
+    }
+    
+    formData.append('score', score.toString());
+    formData.append('t', timestamp.toString());
+    
+    const headers = buildPostHeaders(
+      cookies,
+      'application/x-www-form-urlencoded',
+      `https://wap.newsmth.net/article/${topicId}?title=${encodeURIComponent(boardName)}&from=board`
+    );
+    
+    const url = `${WAP_BASE_URL}/wap/api/topic/addLike`;
+    console.log('点赞/扔鸡蛋 URL:', url);
+    console.log('点赞/扔鸡蛋参数:', {topicId, boardName, score, comment});
+    console.log('点赞/扔鸡蛋验证码参数:', captchaParams);
+    console.log('点赞/扔鸡蛋请求体:', formData.toString());
+    console.log('点赞/扔鸡蛋headers:', headers);
+    
+    const response = await fetchWithRetry(url, {
+      method: 'POST',
+      headers,
+      body: formData.toString(),
+      credentials: 'include',
+    }, DEFAULT_TIMEOUT);
+    
+    const json = await response.json();
+    console.log('点赞/扔鸡蛋响应:', json);
+    
+    // 检查 code 和 kbsCode
+    if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
+      return {
+        success: true,
+        message: json.message || '操作成功',
+        data: json.data
+      };
+    } else {
+      return {
+        success: false,
+        message: json.message || '操作失败'
+      };
+    }
+  } catch (error) {
+    console.error('Add like error:', error);
     return {
       success: false,
       message: error instanceof Error ? error.message : '操作失败'
