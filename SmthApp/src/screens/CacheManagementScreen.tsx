@@ -33,7 +33,9 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
-} from 'react-native';import {getCacheStats, clearCache} from '../services/cacheManager';
+  RefreshControl,
+} from 'react-native';
+import {getCacheStats, clearCache} from '../services/cacheManager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   SPACING,
@@ -532,7 +534,3 @@ const styles = StyleSheet.create({
 });
 
 export default CacheManagementScreen;
-
-
-
-

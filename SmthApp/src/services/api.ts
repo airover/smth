@@ -276,43 +276,17 @@ export const login = async (
   }
 };
 
-// 获取验证码图片
-export const getCaptchaImage = async (): Promise<string | null> => {
-  try {
-    const timestamp = new Date().getTime();
-    const captchaUrl = `https://wap.newsmth.net/bbsimg/captcha.png?t=${timestamp}`;
-    return captchaUrl;
-  } catch (error) {
-    console.error('Get captcha image error:', error);
-    return null;
-  }
-};
+
 
 // 重新导出数据获取函数（使用新的实现）
-export {getTopTen, getHotPosts, getHotBoards, getBoards, getSubBoards, getBoardPosts, getPostDetail, getTopicReplies, getFavoriteBoards, getMessages, getConversationMessages, markMessageAsRead, sendMessage, fetchUserInfo} from './dataFetcher';
+export {getTopTen, getHotPosts, getHotBoards, getBoards, getSubBoards, getBoardPosts, getPostDetail, getTopicReplies, getFavoriteBoards, getMessages, getConversationMessages, markMessageAsRead, sendMessage, addFriend, removeFriend, checkIsHerBlack, addBlack, getFriendsList, getBlackList, fetchUserInfo} from './dataFetcher';
 
 // 获取收藏版面（已移至 dataFetcher，此处保留类型定义兼容性，如果需要的话可以删除）
 // export const getFavoriteBoards = async (): Promise<any[]> => { ... };
 
-// 保存收藏版面（暂不支持在线保存，此处仅作占位）
-export const saveFavoriteBoard = async (_board: any) => {
-  console.log('Save favorite board not implemented for online API yet');
-};
+
 
 // getBoardPosts 和 getPostDetail 已从 dataFetcher 导出
-
-// 获取信箱
-export const getMails = async (): Promise<any[]> => {
-  try {
-    const response = await request('/nForum/mail');
-    await response.text();
-    // TODO: 解析HTML获取信箱
-    return [];
-  } catch (error) {
-    console.error('Get mails error:', error);
-    return [];
-  }
-};
 
 // 用户信息缓存（内存缓存）
 let userInfoCache: {data: any; timestamp: number} | null = null;
@@ -341,7 +315,7 @@ const fetchUserInfoFromServer = async (): Promise<any> => {
     });
     
     const json = await response.json();
-    console.log('getUserInfo API response:', JSON.stringify(json).substring(0, 200));
+    console.log('getUserInfo API response:', json);
     
     // 检查响应格式: {code: 1, data: {account: {...}, title: "..."}}
     if (json.code === 1 && json.data?.account) {
@@ -695,18 +669,6 @@ export const searchAccounts = async (
   }
 };
 
-// 检查登录状态
-// 通过调用 profile API 来验证当前 Cookie 是否有效
-export const checkLoginStatus = async (): Promise<boolean> => {
-  try {
-    const userInfo = await getUserInfo();
-    return userInfo !== null && userInfo.isLoggedIn === true;
-  } catch (error) {
-    console.error('Check login status error:', error);
-    return false;
-  }
-};
-
 // 删除帖子
 // API: DELETE https://wap.newsmth.net/wap/api/topic/delete/article/{postId}
 export const deletePost = async (postId: string, title?: string, board?: string): Promise<{success: boolean; message?: string}> => {
@@ -903,27 +865,46 @@ export const getMyArticles = async (
     console.log('getMyArticles response:', JSON.stringify(json).substring(0, 500));
     
     if (json.code === 1 && json.data) {
-      const articles = (json.data.articles || []).map((article: any) => ({
-        id: article.id,
-        title: article.title,
-        board: article.board,
-        boardName: article.boardName || article.board,
-        author: article.author,
-        time: article.time,
-        replyCount: article.replyCount,
-        content: article.content,
-        topicId: article.topicId,
-      }));
+      const articles = (json.data.articles || []).map((article: any) => {
+        // 处理 board 字段：如果是对象则提取 name 字段，否则直接使用
+        const boardObj = article.board;
+        const isObject = typeof boardObj === 'object' && boardObj !== null;
+        const boardValue = isObject ? (boardObj.name || boardObj.id || '') : (boardObj || '');
+        const boardNameValue = isObject 
+          ? (boardObj.title || boardObj.name || boardObj.id || '') 
+          : (article.boardName || boardObj || '');
+        
+        // 处理内容字段：帖子用 content，回复用 body
+        const contentValue = article.content || article.body || '';
+        
+        // 处理时间字段：帖子用 time，回复用 postTime
+        const timeValue = article.time || article.postTime;
+        
+        return {
+          id: article.id,
+          title: article.title,
+          board: boardValue,
+          boardName: boardNameValue,
+          author: article.author,
+          time: timeValue,
+          replyCount: article.replyCount,
+          content: contentValue,
+          topicId: article.topicId,
+        };
+      });
       
       const pager = json.data.pager || {};
-      const total = pager.total || 0;
+      const totalPages = pager.total || 0; // 总页数
       const pageSize = pager.size || 20;
       const currentPage = pager.page || page;
-      const hasMore = currentPage * pageSize < total;
+      const itemsCount = pager.items || 0; // 当前页实际帖子/回复数
+      
+      // 判断是否还有更多：当前页 < 总页数
+      const hasMore = currentPage < totalPages;
       
       return {
         articles,
-        total,
+        total: itemsCount, // 直接使用当前页的帖子/回复数
         hasMore,
         page: currentPage,
         pageSize,
@@ -1122,69 +1103,7 @@ export const removeFavoriteTopic = async (
   }
 };
 
-// 点赞/点踩帖子
-// API: POST https://wap.newsmth.net/wap/api/article/like
-export const likePost = async (
-  articleId: string,
-  score: number,
-  comment: string = ''
-): Promise<{success: boolean; message?: string}> => {
-  try {
-    const cookies = await getCookies();
-    
-    if (!cookies) {
-      return {
-        success: false,
-        message: '未登录，无法操作'
-      };
-    }
-    
-    const timestamp = Date.now();
-    const formData = new URLSearchParams();
-    formData.append('id', articleId);
-    formData.append('score', score.toString());
-    formData.append('body', comment);
-    formData.append('t', timestamp.toString());
-    
-    const headers = buildPostHeaders(
-      cookies,
-      'application/x-www-form-urlencoded',
-      `https://wap.newsmth.net/article/${articleId}`
-    );
-    
-    const url = `${WAP_BASE_URL}/wap/api/article/like`;
-    console.log('点赞/点踩 URL:', url);
-    console.log('点赞/点踩参数:', {articleId, score, comment});
-    
-    const response = await fetchWithRetry(url, {
-      method: 'POST',
-      headers,
-      body: formData.toString(),
-      credentials: 'include',
-    }, DEFAULT_TIMEOUT);
-    
-    const json = await response.json();
-    console.log('点赞/点踩响应:', json);
-    
-    if (json.code === 1) {
-      return {
-        success: true,
-        message: json.message || '操作成功'
-      };
-    } else {
-      return {
-        success: false,
-        message: json.message || '操作失败'
-      };
-    }
-  } catch (error) {
-    console.error('Like post error:', error);
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : '操作失败'
-    };
-  }
-};
+
 
 // 点赞/扔鸡蛋（新版API）
 // API: POST https://wap.newsmth.net/wap/api/topic/addLike

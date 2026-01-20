@@ -10,6 +10,7 @@ import {
   buildPostHeaders,
   buildDeleteHeaders,
 } from '../utils/requestUtils';
+import {setCache, getCacheWithTimestamp} from './cacheManager';
 
 const WAP_BASE_URL = 'https://wap.newsmth.net';
 
@@ -811,7 +812,6 @@ export const fetchUserInfo = async (username: string): Promise<any> => {
     });
 
     const text = await response.text();
-    console.log('fetchUserInfo raw response:', text.substring(0, 300));
     
     let json;
     try {
@@ -821,7 +821,7 @@ export const fetchUserInfo = async (username: string): Promise<any> => {
       return null;
     }
     
-    console.log('fetchUserInfo API response code:', json.code);
+    console.log('fetchUserInfo raw response:', json);
 
     if (json.code === 1 && json.data && json.data.account) {
       const account = json.data.account;
@@ -1176,6 +1176,350 @@ export const sendMessage = async (
   }
 };
 
+// 关注用户（添加好友）
+// API: POST https://wap.newsmth.net/wap/api/profile/add/friend/{userId}
+// 响应: {"code":1,"kbsCode":0,"message":"操作成功"}
+export const addFriend = async (
+  userId: string
+): Promise<{success: boolean, message?: string}> => {
+  try {
+    const cookies = await getCookies();
+    
+    if (!cookies) {
+      console.error('addFriend: 未登录，无Cookie');
+      return {success: false, message: '请先登录'};
+    }
+    
+    const url = `${WAP_BASE_URL}/wap/api/profile/add/friend/${userId}`;
+    
+    console.log('Adding friend:', userId);
+    
+    const headers = buildPostHeaders(
+      cookies,
+      'application/x-www-form-urlencoded',
+      `https://wap.newsmth.net/account/${userId}`
+    );
+
+    const response = await fetchWithRetry(url, {
+      method: 'POST',
+      headers,
+      body: '',
+      credentials: 'include',
+    }, DEFAULT_TIMEOUT);
+    
+    if (response.status === 401 || response.status === 403) {
+      console.error('addFriend: Cookie已过期或无权限');
+      await AsyncStorage.removeItem('isLoggedIn');
+      await AsyncStorage.removeItem('cookies');
+      throw new Error('LOGIN_EXPIRED');
+    }
+
+    const json = await response.json();
+    console.log('addFriend API response:', json);
+    
+    // 检查 code 和 kbsCode
+    if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
+      return {success: true, message: json.message || '关注成功'};
+    }
+    
+    return {success: false, message: json.message || '关注失败'};
+  } catch (error: any) {
+    console.error('Add friend error:', error);
+    if (error.message === 'LOGIN_EXPIRED') {
+      throw error;
+    }
+    return {success: false, message: '关注失败'};
+  }
+};
+
+// 取消关注用户
+// API: DELETE https://wap.newsmth.net/wap/api/profile/remove/friend/{userId}
+// 响应: {"code":1,"kbsCode":0,"message":"操作成功"}
+export const removeFriend = async (
+  userId: string
+): Promise<{success: boolean, message?: string}> => {
+  try {
+    const cookies = await getCookies();
+    
+    if (!cookies) {
+      console.error('removeFriend: 未登录，无Cookie');
+      return {success: false, message: '请先登录'};
+    }
+    
+    const url = `${WAP_BASE_URL}/wap/api/profile/remove/friend/${userId}`;
+    
+    console.log('Removing friend:', userId);
+    
+    const headers = buildDeleteHeaders(
+      cookies,
+      `https://wap.newsmth.net/account/${userId}`
+    );
+
+    const response = await fetchWithRetry(url, {
+      method: 'DELETE',
+      headers,
+      body: '',
+      credentials: 'include',
+    }, DEFAULT_TIMEOUT);
+    
+    if (response.status === 401 || response.status === 403) {
+      console.error('removeFriend: Cookie已过期或无权限');
+      await AsyncStorage.removeItem('isLoggedIn');
+      await AsyncStorage.removeItem('cookies');
+      throw new Error('LOGIN_EXPIRED');
+    }
+
+    const json = await response.json();
+    console.log('removeFriend API response:', json);
+    
+    // 检查 code 和 kbsCode
+    if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
+      return {success: true, message: json.message || '取消关注成功'};
+    }
+    
+    return {success: false, message: json.message || '取消关注失败'};
+  } catch (error: any) {
+    console.error('Remove friend error:', error);
+    if (error.message === 'LOGIN_EXPIRED') {
+      throw error;
+    }
+    return {success: false, message: '取消关注失败'};
+  }
+};
+
+// 检查是否被对方拉黑
+// API: POST https://wap.newsmth.net/wap/api/black/isherblack
+// Body: accountid={userId}&t={timestamp}
+// 响应: {"code":1,"data":false,"kbsCode":0,"message":"操作成功"}
+// data为true表示被对方拉黑，false表示未被拉黑
+export const checkIsHerBlack = async (
+  userId: string
+): Promise<{success: boolean, isBlack: boolean, message?: string}> => {
+  try {
+    const cookies = await getCookies();
+    
+    if (!cookies) {
+      console.error('checkIsHerBlack: 未登录，无Cookie');
+      return {success: false, isBlack: false, message: '请先登录'};
+    }
+    
+    const timestamp = Date.now();
+    const url = `${WAP_BASE_URL}/wap/api/black/isherblack`;
+    
+    // 构造表单数据
+    const formData = new URLSearchParams();
+    formData.append('accountid', userId);
+    formData.append('t', timestamp.toString());
+    
+    console.log('Checking if blocked by user:', userId);
+    
+    const headers = buildPostHeaders(
+      cookies,
+      'application/x-www-form-urlencoded',
+      `https://wap.newsmth.net/account/${userId}`
+    );
+
+    const response = await fetchWithRetry(url, {
+      method: 'POST',
+      headers,
+      body: formData.toString(),
+      credentials: 'include',
+    }, DEFAULT_TIMEOUT);
+    
+    if (response.status === 401 || response.status === 403) {
+      console.error('checkIsHerBlack: Cookie已过期或无权限');
+      await AsyncStorage.removeItem('isLoggedIn');
+      await AsyncStorage.removeItem('cookies');
+      throw new Error('LOGIN_EXPIRED');
+    }
+
+    const json = await response.json();
+    console.log('checkIsHerBlack API response:', json);
+    
+    // 检查 code 和 kbsCode
+    if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
+      const isBlack = json.data === true;
+      return {
+        success: true, 
+        isBlack, 
+        message: json.message || (isBlack ? '对方已将您拉黑' : '未被拉黑')
+      };
+    }
+    
+    return {success: false, isBlack: false, message: json.message || '检查失败'};
+  } catch (error: any) {
+    console.error('Check is her black error:', error);
+    if (error.message === 'LOGIN_EXPIRED') {
+      throw error;
+    }
+    return {success: false, isBlack: false, message: '检查失败'};
+  }
+};
+
+// 拉黑用户
+// API: POST https://wap.newsmth.net/wap/api/black/addblack
+// 请求参数: accountid={userId}&t={timestamp}
+// 响应: {"code":1,"data":true,"kbsCode":0,"message":"操作成功"}
+export const addBlack = async (
+  userId: string
+): Promise<{success: boolean, message?: string}> => {
+  try {
+    const cookies = await getCookies();
+    
+    if (!cookies) {
+      console.error('addBlack: 未登录，无Cookie');
+      return {success: false, message: '请先登录'};
+    }
+    
+    const timestamp = Date.now();
+    const url = `${WAP_BASE_URL}/wap/api/black/addblack`;
+    
+    // 构造表单数据
+    const formData = new URLSearchParams();
+    formData.append('accountid', userId);
+    formData.append('t', timestamp.toString());
+    
+    console.log('Adding user to blacklist:', userId);
+    
+    const headers = buildPostHeaders(
+      cookies,
+      'application/x-www-form-urlencoded',
+      `https://wap.newsmth.net/account/${userId}`
+    );
+
+    const response = await fetchWithRetry(url, {
+      method: 'POST',
+      headers,
+      body: formData.toString(),
+      credentials: 'include',
+    }, DEFAULT_TIMEOUT);
+    
+    if (response.status === 401 || response.status === 403) {
+      console.error('addBlack: Cookie已过期或无权限');
+      await AsyncStorage.removeItem('isLoggedIn');
+      await AsyncStorage.removeItem('cookies');
+      throw new Error('LOGIN_EXPIRED');
+    }
+
+    const json = await response.json();
+    console.log('addBlack API response:', json);
+    
+    // 检查 code 和 kbsCode
+    if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
+      return {success: true, message: json.message || '拉黑成功'};
+    }
+    
+    return {success: false, message: json.message || '拉黑失败'};
+  } catch (error: any) {
+    console.error('Add black error:', error);
+    if (error.message === 'LOGIN_EXPIRED') {
+      throw error;
+    }
+    return {success: false, message: '拉黑失败'};
+  }
+};
+
+// 获取关注用户列表
+// API: GET https://wap.newsmth.net/wap/api/account/friends/{username}
+// 响应: {"code":1,"data":{"pager":{...},"account":{...},"friends":[...]},"kbsCode":0,"message":"操作成功"}
+export const getFriendsList = async (
+  username: string,
+  page: number = 1,
+  forceRefresh: boolean = false
+): Promise<{success: boolean, friends: string[], message?: string}> => {
+  try {
+    const cookies = await getCookies();
+    
+    if (!cookies) {
+      console.error('getFriendsList: 未登录，无Cookie');
+      return {success: false, friends: [], message: '请先登录'};
+    }
+    
+    const cacheKey = `${username}_${page}`;
+    
+    // 如果不是强制刷新，先尝试从缓存获取
+    if (!forceRefresh) {
+      const cachedData = getCacheWithTimestamp<string[]>('friendsList', cacheKey);
+      if (cachedData) {
+        console.log('getFriendsList: Using cached data for', username, 'page', page, 'age:', Math.floor((Date.now() - cachedData.timestamp) / 1000), 's');
+        
+        // 异步更新缓存
+        fetchFriendsListFromAPI(username, page, cookies, cacheKey).catch(err => {
+          console.error('Background update friends list error:', err);
+        });
+        
+        return {success: true, friends: cachedData.data, message: '获取成功'};
+      }
+    }
+    
+    // 没有缓存或强制刷新，从API获取
+    return await fetchFriendsListFromAPI(username, page, cookies, cacheKey);
+  } catch (error: any) {
+    console.error('Get friends list error:', error);
+    if (error.message === 'LOGIN_EXPIRED') {
+      throw error;
+    }
+    return {success: false, friends: [], message: '获取失败'};
+  }
+};
+
+// 从API获取关注列表的内部函数
+const fetchFriendsListFromAPI = async (
+  username: string,
+  page: number,
+  cookies: string,
+  cacheKey: string
+): Promise<{success: boolean, friends: string[], message?: string}> => {
+  const url = `${WAP_BASE_URL}/wap/api/account/friends/${username}?page=${page}`;
+  
+  console.log('Fetching friends list from API:', username, 'page', page);
+  
+  const headers = buildGetHeaders(cookies);
+
+  const response = await fetchWithRetry(url, {
+    method: 'GET',
+    headers,
+    credentials: 'include',
+  }, DEFAULT_TIMEOUT);
+  
+  if (response.status === 401 || response.status === 403) {
+    console.error('getFriendsList: Cookie已过期或无权限');
+    await AsyncStorage.removeItem('isLoggedIn');
+    await AsyncStorage.removeItem('cookies');
+    throw new Error('LOGIN_EXPIRED');
+  }
+
+  const json = await response.json();
+  console.log('getFriendsList API response:', json);
+  
+  // 检查 code 和 kbsCode
+  if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
+    const friendIds: string[] = [];
+    
+    // 提取所有关注用户的ID
+    if (json.data?.friends && Array.isArray(json.data.friends)) {
+      json.data.friends.forEach((item: any) => {
+        if (item.friend?.id) {
+          friendIds.push(item.friend.id);
+        }
+        // 也保存用户名，方便查询
+        if (item.friend?.name) {
+          friendIds.push(item.friend.name);
+        }
+      });
+    }
+    
+    console.log('getFriendsList: Found', friendIds.length / 2, 'friends');
+    
+    // 保存到缓存
+    setCache('friendsList', cacheKey, friendIds);
+    
+    return {success: true, friends: friendIds, message: json.message || '获取成功'};
+  }
+  
+  return {success: false, friends: [], message: json.message || '获取失败'};
+};
+
 // 获取站内私信列表
 // API: GET https://wap.newsmth.net/wap/api/message/conversations?t={timestamp}&page={page}
 export const getMessages = async (_page: number = 0): Promise<Mail[]> => {
@@ -1463,4 +1807,111 @@ export const getFavoriteTopics = async (
     
     throw new Error('获取收藏文章失败');
   }
+};
+
+// 获取黑名单列表
+// API: GET https://wap.newsmth.net/wap/api/black/blacklist
+export const getBlackList = async (
+  forceRefresh: boolean = false
+): Promise<{success: boolean, blacklist: any[], message?: string}> => {
+  try {
+    const cookies = await getCookies();
+    
+    if (!cookies) {
+      console.error('getBlackList: 未登录，无Cookie');
+      return {success: false, blacklist: [], message: '请先登录'};
+    }
+    
+    const cacheKey = 'current_user_blacklist';
+    
+    // 如果不是强制刷新，先尝试从缓存获取
+    if (!forceRefresh) {
+      const cachedData = getCacheWithTimestamp<any[]>('blackList', cacheKey);
+      if (cachedData) {
+        console.log('getBlackList: Using cached data, age:', Math.floor((Date.now() - cachedData.timestamp) / 1000), 's');
+        
+        // 异步更新缓存
+        fetchBlackListFromAPI(cookies, cacheKey).catch(err => {
+          console.error('Background update blacklist error:', err);
+        });
+        
+        return {success: true, blacklist: cachedData.data, message: '获取成功'};
+      }
+    }
+    
+    // 没有缓存或强制刷新，从API获取
+    return await fetchBlackListFromAPI(cookies, cacheKey);
+  } catch (error: any) {
+    console.error('Get blacklist error:', error);
+    if (error.message === 'LOGIN_EXPIRED') {
+      throw error;
+    }
+    return {success: false, blacklist: [], message: '获取失败'};
+  }
+};
+
+// 从API获取黑名单列表的内部函数
+const fetchBlackListFromAPI = async (
+  cookies: string,
+  cacheKey: string
+): Promise<{success: boolean, blacklist: any[], message?: string}> => {
+  const url = `${WAP_BASE_URL}/wap/api/black/blacklist`;
+  
+  console.log('Fetching blacklist from API');
+  
+  const headers = buildGetHeaders(cookies);
+
+  const response = await fetchWithRetry(url, {
+    method: 'GET',
+    headers,
+    credentials: 'include',
+  }, DEFAULT_TIMEOUT);
+  
+  if (response.status === 401 || response.status === 403) {
+    console.error('getBlackList: Cookie已过期或无权限');
+    await AsyncStorage.removeItem('isLoggedIn');
+    await AsyncStorage.removeItem('cookies');
+    throw new Error('LOGIN_EXPIRED');
+  }
+
+  const json = await response.json();
+  console.log('getBlackList API response:', {
+    code: json.code,
+    kbsCode: json.kbsCode,
+    message: json.message,
+    dataLength: json.data?.length
+  });
+  
+  // 检查 code 和 kbsCode
+  if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
+    const blacklist: any[] = [];
+    
+    // 提取所有黑名单用户信息
+    if (json.data && Array.isArray(json.data)) {
+      json.data.forEach((item: any) => {
+        if (item.blackAccount) {
+          blacklist.push({
+            id: item.blackAccount.id,
+            username: item.blackAccount.name,
+            nickname: item.blackAccount.nick,
+            avatar: item.blackAccount.avatarUrl,
+            score: item.blackAccount.score,
+            level: item.blackAccount.level,
+            levelTitle: item.blackAccount.levelTitle,
+            createTime: item.createTime,
+            memo: item.memo,
+          });
+        }
+      });
+    }
+    
+    console.log('getBlackList: Found', blacklist.length, 'blocked users');
+    
+    // 保存到缓存
+    setCache('blackList', cacheKey, blacklist);
+    
+    return {success: true, blacklist, message: json.message || '获取成功'};
+  }
+  
+  return {success: false, blacklist: [], message: json.message || '获取失败'};
 };

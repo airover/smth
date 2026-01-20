@@ -260,7 +260,7 @@ const SettingsScreen: React.FC = () => {
           <View style={[styles.card, {backgroundColor: theme.cardBackground}]}>
             <TouchableOpacity 
               style={styles.menuItem}
-              onPress={() => Alert.alert('提示', '我的关注功能开发中')}>
+              onPress={() => navigation.navigate('MyFollowing')}>
               <View style={styles.menuItemLeft}>
                 <Text style={styles.menuIcon}>👥</Text>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>我的关注</Text>
@@ -280,7 +280,7 @@ const SettingsScreen: React.FC = () => {
             <View style={[styles.divider, {backgroundColor: theme.border}]} />
             <TouchableOpacity 
               style={styles.menuItem}
-              onPress={() => Alert.alert('提示', '黑名单功能开发中')}>
+              onPress={() => navigation.navigate('Blacklist')}>
               <View style={styles.menuItemLeft}>
                 <Text style={styles.menuIcon}>🚫</Text>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>黑名单</Text>

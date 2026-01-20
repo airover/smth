@@ -60,22 +60,22 @@ export const getTheme = (themeMode: AppSettings['themeMode']): ThemeColors => {
 export const getFontSizes = (fontSize: AppSettings['fontSize']) => {
   const baseSizes = {
     small: {
-      content: 14,
-      quote: 12,
-      lineHeight: 22,
-      quoteLineHeight: 18,
-    },
-    medium: {
       content: 16,
       quote: 14,
       lineHeight: 26,
       quoteLineHeight: 22,
     },
-    large: {
+    medium: {
       content: 18,
       quote: 16,
       lineHeight: 30,
       quoteLineHeight: 26,
+    },
+    large: {
+      content: 20,
+      quote: 18,
+      lineHeight: 34,
+      quoteLineHeight: 30,
     },
   };
 

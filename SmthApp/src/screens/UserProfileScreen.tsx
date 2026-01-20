@@ -15,9 +15,10 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  ActionSheetIOS,
 } from 'react-native';
 import {useRoute, useNavigation} from '@react-navigation/native';
-import {getUserInfo, fetchUserInfo, sendMessage} from '../services/api';
+import {getUserInfo, fetchUserInfo, sendMessage, addBlack, addFriend, removeFriend, checkIsHerBlack, getFriendsList} from '../services/api';
 import {User} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
@@ -85,6 +86,8 @@ const UserProfileScreen: React.FC = () => {
   const [messageSubject, setMessageSubject] = useState('');
   const [messageBody, setMessageBody] = useState('');
   const [sendingMessage, setSendingMessage] = useState(false);
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [followingLoading, setFollowingLoading] = useState(false);
 
   const checkAndLoadUserInfo = async () => {
     try {
@@ -101,9 +104,180 @@ const UserProfileScreen: React.FC = () => {
         }
       }
       
-      await loadUserInfo(isSelf);
+      const userInfo = await loadUserInfo(isSelf);
+      
+      // 如果是查看他人资料，检查关注状态
+      // 传入userInfo，因为此时user状态可能还没更新
+      if (!isSelf && username) {
+        await checkFollowingStatus(username, false, userInfo);
+      }
     } catch (err) {
       console.error('Check and load user info error:', err);
+    }
+  };
+
+  // 检查是否已关注该用户
+  // userInfo参数用于传入刚获取的用户信息，避免user状态未更新的问题
+  const checkFollowingStatus = async (targetUsername: string, forceRefresh: boolean = false, userInfo?: User | null) => {
+    try {
+      const currentUsername = await AsyncStorage.getItem('username');
+      if (!currentUsername) {
+        console.log('Not logged in, skip checking following status');
+        return;
+      }
+      
+      const result = await getFriendsList(currentUsername, 1, forceRefresh);
+      if (result.success && result.friends) {
+        // 检查目标用户的ID或用户名是否在关注列表中
+        // friends数组同时包含用户ID和用户名
+        // 优先使用传入的userInfo，其次使用user状态
+        const targetUserId = userInfo?.id || user?.id || '';
+        const isInList = result.friends.includes(targetUserId) || 
+                        result.friends.includes(targetUsername);
+        setIsFollowing(isInList);
+        console.log('Following status for', targetUsername, ':', isInList, 'userId:', targetUserId, 'friends:', result.friends);
+      }
+    } catch (error) {
+      console.error('Check following status error:', error);
+    }
+  };
+
+  // 处理拉黑用户
+  const handleBlockUser = async () => {
+    Alert.alert(
+      '确认拉黑',
+      `确定要拉黑 ${user?.username || username} 吗？拉黑后对方将无法关注您或给您发送消息。`,
+      [
+        {text: '取消', style: 'cancel'},
+        {
+          text: '确定',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const userId = user?.id || username || '';
+              const result = await addBlack(userId);
+              if (result.success) {
+                Alert.alert('成功', result.message || '拉黑成功');
+                // 拉黑成功后返回上一页
+                navigation.goBack();
+              } else {
+                Alert.alert('失败', result.message || '拉黑失败');
+              }
+            } catch (err: any) {
+              console.error('Block user error:', err);
+              if (err.message === 'LOGIN_EXPIRED') {
+                Alert.alert(
+                  '登录已过期',
+                  '请重新登录后操作',
+                  [
+                    {
+                      text: '去登录',
+                      onPress: () => navigation.navigate('Login' as never),
+                    },
+                    {text: '取消', style: 'cancel'},
+                  ]
+                );
+              } else {
+                Alert.alert('错误', '拉黑失败，请稍后重试');
+              }
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // 处理关注/取消关注
+  const handleFollowUser = async () => {
+    if (!user?.id && !username) {
+      Alert.alert('错误', '无法获取用户信息');
+      return;
+    }
+
+    const userId = user?.id || '';
+    const targetUsername = user?.username || username || '';
+
+    if (isFollowing) {
+      // 取消关注
+      Alert.alert(
+        '取消关注',
+        `确定要取消关注 ${targetUsername} 吗？`,
+        [
+          {text: '取消', style: 'cancel'},
+          {
+            text: '确定',
+            onPress: async () => {
+              try {
+                setFollowingLoading(true);
+                const result = await removeFriend(userId);
+                if (result.success) {
+                  setIsFollowing(false);
+                  Alert.alert('成功', result.message || '已取消关注');
+                  // 强制刷新关注列表缓存
+                  await checkFollowingStatus(targetUsername, true, user);
+                } else {
+                  Alert.alert('失败', result.message || '取消关注失败');
+                }
+              } catch (err: any) {
+                console.error('Unfollow error:', err);
+                if (err.message === 'LOGIN_EXPIRED') {
+                  Alert.alert(
+                    '登录已过期',
+                    '请重新登录后操作',
+                    [
+                      {text: '去登录', onPress: () => navigation.navigate('Login' as never)},
+                      {text: '取消', style: 'cancel'},
+                    ]
+                  );
+                } else {
+                  Alert.alert('错误', '取消关注失败，请稍后重试');
+                }
+              } finally {
+                setFollowingLoading(false);
+              }
+            },
+          },
+        ]
+      );
+    } else {
+      // 关注：先检查是否被对方拉黑
+      try {
+        setFollowingLoading(true);
+        
+        // 检查是否被对方拉黑
+        const blackResult = await checkIsHerBlack(userId);
+        if (blackResult.isBlack) {
+          Alert.alert('无法关注', '对方已将您拉黑，无法关注');
+          return;
+        }
+        
+        // 执行关注
+        const result = await addFriend(userId);
+        if (result.success) {
+          setIsFollowing(true);
+          Alert.alert('成功', result.message || '关注成功');
+          // 强制刷新关注列表缓存
+          await checkFollowingStatus(targetUsername, true, user);
+        } else {
+          Alert.alert('失败', result.message || '关注失败');
+        }
+      } catch (err: any) {
+        console.error('Follow error:', err);
+        if (err.message === 'LOGIN_EXPIRED') {
+          Alert.alert(
+            '登录已过期',
+            '请重新登录后操作',
+            [
+              {text: '去登录', onPress: () => navigation.navigate('Login' as never)},
+              {text: '取消', style: 'cancel'},
+            ]
+          );
+        } else {
+          Alert.alert('错误', '关注失败，请稍后重试');
+        }
+      } finally {
+        setFollowingLoading(false);
+      }
     }
   };
 
@@ -112,7 +286,7 @@ const UserProfileScreen: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [username]);
 
-  const loadUserInfo = async (isSelf: boolean = isCurrentUser, forceRefresh: boolean = false) => {
+  const loadUserInfo = async (isSelf: boolean = isCurrentUser, forceRefresh: boolean = false): Promise<User | null> => {
     try {
       setLoading(true);
       setError(null);
@@ -140,12 +314,14 @@ const UserProfileScreen: React.FC = () => {
                 console.log('UserProfileScreen: Background update for', username);
                 setUser(freshData);
                 setCache('otherUserInfo', username!, freshData);
+                // 使用新数据重新检查关注状态，确保状态同步
+                checkFollowingStatus(username!, false, freshData);
               }
             }).catch(err => {
               console.error('Background update error:', err);
             });
             
-            return;
+            return cachedData.data; // 返回缓存数据
           }
         }
         
@@ -162,12 +338,15 @@ const UserProfileScreen: React.FC = () => {
       if (userInfo) {
         setUser(userInfo);
         console.log('UserProfileScreen loaded:', userInfo.username, 'isSelf:', isSelf, 'posts:', userInfo.recentPosts?.length || 0);
+        return userInfo; // 返回用户信息
       } else {
         setError('无法加载用户信息');
+        return null;
       }
     } catch (err: any) {
       console.error('Load user info error:', err);
       setError(err.message || '加载失败');
+      return null;
     } finally {
       setLoading(false);
     }
@@ -176,7 +355,11 @@ const UserProfileScreen: React.FC = () => {
   const onRefresh = async () => {
     setRefreshing(true);
     // 下拉刷新时强制从API获取最新数据
-    await loadUserInfo(isCurrentUser, true);
+    const userInfo = await loadUserInfo(isCurrentUser, true);
+    // 如果是查看他人资料，强制刷新关注状态
+    if (!isCurrentUser && username) {
+      await checkFollowingStatus(username, true, userInfo);
+    }
     setRefreshing(false);
   };
 
@@ -301,7 +484,32 @@ const UserProfileScreen: React.FC = () => {
                       {text: '更换背景图片', onPress: () => Alert.alert('提示', '更换背景图片功能开发中')},
                     ]);
                   } else {
-                    Alert.alert('提示', '更多功能开发中');
+                    // 使用ActionSheetIOS实现垂直菜单
+                    if (Platform.OS === 'ios') {
+                      ActionSheetIOS.showActionSheetWithOptions(
+                        {
+                          options: ['取消', '拉黑'],
+                          destructiveButtonIndex: 1,
+                          cancelButtonIndex: 0,
+                          title: '更多操作',
+                        },
+                        (buttonIndex) => {
+                          if (buttonIndex === 1) {
+                            handleBlockUser();
+                          }
+                        }
+                      );
+                    } else {
+                      // Android使用Alert
+                      Alert.alert('更多操作', '', [
+                        {
+                          text: '拉黑',
+                          style: 'destructive',
+                          onPress: handleBlockUser,
+                        },
+                        {text: '取消', style: 'cancel'},
+                      ]);
+                    }
                   }
                 }}
               >
@@ -453,10 +661,17 @@ const UserProfileScreen: React.FC = () => {
           ) : (
             <>
               <TouchableOpacity 
-                style={styles.primaryButton}
-                onPress={() => Alert.alert('提示', '关注功能开发中')}
+                style={[styles.primaryButton, isFollowing && styles.primaryButtonFollowed]}
+                onPress={handleFollowUser}
+                disabled={followingLoading}
               >
-                <Text style={styles.primaryButtonText}>+ 关注</Text>
+                {followingLoading ? (
+                  <ActivityIndicator size="small" color={isFollowing ? '#007AFF' : '#fff'} />
+                ) : (
+                  <Text style={[styles.primaryButtonText, isFollowing && styles.primaryButtonTextFollowed]}>
+                    {isFollowing ? '✓ 已关注' : '+ 关注'}
+                  </Text>
+                )}
               </TouchableOpacity>
               <TouchableOpacity 
                 style={styles.secondaryButton}
@@ -938,6 +1153,14 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZE.lg,
     fontWeight: '600',
     color: '#fff',
+  },
+  primaryButtonFollowed: {
+    backgroundColor: '#E8F4FF',
+    borderWidth: 1,
+    borderColor: '#007AFF',
+  },
+  primaryButtonTextFollowed: {
+    color: '#007AFF',
   },
   secondaryButton: {
     flex: 1,

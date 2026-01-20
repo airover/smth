@@ -20,7 +20,7 @@ import {
 } from 'react-native';
 import {useRoute, useNavigation} from '@react-navigation/native';
 import {WebView} from 'react-native-webview';
-import {getPostDetail, getTopicReplies, deletePost, getUserInfo, addFavoriteTopic, likePost, addLike, getPostPermissions, PostPermissions} from '../services/api';
+import {getPostDetail, getTopicReplies, deletePost, getUserInfo, addFavoriteTopic, addLike, getPostPermissions, PostPermissions} from '../services/api';
 import PostCaptchaScreen from './PostCaptchaScreen';
 import {Post, Reply, Attachment, Like} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
@@ -397,6 +397,44 @@ const PostDetailScreen: React.FC = () => {
     });
   };
 
+  // 处理引用回复
+  const handleQuoteReply = (reply: Reply) => {
+    if (!post) return;
+
+    // 检查写权限
+    // if (permissions && !permissions.write.hasPerm) {
+    //   Alert.alert(
+    //     '权限不足',
+    //     permissions.write.cause || '您没有权限进行此操作',
+    //     [{text: '确定'}]
+    //   );
+    //   return;
+    // }
+
+    // 格式化引用内容
+    // 清理HTML标签
+    const cleanContent = reply.content
+      .replace(/<[^>]*>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&amp;/g, '&')
+      .trim();
+
+    // 构造引用格式（参照curl示例）
+    const quotedContent = `【 在 ${reply.author} 的大作中提到: 】\n: ${cleanContent.split('\n').join('\n: ')}\n\n`;
+
+    navigation.navigate('CreatePost', {
+      boardId: board,
+      boardName: post.boardName || board,
+      reId: post.articleId || post.id,
+      reTitle: post.title,
+      mode: 'reply',
+      quotedContent: quotedContent, // 传递引用内容
+    });
+  };
+
   const handleShare = () => {
     setMenuVisible(false);
     Alert.alert('提示', '分享功能开发中');
@@ -676,8 +714,12 @@ const PostDetailScreen: React.FC = () => {
       return;
     }
 
-    if (!ratingComment.trim()) {
-      Alert.alert('提示', '请输入评价内容');
+    // 如果没有选择评分，默认为0
+    const finalScore = ratingScore !== null ? ratingScore : 0;
+    
+    // 评分非0或评论内容非空才可提交
+    if (finalScore === 0 && !ratingComment.trim()) {
+      Alert.alert('提示', '请选择评分或输入评价内容');
       return;
     }
 
@@ -688,8 +730,6 @@ const PostDetailScreen: React.FC = () => {
     }
 
     try {
-      // 如果没有选择评分，根据类型使用默认值：喜欢=1，不喜欢=-1
-      const finalScore = ratingScore !== null ? ratingScore : (ratingType === 'like' ? 1 : -1);
       const result = await addLike(
         post.id, // 使用 topicId
         post.boardName || board,
@@ -1162,7 +1202,16 @@ const PostDetailScreen: React.FC = () => {
         {renderContent(item.content, `reply-${item.id}`)}
       </View>
       {renderAttachments(item.attachments || [])}
-      <Text style={[styles.replyTime, {color: theme.secondaryText}]}>{formatRelativeTime(item.postTime)}</Text>
+      <View style={styles.replyFooter}>
+        <Text style={[styles.replyTime, {color: theme.secondaryText}]}>{formatRelativeTime(item.postTime)}</Text>
+        <TouchableOpacity
+          style={[styles.quoteReplyButton, {borderColor: theme.border}]}
+          onPress={() => handleQuoteReply(item)}
+          activeOpacity={0.7}
+        >
+          <Text style={[styles.quoteReplyButtonText, {color: theme.primary}]}>💬</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
   };
@@ -1298,7 +1347,7 @@ const PostDetailScreen: React.FC = () => {
                   activeOpacity={0.7}
                 >
                   <Text style={[styles.sortTriangleIcon, {color: theme.text}]}>
-                    {sortOrder === 'asc' ? '▼' : '▲'}
+                    {sortOrder === 'asc' ? '▲' : '▼'}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -1567,7 +1616,7 @@ const PostDetailScreen: React.FC = () => {
                 onPress={handleDeletePost}
                 activeOpacity={0.7}
               >
-                <Text style={[styles.menuItemText, styles.deleteText]}>🗑️ 删除</Text>
+                <Text style={[styles.menuItemText, styles.deleteText]}>️删除</Text>
               </TouchableOpacity>
             )}
             <TouchableOpacity
@@ -1575,21 +1624,21 @@ const PostDetailScreen: React.FC = () => {
               onPress={handleReply}
               activeOpacity={0.7}
             >
-              <Text style={[styles.menuItemText, {color: theme.text}]}>💬 回复</Text>
+              <Text style={[styles.menuItemText, {color: theme.text}]}>回复</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.menuItem, {borderBottomColor: theme.border}]}
               onPress={handleFavorite}
               activeOpacity={0.7}
             >
-              <Text style={[styles.menuItemText, {color: theme.text}]}>⭐ 收藏</Text>
+              <Text style={[styles.menuItemText, {color: theme.text}]}>收藏</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.menuItem}
               onPress={handleShare}
               activeOpacity={0.7}
             >
-              <Text style={[styles.menuItemText, {color: theme.text}]}>📤 分享</Text>
+              <Text style={[styles.menuItemText, {color: theme.text}]}>分享</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.cancelButton, {borderTopColor: theme.border}]}
@@ -2050,6 +2099,24 @@ const styles = StyleSheet.create({
     color: '#999',
     marginTop: 8,
     textAlign: 'right',
+  },
+  replyFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  quoteReplyButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  quoteReplyButtonText: {
+    fontSize: 12,
+    color: '#007AFF',
+    fontWeight: '500',
   },
   location: {
     fontSize: 10,

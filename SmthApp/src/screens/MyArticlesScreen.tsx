@@ -14,6 +14,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {getMyArticles, MyArticle} from '../services/api';
 import {formatRelativeTime} from '../utils/timeFormat';
 import {useTheme} from '../components/ThemedComponents';
+import {useSettings} from '../context/SettingsContext';
+import {getFontSizes} from '../utils/theme';
+import {cleanHtml} from '../utils/htmlParser';
 import {
   SPACING,
   FONT_SIZE,
@@ -37,6 +40,8 @@ interface CachedData {
 const MyArticlesScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const theme = useTheme();
+  const {settings} = useSettings();
+  const fontSizes = getFontSizes(settings.fontSize);
   
   // Tab状态：0=帖子, 1=回复
   const [activeTab, setActiveTab] = useState<0 | 1>(0);
@@ -231,22 +236,43 @@ const MyArticlesScreen: React.FC = () => {
       activeOpacity={0.7}
     >
       <View style={styles.itemContent}>
-        <Text style={[styles.title, {color: theme.text}]} numberOfLines={2}>
+        <Text 
+          style={[
+            styles.title, 
+            {color: theme.text, fontSize: fontSizes.content, lineHeight: fontSizes.lineHeight}
+          ]} 
+          numberOfLines={2}
+        >
           {item.title}
         </Text>
-        <View style={styles.metaRow}>
-          <Text style={[styles.boardTag, {backgroundColor: theme.primary + '20', color: theme.primary}]}>
-            {item.boardName || item.board}
+        {/* 回复类型显示内容摘要 */}
+        {activeTab === 1 && item.content && (
+          <Text 
+            style={[
+              styles.contentPreview, 
+              {color: theme.secondaryText, fontSize: fontSizes.quote, lineHeight: fontSizes.quoteLineHeight}
+            ]} 
+            numberOfLines={2}
+          >
+            {cleanHtml(item.content, {collapseWhitespace: true})}
           </Text>
-          {item.replyCount !== undefined && item.replyCount > 0 && (
-            <Text style={[styles.metaText, {color: theme.secondaryText}]}>
-              {item.replyCount} 回复
+        )}
+        {/* 底部元信息：版面、回复数、时间在同一行 */}
+        <View style={styles.metaRow}>
+          <View style={styles.metaLeft}>
+            <Text style={[styles.boardTag, {backgroundColor: theme.primary + '20', color: theme.primary}]}>
+              {item.boardName || item.board}
             </Text>
-          )}
+            {item.replyCount !== undefined && item.replyCount > 0 && (
+              <Text style={[styles.replyCount, {color: theme.secondaryText}]}>
+                {item.replyCount} 回复
+              </Text>
+            )}
+          </View>
+          <Text style={[styles.timeText, {color: theme.secondaryText}]}>
+            {formatRelativeTime(item.time)}
+          </Text>
         </View>
-        <Text style={[styles.timeText, {color: theme.secondaryText}]}>
-          {formatRelativeTime(new Date(item.time).toISOString())}
-        </Text>
       </View>
       <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
     </TouchableOpacity>
@@ -453,29 +479,38 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   title: {
-    fontSize: FONT_SIZE.lg,
+    // fontSize 和 lineHeight 由 fontSizes 动态控制
     fontWeight: '500',
-    marginBottom: SPACING.sm + 2,
-    lineHeight: FONT_SIZE.xxl,
+    marginBottom: SPACING.sm,
+  },
+  contentPreview: {
+    // fontSize 和 lineHeight 由 fontSizes 动态控制
+    marginBottom: SPACING.sm,
   },
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: SPACING.xs + 2,
+    justifyContent: 'space-between',
+  },
+  metaLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
   },
   boardTag: {
-    fontSize: FONT_SIZE.xs,
+    fontSize: 10,
     paddingHorizontal: SPACING.sm,
-    paddingVertical: SPACING.xs - 1,
+    paddingVertical: 2,
     borderRadius: BORDER_RADIUS.sm,
     overflow: 'hidden',
-    marginRight: SPACING.sm + 2,
+    marginRight: SPACING.sm,
   },
-  metaText: {
-    fontSize: FONT_SIZE.sm,
+  replyCount: {
+    fontSize: 10,
   },
   timeText: {
-    fontSize: FONT_SIZE.xs,
+    fontSize: 10,
+    textAlign: 'right',
   },
   chevron: {
     fontSize: FONT_SIZE.xl,

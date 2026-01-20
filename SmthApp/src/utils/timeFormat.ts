@@ -110,6 +110,35 @@ export const formatShortTime = (time: string | number | Date): string => {
   }
 };
 
+/**
+ * 安全地格式化时间戳为相对时间
+ * 专门处理可能无效的时间戳，避免 Date value out of bounds 错误
+ * @param timestamp 时间戳（毫秒）
+ * @returns 格式化后的相对时间字符串
+ */
+export const formatTimestampSafely = (timestamp: number): string => {
+  try {
+    // 验证时间戳是否在有效范围内
+    // JavaScript Date 的有效范围是 -8640000000000000 到 8640000000000000 毫秒
+    if (!timestamp || timestamp < -8640000000000000 || timestamp > 8640000000000000) {
+      return '时间未知';
+    }
+    
+    const date = new Date(timestamp);
+    
+    // 检查日期是否有效
+    if (isNaN(date.getTime())) {
+      return '时间未知';
+    }
+    
+    // 使用 formatRelativeTime 进行格式化
+    return formatRelativeTime(date);
+  } catch (error) {
+    console.error('formatTimestampSafely error:', error, 'timestamp:', timestamp);
+    return '时间未知';
+  }
+};
+
 
 
 

@@ -1,6 +1,7 @@
 // 类型定义
 
 export interface User {
+  id?: string; // 用户ID
   username: string;
   nickname?: string;
   avatar?: string;
@@ -18,6 +19,10 @@ export interface User {
   createTime?: number; // 注册时间戳
   friendCount?: number; // 关注数
   fansCount?: number; // 粉丝数
+  isFollowing?: boolean; // 是否已关注
+  isBlack?: boolean; // 是否已拉黑
+  isFans?: boolean; // 是否为粉丝
+  suicide?: boolean; // 是否已注销
   isLoggedIn?: boolean;
   recentPosts?: Array<{
     id: string;

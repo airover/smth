@@ -250,3 +250,60 @@ export const parseTopTen = (html: string): any[] => {
   
   return items;
 };
+
+/**
+ * 清理 HTML 内容，移除标签和解码实体
+ * @param html - 包含 HTML 标签的字符串
+ * @param options - 可选配置
+ * @returns 清理后的纯文本
+ */
+export const cleanHtml = (
+  html: string,
+  options?: {
+    preserveLineBreaks?: boolean; // 是否保留换行符
+    collapseWhitespace?: boolean; // 是否合并多余空白
+  }
+): string => {
+  if (!html) return '';
+  
+  const {
+    preserveLineBreaks = false,
+    collapseWhitespace = true,
+  } = options || {};
+  
+  let cleaned = html;
+  
+  // 1. 处理换行相关标签
+  if (preserveLineBreaks) {
+    cleaned = cleaned
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n')
+      .replace(/<\/div>/gi, '\n');
+  }
+  
+  // 2. 移除所有 HTML 标签
+  cleaned = cleaned.replace(/<[^>]*>/g, '');
+  
+  // 3. 解码 HTML 实体
+  cleaned = cleaned
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'");
+  
+  // 4. 处理空白字符
+  if (collapseWhitespace) {
+    // 合并多个空格为一个
+    cleaned = cleaned.replace(/[ \t]+/g, ' ');
+    // 移除多余的换行符
+    cleaned = cleaned.replace(/\n\s*\n\s*\n/g, '\n\n');
+  }
+  
+  // 5. 去除首尾空白
+  cleaned = cleaned.trim();
+  
+  return cleaned;
+};

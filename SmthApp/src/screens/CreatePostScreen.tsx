@@ -32,6 +32,7 @@ interface RouteParams {
   reId?: string; // 如果是回复，传入被回复的帖子ID
   reTitle?: string; // 被回复的帖子标题
   mode?: 'create' | 'reply'; // 发帖模式
+  quotedContent?: string; // 引用的内容
 }
 
 const CreatePostScreen: React.FC = () => {
@@ -105,10 +106,14 @@ const CreatePostScreen: React.FC = () => {
           : `Re: ${params.reTitle}`;
         setTitle(reTitle);
       }
+      // 如果有引用内容，自动填充到内容框，并在最上方预留一行空白
+      if (isReplyMode && params.quotedContent) {
+        setContent('\n' + params.quotedContent);
+      }
       setLoadingDraft(false);
     };
     loadDraft();
-  }, [params.boardId, isReplyMode, params.reTitle]);
+  }, [params.boardId, isReplyMode, params.reTitle, params.quotedContent]);
 
   // 自动保存草稿
   useEffect(() => {
@@ -554,7 +559,6 @@ const CreatePostScreen: React.FC = () => {
             <Text style={styles.tipText}>• 完成人机验证后会自动上传图片</Text>
             <Text style={styles.tipText}>• 图片上传完成后才能发布</Text>
             <Text style={styles.tipText}>• 草稿会自动保存（不含图片）</Text>
-            <Text style={styles.tipText}>• 发布后无法删除，请谨慎发言</Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

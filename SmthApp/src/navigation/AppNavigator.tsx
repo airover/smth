@@ -22,6 +22,8 @@ import CreatePostScreen from '../screens/CreatePostScreen';
 // WebViewPostScreen 已移除使用
 import MyArticlesScreen from '../screens/MyArticlesScreen';
 import FavoritesScreen from '../screens/FavoritesScreen';
+import MyFollowingScreen from '../screens/MyFollowingScreen';
+import BlacklistScreen from '../screens/BlacklistScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -216,6 +218,20 @@ const AppNavigator = () => {
         component={FavoritesScreen}
         options={{
           title: '我的收藏',
+        }}
+      />
+      <Stack.Screen
+        name="MyFollowing"
+        component={MyFollowingScreen}
+        options={{
+          title: '我的关注',
+        }}
+      />
+      <Stack.Screen
+        name="Blacklist"
+        component={BlacklistScreen}
+        options={{
+          title: '黑名单',
         }}
       />
     </Stack.Navigator>

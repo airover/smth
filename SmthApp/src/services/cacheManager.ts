@@ -18,6 +18,8 @@ interface CacheStore {
   userInfo?: CacheItem<any>;
   otherUserInfo: {[key: string]: CacheItem<any>}; // 他人资料缓存
   favoriteBoards?: CacheItem<any[]>;
+  friendsList: {[key: string]: CacheItem<string[]>}; // 关注列表缓存
+  blackList: {[key: string]: CacheItem<string[]>}; // 黑名单缓存
   
   // 内容相关缓存
   topTen?: CacheItem<any[]>;
@@ -48,6 +50,8 @@ class CacheManager {
     postDetail: 5 * 60 * 1000,     // 5分钟（帖子详情相对稳定）
     topicReplies: 60 * 1000,       // 1分钟（回复实时性要求高）
     otherUserInfo: 5 * 60 * 1000,  // 5分钟（他人资料相对稳定）
+    friendsList: 5 * 60 * 1000,    // 5分钟（关注列表相对稳定）
+    blackList: 5 * 60 * 1000,      // 5分钟（黑名单相对稳定）
   };
 
   private constructor() {
@@ -60,6 +64,8 @@ class CacheManager {
       channelPosts: {},
       albumPosts: {},
       otherUserInfo: {},
+      friendsList: {},
+      blackList: {},
     };
   }
 
@@ -156,7 +162,7 @@ class CacheManager {
    * 清除指定分类的缓存
    */
   clearCategory(category: keyof CacheStore): void {
-    if (category === 'subBoards' || category === 'boardPosts' || category === 'postDetail' || category === 'topicReplies') {
+    if (category === 'subBoards' || category === 'boardPosts' || category === 'postDetail' || category === 'topicReplies' || category === 'friendsList' || category === 'blackList' || category === 'channelPosts' || category === 'albumPosts' || category === 'otherUserInfo' || category === 'hotPosts') {
       (this.cache[category] as any) = {};
     } else {
       delete (this.cache as any)[category];
@@ -177,6 +183,8 @@ class CacheManager {
       channelPosts: {},
       albumPosts: {},
       otherUserInfo: {},
+      friendsList: {},
+      blackList: {},
     };
     console.log('[Cache] Cleared all caches');
   }
