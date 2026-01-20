@@ -19,6 +19,7 @@ interface CacheStore {
   otherUserInfo: {[key: string]: CacheItem<any>}; // 他人资料缓存
   favoriteBoards?: CacheItem<any[]>;
   friendsList: {[key: string]: CacheItem<string[]>}; // 关注列表缓存
+  fansList: {[key: string]: CacheItem<{fans: any[], total: number}>}; // 粉丝列表缓存
   blackList: {[key: string]: CacheItem<string[]>}; // 黑名单缓存
   
   // 内容相关缓存
@@ -65,6 +66,7 @@ class CacheManager {
       albumPosts: {},
       otherUserInfo: {},
       friendsList: {},
+      fansList: {},
       blackList: {},
     };
   }
@@ -184,6 +186,7 @@ class CacheManager {
       albumPosts: {},
       otherUserInfo: {},
       friendsList: {},
+      fansList: {},
       blackList: {},
     };
     console.log('[Cache] Cleared all caches');

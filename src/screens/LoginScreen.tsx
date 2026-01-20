@@ -70,7 +70,37 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredent
   const [loginRetryCount, setLoginRetryCount] = useState(0); // 登录重试次数
   const webViewRef = useRef<WebView>(null);
 
-  // 不再需要在组件内部加载凭据，因为已通过 props 传入
+  // 在组件加载时，尝试获取保存的凭据（如果没有通过 props 传入）
+  useEffect(() => {
+    const loadSavedCredentials = async () => {
+      // 如果已经通过 props 传入了凭据，则不需要再加载
+      if (initialCredentials?.username) {
+        return;
+      }
+      
+      try {
+        const {getSavedCredentials} = require('../utils/storage');
+        const saved = await getSavedCredentials();
+        console.log('加载保存的凭据:', {
+          username: saved.username,
+          hasPassword: !!saved.password,
+          remember: saved.remember,
+        });
+        
+        if (saved.username) {
+          setUsername(saved.username);
+        }
+        if (saved.password && saved.remember) {
+          setPassword(saved.password);
+        }
+        setRememberPassword(saved.remember);
+      } catch (error) {
+        console.error('加载保存的凭据失败:', error);
+      }
+    };
+    
+    loadSavedCredentials();
+  }, [initialCredentials]);
 
   // 当处于加载状态时，设置超时自动重置，避免卡死
   useEffect(() => {

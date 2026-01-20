@@ -77,35 +77,56 @@ export const getCookies = async (): Promise<string | null> => {
 };
 
 /**
- * 验证 Cookie 是否有效（通过访问需要登录的页面）
+ * 存储 Cookie（合并新旧 cookie，保留 set_identity 等自定义 cookie）
+ * @param newCookies 新的 Cookie
+ * @param replace 是否完全替换（用于登出等场景）
  */
-export const validateCookies = async (): Promise<boolean> => {
+export const storeCookies = async (newCookies: string, replace: boolean = false): Promise<void> => {
   try {
-    const cookies = await getCookies();
-    if (!cookies) {
-      return false;
-    }
-
-    // 尝试访问用户页面验证 Cookie
-    const headers = buildGetHeaders(cookies);
-    const response = await fetch('https://wap.newsmth.net/user', {
-      method: 'GET',
-      headers,
-    });
-
-    const text = await response.text();
-    // 检查是否包含登录相关的元素（需要根据实际页面调整）
-    const isLoggedIn = !text.includes('登录') || text.includes('退出');
-    
-    if (!isLoggedIn) {
-      // Cookie 无效，清除登录状态
-      await logout();
+    if (replace) {
+      // 完全替换模式（用于登出等场景）
+      await AsyncStorage.setItem(STORAGE_KEYS.COOKIES, newCookies);
+      return;
     }
     
-    return isLoggedIn;
+    // 合并模式：保留已有的 set_identity 等自定义 cookie
+    const existingCookies = await AsyncStorage.getItem(STORAGE_KEYS.COOKIES) || '';
+    
+    // 从已有 cookies 中提取 set_identity（如果存在）
+    const setIdentityMatch = existingCookies.match(/set_identity=([^;]+)/);
+    const existingSetIdentity = setIdentityMatch ? setIdentityMatch[0] : null;
+    
+    // 解析新的 cookies，提取有效的 cookie 键值对
+    const cookieParts: string[] = [];
+    
+    // 提取 kbs-info
+    const kbsInfoMatch = newCookies.match(/kbs-info=([^;,\s]+)/);
+    if (kbsInfoMatch) {
+      cookieParts.push(`kbs-info=${kbsInfoMatch[1]}`);
+    }
+    
+    // 提取 kbs-key
+    const kbsKeyMatch = newCookies.match(/kbs-key=([^;,\s]+)/);
+    if (kbsKeyMatch) {
+      cookieParts.push(`kbs-key=${kbsKeyMatch[1]}`);
+    }
+    
+    // 如果新 cookies 中没有 set_identity，但已有 cookies 中有，则保留
+    const newSetIdentityMatch = newCookies.match(/set_identity=([^;]+)/);
+    if (newSetIdentityMatch) {
+      cookieParts.push(newSetIdentityMatch[0]);
+    } else if (existingSetIdentity) {
+      cookieParts.push(existingSetIdentity);
+    }
+    
+    // 组合最终的 cookies
+    const finalCookies = cookieParts.length > 0 ? cookieParts.join('; ') : newCookies;
+    await AsyncStorage.setItem(STORAGE_KEYS.COOKIES, finalCookies);
   } catch (error) {
-    console.error('Validate cookies error:', error);
-    return false;
+    console.error('Store cookies error:', error);
+    throw error;
   }
 };
+
+
 

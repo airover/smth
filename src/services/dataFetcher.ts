@@ -1,4 +1,6 @@
 // 数据获取服务 - 使用 wap.newsmth.net 获取数据
+// 职责：所有数据的获取（GET请求）和操作（POST/DELETE请求）
+// 缓存：使用 cacheManager 统一管理
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {Mail} from '../types';
 import {
@@ -11,13 +13,9 @@ import {
   buildDeleteHeaders,
 } from '../utils/requestUtils';
 import {setCache, getCacheWithTimestamp} from './cacheManager';
+import {getCookies} from './auth';
 
 const WAP_BASE_URL = 'https://wap.newsmth.net';
-
-// 获取 Cookie
-const getCookies = async (): Promise<string | null> => {
-  return await AsyncStorage.getItem('cookies');
-};
 
 // 通用请求函数（带 Cookie）
 const requestWithCookies = async (
@@ -255,8 +253,8 @@ export const getFavoriteBoards = async (forceRefresh: boolean = false): Promise<
     if (response.status === 401 || response.status === 403) {
       console.error('getFavoriteBoards: Cookie已过期或无权限，状态码:', response.status);
       // 清除本地登录状态
-      await AsyncStorage.removeItem('isLoggedIn');
-      await AsyncStorage.removeItem('cookies');
+      // 注意：不在这里清除登录态，让上层UI决定如何处理
+      // 登录态只在用户主动退出登录时才清除
       throw new Error('LOGIN_EXPIRED');
     }
 
@@ -267,8 +265,7 @@ export const getFavoriteBoards = async (forceRefresh: boolean = false): Promise<
     if (json.code !== 1) {
       console.error('getFavoriteBoards: API返回错误，code:', json.code, 'message:', json.message);
       if (json.code === 401 || json.code === 403 || json.message?.includes('登录')) {
-        await AsyncStorage.removeItem('isLoggedIn');
-        await AsyncStorage.removeItem('cookies');
+        // 注意：不在这里清除登录态，让上层UI决定如何处理
         throw new Error('LOGIN_EXPIRED');
       }
       throw new Error(json.message || 'API_ERROR');
@@ -956,8 +953,8 @@ export const getConversationMessages = async (
     // 检查HTTP状态码
     if (response.status === 401 || response.status === 403) {
       console.error('getConversationMessages: Cookie已过期或无权限，状态码:', response.status);
-      await AsyncStorage.removeItem('isLoggedIn');
-      await AsyncStorage.removeItem('cookies');
+      // 注意：不在这里清除登录态，让上层UI决定如何处理
+      // 登录态只在用户主动退出登录时才清除
       throw new Error('LOGIN_EXPIRED');
     }
 
@@ -968,8 +965,7 @@ export const getConversationMessages = async (
     if (json.code !== 1) {
       console.error('getConversationMessages: API返回错误，code:', json.code, 'message:', json.message);
       if (json.code === 401 || json.code === 403 || json.message?.includes('登录')) {
-        await AsyncStorage.removeItem('isLoggedIn');
-        await AsyncStorage.removeItem('cookies');
+        // 注意：不在这里清除登录态，让上层UI决定如何处理
         throw new Error('LOGIN_EXPIRED');
       }
       throw new Error(json.message || 'API_ERROR');
@@ -1089,8 +1085,8 @@ export const markMessageAsRead = async (speakerId: string): Promise<{success: bo
     
     if (response.status === 401 || response.status === 403) {
       console.error('markMessageAsRead: Cookie已过期或无权限');
-      await AsyncStorage.removeItem('isLoggedIn');
-      await AsyncStorage.removeItem('cookies');
+      // 注意：不在这里清除登录态，让上层UI决定如何处理
+      // 登录态只在用户主动退出登录时才清除
       throw new Error('LOGIN_EXPIRED');
     }
 
@@ -1154,8 +1150,8 @@ export const sendMessage = async (
     
     if (response.status === 401 || response.status === 403) {
       console.error('sendMessage: Cookie已过期或无权限');
-      await AsyncStorage.removeItem('isLoggedIn');
-      await AsyncStorage.removeItem('cookies');
+      // 注意：不在这里清除登录态，让上层UI决定如何处理
+      // 登录态只在用户主动退出登录时才清除
       throw new Error('LOGIN_EXPIRED');
     }
 
@@ -1209,8 +1205,8 @@ export const addFriend = async (
     
     if (response.status === 401 || response.status === 403) {
       console.error('addFriend: Cookie已过期或无权限');
-      await AsyncStorage.removeItem('isLoggedIn');
-      await AsyncStorage.removeItem('cookies');
+      // 注意：不在这里清除登录态，让上层UI决定如何处理
+      // 登录态只在用户主动退出登录时才清除
       throw new Error('LOGIN_EXPIRED');
     }
 
@@ -1264,8 +1260,8 @@ export const removeFriend = async (
     
     if (response.status === 401 || response.status === 403) {
       console.error('removeFriend: Cookie已过期或无权限');
-      await AsyncStorage.removeItem('isLoggedIn');
-      await AsyncStorage.removeItem('cookies');
+      // 注意：不在这里清除登录态，让上层UI决定如何处理
+      // 登录态只在用户主动退出登录时才清除
       throw new Error('LOGIN_EXPIRED');
     }
 
@@ -1328,8 +1324,8 @@ export const checkIsHerBlack = async (
     
     if (response.status === 401 || response.status === 403) {
       console.error('checkIsHerBlack: Cookie已过期或无权限');
-      await AsyncStorage.removeItem('isLoggedIn');
-      await AsyncStorage.removeItem('cookies');
+      // 注意：不在这里清除登录态，让上层UI决定如何处理
+      // 登录态只在用户主动退出登录时才清除
       throw new Error('LOGIN_EXPIRED');
     }
 
@@ -1396,8 +1392,8 @@ export const addBlack = async (
     
     if (response.status === 401 || response.status === 403) {
       console.error('addBlack: Cookie已过期或无权限');
-      await AsyncStorage.removeItem('isLoggedIn');
-      await AsyncStorage.removeItem('cookies');
+      // 注意：不在这里清除登录态，让上层UI决定如何处理
+      // 登录态只在用户主动退出登录时才清除
       throw new Error('LOGIN_EXPIRED');
     }
 
@@ -1419,27 +1415,89 @@ export const addBlack = async (
   }
 };
 
+// 从黑名单中移除用户
+// API: DELETE https://wap.newsmth.net/wap/api/black/delblack?accountid={userId}
+// 响应: {"code":1,"data":true,"kbsCode":0,"message":"操作成功"}
+export const removeBlack = async (
+  userId: string
+): Promise<{success: boolean, message?: string}> => {
+  try {
+    const cookies = await getCookies();
+    
+    if (!cookies) {
+      console.error('removeBlack: 未登录，无Cookie');
+      return {success: false, message: '请先登录'};
+    }
+    
+    const url = `${WAP_BASE_URL}/wap/api/black/delblack?accountid=${userId}`;
+    
+    console.log('Removing user from blacklist:', userId);
+    
+    const headers = buildDeleteHeaders(
+      cookies,
+      `https://wap.newsmth.net/account/${userId}`
+    );
+
+    const response = await fetchWithRetry(url, {
+      method: 'DELETE',
+      headers,
+      credentials: 'include',
+    }, DEFAULT_TIMEOUT);
+    
+    if (response.status === 401 || response.status === 403) {
+      console.error('removeBlack: Cookie已过期或无权限');
+      // 注意：不在这里清除登录态，让上层UI决定如何处理
+      // 登录态只在用户主动退出登录时才清除
+      throw new Error('LOGIN_EXPIRED');
+    }
+
+    const json = await response.json();
+    console.log('removeBlack API response:', json);
+    
+    // 检查 code 和 kbsCode
+    if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
+      return {success: true, message: json.message || '移除成功'};
+    }
+    
+    return {success: false, message: json.message || '移除失败'};
+  } catch (error: any) {
+    console.error('Remove black error:', error);
+    if (error.message === 'LOGIN_EXPIRED') {
+      throw error;
+    }
+    return {success: false, message: '移除失败'};
+  }
+};
+
 // 获取关注用户列表
 // API: GET https://wap.newsmth.net/wap/api/account/friends/{username}
-// 响应: {"code":1,"data":{"pager":{...},"account":{...},"friends":[...]},"kbsCode":0,"message":"操作成功"}
+// 响应: {"code":1,"data":{"pager":{...},"account":{...},"friends":[...]}},"kbsCode":0,"message":"操作成功"}
 export const getFriendsList = async (
   username: string,
   page: number = 1,
   forceRefresh: boolean = false
-): Promise<{success: boolean, friends: string[], message?: string}> => {
+): Promise<{
+  success: boolean;
+  friends: any[];
+  total: number;
+  hasMore: boolean;
+  page: number;
+  pageSize: number;
+  message?: string;
+}> => {
   try {
     const cookies = await getCookies();
     
     if (!cookies) {
       console.error('getFriendsList: 未登录，无Cookie');
-      return {success: false, friends: [], message: '请先登录'};
+      return {success: false, friends: [], total: 0, hasMore: false, page, pageSize: 50, message: '请先登录'};
     }
     
     const cacheKey = `${username}_${page}`;
     
     // 如果不是强制刷新，先尝试从缓存获取
     if (!forceRefresh) {
-      const cachedData = getCacheWithTimestamp<string[]>('friendsList', cacheKey);
+      const cachedData = getCacheWithTimestamp<{friends: any[], total: number, hasMore: boolean, page: number, pageSize: number}>('friendsList', cacheKey);
       if (cachedData) {
         console.log('getFriendsList: Using cached data for', username, 'page', page, 'age:', Math.floor((Date.now() - cachedData.timestamp) / 1000), 's');
         
@@ -1448,7 +1506,15 @@ export const getFriendsList = async (
           console.error('Background update friends list error:', err);
         });
         
-        return {success: true, friends: cachedData.data, message: '获取成功'};
+        return {
+          success: true,
+          friends: cachedData.data.friends,
+          total: cachedData.data.total,
+          hasMore: cachedData.data.hasMore,
+          page: cachedData.data.page,
+          pageSize: cachedData.data.pageSize,
+          message: '获取成功'
+        };
       }
     }
     
@@ -1459,17 +1525,24 @@ export const getFriendsList = async (
     if (error.message === 'LOGIN_EXPIRED') {
       throw error;
     }
-    return {success: false, friends: [], message: '获取失败'};
+    return {success: false, friends: [], total: 0, hasMore: false, page, pageSize: 50, message: '获取失败'};
   }
 };
-
 // 从API获取关注列表的内部函数
 const fetchFriendsListFromAPI = async (
   username: string,
   page: number,
   cookies: string,
   cacheKey: string
-): Promise<{success: boolean, friends: string[], message?: string}> => {
+): Promise<{
+  success: boolean;
+  friends: any[];
+  total: number;
+  hasMore: boolean;
+  page: number;
+  pageSize: number;
+  message?: string;
+}> => {
   const url = `${WAP_BASE_URL}/wap/api/account/friends/${username}?page=${page}`;
   
   console.log('Fetching friends list from API:', username, 'page', page);
@@ -1484,8 +1557,7 @@ const fetchFriendsListFromAPI = async (
   
   if (response.status === 401 || response.status === 403) {
     console.error('getFriendsList: Cookie已过期或无权限');
-    await AsyncStorage.removeItem('isLoggedIn');
-    await AsyncStorage.removeItem('cookies');
+    // 注意：不在这里清除登录态，让上层UI决定如何处理
     throw new Error('LOGIN_EXPIRED');
   }
 
@@ -1494,30 +1566,198 @@ const fetchFriendsListFromAPI = async (
   
   // 检查 code 和 kbsCode
   if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
-    const friendIds: string[] = [];
+    const friendsList: any[] = [];
     
-    // 提取所有关注用户的ID
+    // 解析分页信息
+    const pager = json.data?.pager || {};
+    const totalPages = pager.total || 0; // 总页数
+    const pageSize = pager.size || 50;
+    const currentPage = pager.page || page;
+    
+    // 判断是否还有更多：当前页 < 总页数
+    const hasMore = currentPage < totalPages;
+    
+    // 提取所有关注用户信息
     if (json.data?.friends && Array.isArray(json.data.friends)) {
       json.data.friends.forEach((item: any) => {
-        if (item.friend?.id) {
-          friendIds.push(item.friend.id);
-        }
-        // 也保存用户名，方便查询
-        if (item.friend?.name) {
-          friendIds.push(item.friend.name);
+        if (item.friend) {
+          friendsList.push({
+            id: item.friend.id,
+            username: item.friend.name,
+            nickname: item.friend.nick,
+            avatar: item.friend.avatarUrl,
+            level: item.friend.level,
+            levelTitle: item.friend.levelTitle,
+            score: item.friend.score,
+          });
         }
       });
     }
     
-    console.log('getFriendsList: Found', friendIds.length / 2, 'friends');
+    console.log('getFriendsList: Found', friendsList.length, 'friends, totalPages:', totalPages, 'hasMore:', hasMore);
     
     // 保存到缓存
-    setCache('friendsList', cacheKey, friendIds);
+    const cacheData = {friends: friendsList, total: totalPages, hasMore, page: currentPage, pageSize};
+    setCache('friendsList', cacheKey, cacheData);
     
-    return {success: true, friends: friendIds, message: json.message || '获取成功'};
+    return {
+      success: true,
+      friends: friendsList,
+      total: totalPages,
+      hasMore,
+      page: currentPage,
+      pageSize,
+      message: json.message || '获取成功'
+    };
   }
   
-  return {success: false, friends: [], message: json.message || '获取失败'};
+  return {success: false, friends: [], total: 0, hasMore: false, page, pageSize: 50, message: json.message || '获取失败'};
+};
+
+// 获取粉丝列表
+// API: GET https://wap.newsmth.net/wap/api/account/fans/{username}
+// 响应格式: {"code":1,"data":{"pager":{"total":1,"size":50,"page":1,"items":0},"account":{...},"fans":[...]},"kbsCode":0,"message":"操作成功"}
+export const getFansList = async (
+  username: string,
+  page: number = 1,
+  forceRefresh: boolean = false
+): Promise<{
+  success: boolean;
+  fans: any[];
+  total: number;
+  hasMore: boolean;
+  page: number;
+  pageSize: number;
+  message?: string;
+}> => {
+  try {
+    const cookies = await getCookies();
+    
+    if (!cookies) {
+      console.error('getFansList: 未登录，无Cookie');
+      return {success: false, fans: [], total: 0, hasMore: false, page, pageSize: 50, message: '请先登录'};
+    }
+    
+    const cacheKey = `${username}_${page}`;
+    
+    // 如果不是强制刷新，先尝试从缓存获取
+    if (!forceRefresh) {
+      const cachedData = getCacheWithTimestamp<{fans: any[], total: number, hasMore: boolean, page: number, pageSize: number}>('fansList', cacheKey);
+      if (cachedData) {
+        console.log('getFansList: Using cached data for', username, 'page', page, 'age:', Math.floor((Date.now() - cachedData.timestamp) / 1000), 's');
+        
+        // 异步更新缓存
+        fetchFansListFromAPI(username, page, cookies, cacheKey).catch(err => {
+          console.error('Background update fans list error:', err);
+        });
+        
+        return {
+          success: true,
+          fans: cachedData.data.fans,
+          total: cachedData.data.total,
+          hasMore: cachedData.data.hasMore,
+          page: cachedData.data.page,
+          pageSize: cachedData.data.pageSize,
+          message: '获取成功'
+        };
+      }
+    }
+    
+    // 没有缓存或强制刷新，从API获取
+    return await fetchFansListFromAPI(username, page, cookies, cacheKey);
+  } catch (error: any) {
+    console.error('Get fans list error:', error);
+    if (error.message === 'LOGIN_EXPIRED') {
+      throw error;
+    }
+    return {success: false, fans: [], total: 0, hasMore: false, page, pageSize: 50, message: '获取失败'};
+  }
+};
+
+// 从API获取粉丝列表的辅助函数
+const fetchFansListFromAPI = async (
+  username: string,
+  page: number,
+  cookies: string,
+  cacheKey: string
+): Promise<{
+  success: boolean;
+  fans: any[];
+  total: number;
+  hasMore: boolean;
+  page: number;
+  pageSize: number;
+  message?: string;
+}> => {
+  const url = `${WAP_BASE_URL}/wap/api/account/fans/${username}?page=${page}`;
+  
+  console.log('Fetching fans list from API:', username, 'page', page);
+  
+  const headers = buildGetHeaders(cookies, `https://wap.newsmth.net/relation/1`);
+
+  const response = await fetchWithRetry(url, {
+    method: 'GET',
+    headers,
+    credentials: 'include',
+  }, DEFAULT_TIMEOUT);
+  
+  if (response.status === 401 || response.status === 403) {
+    console.error('getFansList: Cookie已过期或无权限');
+    // 注意：不在这里清除登录态，让上层UI决定如何处理
+    throw new Error('LOGIN_EXPIRED');
+  }
+
+  const json = await response.json();
+  console.log('getFansList API response:', json);
+  
+  // 检查 code 和 kbsCode
+  if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
+    const fansList: any[] = [];
+    
+    // 解析分页信息
+    const pager = json.data?.pager || {};
+    const totalPages = pager.total || 0; // 总页数
+    const pageSize = pager.size || 50;
+    const currentPage = pager.page || page;
+    
+    // 判断是否还有更多：当前页 < 总页数
+    const hasMore = currentPage < totalPages;
+    
+    // 提取所有粉丝信息
+    if (json.data?.fans && Array.isArray(json.data.fans)) {
+      json.data.fans.forEach((item: any) => {
+        if (item.friend) {
+          fansList.push({
+            id: item.friend.id,
+            username: item.friend.name,
+            nickname: item.friend.nick,
+            avatar: item.friend.avatarUrl,
+            level: item.friend.level,
+            levelTitle: item.friend.levelTitle,
+            score: item.friend.score,
+          });
+        }
+      });
+    }
+    
+    console.log('getFansList: Found', fansList.length, 'fans, totalPages:', totalPages, 'hasMore:', hasMore);
+    
+    // 保存到缓存
+    const cacheData = {fans: fansList, total: totalPages, hasMore, page: currentPage, pageSize};
+    setCache('fansList', cacheKey, cacheData);
+    
+    return {
+      success: true,
+      fans: fansList,
+      total: totalPages,
+      hasMore,
+      page: currentPage,
+      pageSize,
+      message: json.message || '获取成功'
+    };
+  }
+  
+  return {success: false, fans: [], total: 0, hasMore: false, page, pageSize: 50, message: json.message || '获取失败'};
 };
 
 // 获取站内私信列表
@@ -1547,8 +1787,8 @@ export const getMessages = async (_page: number = 0): Promise<Mail[]> => {
     // 检查HTTP状态码
     if (response.status === 401 || response.status === 403) {
       console.error('getMessages: Cookie已过期或无权限，状态码:', response.status);
-      await AsyncStorage.removeItem('isLoggedIn');
-      await AsyncStorage.removeItem('cookies');
+      // 注意：不在这里清除登录态，让上层UI决定如何处理
+      // 登录态只在用户主动退出登录时才清除
       throw new Error('LOGIN_EXPIRED');
     }
 
@@ -1559,8 +1799,7 @@ export const getMessages = async (_page: number = 0): Promise<Mail[]> => {
     if (json.code !== 1) {
       console.error('getMessages: API返回错误，code:', json.code, 'message:', json.message);
       if (json.code === 401 || json.code === 403 || json.message?.includes('登录')) {
-        await AsyncStorage.removeItem('isLoggedIn');
-        await AsyncStorage.removeItem('cookies');
+        // 注意：不在这里清除登录态，让上层UI决定如何处理
         throw new Error('LOGIN_EXPIRED');
       }
       throw new Error(json.message || 'API_ERROR');
@@ -1811,22 +2050,28 @@ export const getFavoriteTopics = async (
 
 // 获取黑名单列表
 // API: GET https://wap.newsmth.net/wap/api/black/blacklist
+// 注意：该API不支持分页，会返回全部黑名单用户
 export const getBlackList = async (
   forceRefresh: boolean = false
-): Promise<{success: boolean, blacklist: any[], message?: string}> => {
+): Promise<{
+  success: boolean;
+  blacklist: any[];
+  total: number;
+  message?: string;
+}> => {
   try {
     const cookies = await getCookies();
     
     if (!cookies) {
       console.error('getBlackList: 未登录，无Cookie');
-      return {success: false, blacklist: [], message: '请先登录'};
+      return {success: false, blacklist: [], total: 0, message: '请先登录'};
     }
     
     const cacheKey = 'current_user_blacklist';
     
     // 如果不是强制刷新，先尝试从缓存获取
     if (!forceRefresh) {
-      const cachedData = getCacheWithTimestamp<any[]>('blackList', cacheKey);
+      const cachedData = getCacheWithTimestamp<{blacklist: any[], total: number}>('blackList', cacheKey);
       if (cachedData) {
         console.log('getBlackList: Using cached data, age:', Math.floor((Date.now() - cachedData.timestamp) / 1000), 's');
         
@@ -1835,7 +2080,12 @@ export const getBlackList = async (
           console.error('Background update blacklist error:', err);
         });
         
-        return {success: true, blacklist: cachedData.data, message: '获取成功'};
+        return {
+          success: true,
+          blacklist: cachedData.data.blacklist,
+          total: cachedData.data.total,
+          message: '获取成功'
+        };
       }
     }
     
@@ -1846,7 +2096,7 @@ export const getBlackList = async (
     if (error.message === 'LOGIN_EXPIRED') {
       throw error;
     }
-    return {success: false, blacklist: [], message: '获取失败'};
+    return {success: false, blacklist: [], total: 0, message: '获取失败'};
   }
 };
 
@@ -1854,7 +2104,12 @@ export const getBlackList = async (
 const fetchBlackListFromAPI = async (
   cookies: string,
   cacheKey: string
-): Promise<{success: boolean, blacklist: any[], message?: string}> => {
+): Promise<{
+  success: boolean;
+  blacklist: any[];
+  total: number;
+  message?: string;
+}> => {
   const url = `${WAP_BASE_URL}/wap/api/black/blacklist`;
   
   console.log('Fetching blacklist from API');
@@ -1869,8 +2124,7 @@ const fetchBlackListFromAPI = async (
   
   if (response.status === 401 || response.status === 403) {
     console.error('getBlackList: Cookie已过期或无权限');
-    await AsyncStorage.removeItem('isLoggedIn');
-    await AsyncStorage.removeItem('cookies');
+    // 注意：不在这里清除登录态，让上层UI决定如何处理
     throw new Error('LOGIN_EXPIRED');
   }
 
@@ -1905,13 +2159,14 @@ const fetchBlackListFromAPI = async (
       });
     }
     
-    console.log('getBlackList: Found', blacklist.length, 'blocked users');
+    const total = blacklist.length;
+    console.log('getBlackList: Found', total, 'blocked users');
     
     // 保存到缓存
-    setCache('blackList', cacheKey, blacklist);
+    setCache('blackList', cacheKey, {blacklist, total});
     
-    return {success: true, blacklist, message: json.message || '获取成功'};
+    return {success: true, blacklist, total, message: json.message || '获取成功'};
   }
   
-  return {success: false, blacklist: [], message: json.message || '获取失败'};
+  return {success: false, blacklist: [], total: 0, message: json.message || '获取失败'};
 };

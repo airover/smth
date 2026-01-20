@@ -17,6 +17,7 @@ import {
   Platform,
   Animated,
   Easing,
+  Share,
 } from 'react-native';
 import {useRoute, useNavigation} from '@react-navigation/native';
 import {WebView} from 'react-native-webview';
@@ -437,7 +438,36 @@ const PostDetailScreen: React.FC = () => {
 
   const handleShare = () => {
     setMenuVisible(false);
-    Alert.alert('提示', '分享功能开发中');
+    
+    if (!post) {
+      Alert.alert('错误', '无法获取帖子信息');
+      return;
+    }
+    
+    // 延迟执行分享，确保菜单 Modal 完全关闭后再弹出系统分享面板
+    setTimeout(async () => {
+      try {
+        // 构造帖子URL：https://wap.newsmth.net/article/{topicId}?title={boardName}&from=board
+        const topicId = post.id; // 使用 topicId
+        const boardName = encodeURIComponent(post.boardName || board); // URL编码版面名
+        const postUrl = `https://wap.newsmth.net/article/${topicId}?title=${boardName}&from=board`;
+        const shareMessage = `${post.title}\n\n${postUrl}`;
+        
+        await Share.share(
+          Platform.OS === 'ios'
+            ? {
+                message: post.title,
+                url: postUrl,
+              }
+            : {
+                message: shareMessage,
+              }
+        );
+      } catch (error) {
+        console.error('Share error:', error);
+        Alert.alert('分享失败', '无法分享帖子');
+      }
+    }, 300);
   };
 
   const handleLikePress = () => {

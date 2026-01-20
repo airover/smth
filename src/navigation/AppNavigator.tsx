@@ -23,6 +23,7 @@ import CreatePostScreen from '../screens/CreatePostScreen';
 import MyArticlesScreen from '../screens/MyArticlesScreen';
 import FavoritesScreen from '../screens/FavoritesScreen';
 import MyFollowingScreen from '../screens/MyFollowingScreen';
+import MyFansScreen from '../screens/MyFansScreen';
 import BlacklistScreen from '../screens/BlacklistScreen';
 
 const Tab = createBottomTabNavigator();
@@ -225,6 +226,13 @@ const AppNavigator = () => {
         component={MyFollowingScreen}
         options={{
           title: '我的关注',
+        }}
+      />
+      <Stack.Screen
+        name="MyFans"
+        component={MyFansScreen}
+        options={{
+          title: '我的粉丝',
         }}
       />
       <Stack.Screen

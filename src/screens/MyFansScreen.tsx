@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import {useNavigation, useFocusEffect} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {getFriendsList} from '../services/api';
+import {getFansList} from '../services/api';
 import {useTheme} from '../components/ThemedComponents';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {
@@ -21,24 +21,27 @@ import {
   scaleModerate,
 } from '../utils/responsive';
 
-interface UserItem {
+interface FanItem {
   id: string;
   username: string;
   nickname?: string;
   avatar?: string;
+  level?: number;
+  levelTitle?: string;
+  score?: number;
 }
 
-const MyFollowingScreen: React.FC = () => {
+const MyFansScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const theme = useTheme();
   
-  const [following, setFollowing] = useState<UserItem[]>([]);
+  const [fans, setFans] = useState<FanItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [currentUsername, setCurrentUsername] = useState<string>('');
   const [currentPage, setCurrentPage] = useState(1);
-  const [totalFollowing, setTotalFollowing] = useState(0);
+  const [totalFans, setTotalFans] = useState(0);
   const [hasMore, setHasMore] = useState(true);
 
   // 加载当前用户名
@@ -55,8 +58,8 @@ const MyFollowingScreen: React.FC = () => {
     return '';
   };
 
-  // 加载关注列表
-  const loadFollowing = async (page: number = 1, forceRefresh: boolean = false, append: boolean = false) => {
+  // 加载粉丝列表
+  const loadFans = async (page: number = 1, forceRefresh: boolean = false, append: boolean = false) => {
     try {
       const username = currentUsername || await loadCurrentUsername();
       
@@ -66,39 +69,31 @@ const MyFollowingScreen: React.FC = () => {
         return;
       }
 
-      const result = await getFriendsList(username, page, forceRefresh);
+      const result = await getFansList(username, page, forceRefresh);
       
-      if (result.success && result.friends) {
-        // friends现在直接是用户对象数组，包含完整的用户信息
-        const users = result.friends.map((friend: any) => ({
-          id: friend.id || friend.username,
-          username: friend.username,
-          nickname: friend.nickname,
-          avatar: friend.avatar,
-        }));
-
+      if (result.success && result.fans) {
         if (append) {
           // 追加数据（加载更多）
-          setFollowing(prev => [...prev, ...users]);
+          setFans(prev => [...prev, ...result.fans]);
         } else {
           // 替换数据（刷新）
-          setFollowing(users);
+          setFans(result.fans);
         }
         
-        setTotalFollowing(result.total);
+        setTotalFans(result.total);
         setCurrentPage(result.page);
         
         // 直接使用API返回的hasMore字段
         setHasMore(result.hasMore);
         
-        console.log('Loaded following:', users.length, 'total:', result.total, 'page:', result.page, 'hasMore:', result.hasMore);
+        console.log('Loaded fans:', result.fans.length, 'total:', result.total, 'page:', result.page, 'hasMore:', result.hasMore);
       } else {
         if (!append) {
-          Alert.alert('提示', result.message || '获取关注列表失败');
+          Alert.alert('提示', result.message || '获取粉丝列表失败');
         }
       }
     } catch (error: any) {
-      console.error('Load following error:', error);
+      console.error('Load fans error:', error);
       if (error.message === 'LOGIN_EXPIRED') {
         Alert.alert(
           '登录已过期',
@@ -123,14 +118,14 @@ const MyFollowingScreen: React.FC = () => {
 
   // 初始加载
   useEffect(() => {
-    loadFollowing(1);
+    loadFans(1);
   }, []);
 
   // 页面获得焦点时刷新
   useFocusEffect(
     useCallback(() => {
       if (!loading) {
-        loadFollowing(1);
+        loadFans(1);
       }
     }, [])
   );
@@ -138,24 +133,24 @@ const MyFollowingScreen: React.FC = () => {
   // 下拉刷新
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadFollowing(1, true, false);
+    await loadFans(1, true, false);
   }, [currentUsername]);
 
   // 加载更多
   const onLoadMore = useCallback(() => {
     if (!loadingMore && hasMore && !refreshing) {
       setLoadingMore(true);
-      loadFollowing(currentPage + 1, false, true);
+      loadFans(currentPage + 1, false, true);
     }
   }, [loadingMore, hasMore, refreshing, currentPage]);
 
   // 点击用户
-  const handleUserPress = (user: UserItem) => {
-    navigation.navigate('UserProfile', {username: user.username});
+  const handleUserPress = (fan: FanItem) => {
+    navigation.navigate('UserProfile', {username: fan.username});
   };
 
   // 渲染用户项
-  const renderItem = ({item}: {item: UserItem}) => (
+  const renderItem = ({item}: {item: FanItem}) => (
     <TouchableOpacity
       style={[styles.userItem, {backgroundColor: theme.cardBackground}]}
       onPress={() => handleUserPress(item)}
@@ -184,6 +179,11 @@ const MyFollowingScreen: React.FC = () => {
             @{item.username}
           </Text>
         )}
+        {item.levelTitle && (
+          <Text style={[styles.levelText, {color: theme.secondaryText}]}>
+            {item.levelTitle} · {item.score || 0}分
+          </Text>
+        )}
       </View>
       <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
     </TouchableOpacity>
@@ -197,12 +197,12 @@ const MyFollowingScreen: React.FC = () => {
     
     return (
       <View style={styles.emptyContainer}>
-        <Text style={styles.emptyIcon}>👥</Text>
+        <Text style={styles.emptyIcon}>👤</Text>
         <Text style={[styles.emptyText, {color: theme.secondaryText}]}>
-          暂无关注的用户
+          暂无粉丝
         </Text>
         <Text style={[styles.emptyHint, {color: theme.secondaryText}]}>
-          去关注感兴趣的用户吧
+          多发帖、多互动，吸引更多粉丝吧
         </Text>
       </View>
     );
@@ -210,14 +210,14 @@ const MyFollowingScreen: React.FC = () => {
 
   // 渲染头部统计
   const renderHeader = () => {
-    if (following.length === 0) {
+    if (fans.length === 0) {
       return null;
     }
     
     return (
       <View style={styles.header}>
         <Text style={[styles.headerText, {color: theme.secondaryText}]}>
-          共关注 {totalFollowing > 0 ? totalFollowing : following.length} 人
+          共 {totalFans} 位粉丝
         </Text>
       </View>
     );
@@ -247,13 +247,13 @@ const MyFollowingScreen: React.FC = () => {
         </View>
       ) : (
         <FlatList
-          data={following}
+          data={fans}
           renderItem={renderItem}
           keyExtractor={(item) => item.id}
           ListHeaderComponent={renderHeader}
           ListEmptyComponent={renderEmpty}
           ListFooterComponent={renderFooter}
-          contentContainerStyle={following.length === 0 ? styles.emptyList : styles.list}
+          contentContainerStyle={fans.length === 0 ? styles.emptyList : styles.list}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -336,6 +336,10 @@ const styles = StyleSheet.create({
   },
   username: {
     fontSize: FONT_SIZE.sm,
+    marginBottom: SPACING.xs - 2,
+  },
+  levelText: {
+    fontSize: FONT_SIZE.xs,
   },
   chevron: {
     fontSize: FONT_SIZE.xl,
@@ -371,4 +375,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default MyFollowingScreen;
+export default MyFansScreen;

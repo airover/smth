@@ -1,4 +1,4 @@
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useRef} from 'react';
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import {
   Image,
   Modal,
   Keyboard,
+  InputAccessoryView,
 } from 'react-native';
 import {launchImageLibrary} from 'react-native-image-picker';
 import {useNavigation, useRoute} from '@react-navigation/native';
@@ -55,6 +56,9 @@ const CreatePostScreen: React.FC = () => {
   const [uploading, setUploading] = useState(false); // 是否正在上传图片
   const [uploadProgress, setUploadProgress] = useState<number>(0); // 上传进度（0-100）
   const [showImageSourceModal, setShowImageSourceModal] = useState(false); // 显示图片来源选择弹窗
+  
+  // 键盘工具栏ID - 使用useRef生成唯一ID，确保组件实例间不冲突，且在组件生命周期内保持不变
+  const inputAccessoryViewID = useRef(`createPostKeyboardAccessory_${Date.now()}`).current;
 
   // 设置导航栏
   useEffect(() => {
@@ -425,11 +429,25 @@ const CreatePostScreen: React.FC = () => {
     <View style={styles.container}>
       {renderCaptchaModal()}
       {renderImageSourceModal()}
+      
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.container}>
 
         <ScrollView style={styles.content} keyboardShouldPersistTaps="handled">
+          {/* 键盘工具栏 - 移到ScrollView内部，确保与TextInput在同一渲染上下文中，提高稳定性 */}
+          {Platform.OS === 'ios' && (
+            <InputAccessoryView nativeID={inputAccessoryViewID}>
+              <View style={styles.keyboardAccessory}>
+                <TouchableOpacity
+                  style={styles.keyboardDoneButton}
+                  onPress={() => Keyboard.dismiss()}>
+                  <Text style={styles.keyboardDoneText}>完成</Text>
+                </TouchableOpacity>
+              </View>
+            </InputAccessoryView>
+          )}
+
           {/* 版面信息 */}
           <View style={styles.boardInfo}>
             <Text style={styles.boardLabel}>
@@ -468,6 +486,7 @@ const CreatePostScreen: React.FC = () => {
                 textAlignVertical="top"
                 maxLength={10000}
                 editable={!submitting}
+                inputAccessoryViewID={inputAccessoryViewID}
               />
               {/* 图片选择按钮（左下角） */}
               <TouchableOpacity
@@ -555,8 +574,8 @@ const CreatePostScreen: React.FC = () => {
           {/* 提示信息 */}
           <View style={styles.tipContainer}>
             <Text style={styles.tipText}>💡 提示：</Text>
+            <Text style={styles.tipText}>• 点击发布前先完成人机验证</Text>
             <Text style={styles.tipText}>• 点击内容框左下角图标可添加图片（最多9张）</Text>
-            <Text style={styles.tipText}>• 完成人机验证后会自动上传图片</Text>
             <Text style={styles.tipText}>• 图片上传完成后才能发布</Text>
             <Text style={styles.tipText}>• 草稿会自动保存（不含图片）</Text>
           </View>
@@ -831,6 +850,24 @@ const styles = StyleSheet.create({
   },
   imageSourceCancelText: {
     color: '#666',
+  },
+  keyboardAccessory: {
+    backgroundColor: '#f9f9f9',
+    borderTopWidth: 1,
+    borderTopColor: '#ddd',
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  keyboardDoneButton: {
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm,
+  },
+  keyboardDoneText: {
+    fontSize: FONT_SIZE.lg,
+    color: '#007AFF',
+    fontWeight: '600',
   },
 });
 

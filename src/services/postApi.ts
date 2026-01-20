@@ -4,6 +4,8 @@ import {
   fetchWithRetry,
   DEFAULT_TIMEOUT,
   logRequest,
+  buildGetHeaders,
+  buildPostHeaders,
 } from '../utils/requestUtils';
 
 /**
@@ -66,18 +68,12 @@ export const createPost = async (params: PostParams): Promise<PostResponse> => {
       throw new Error('未登录，请先登录');
     }
 
-    // 构建请求头（基于抓包结果）
-    const headers: Record<string, string> = {
-      Accept: 'application/json, text/plain, */*',
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Cookie: cookies,
-      Authorization: 'Basic Og==', // 从抓包中获取
-      Origin: 'https://wap.newsmth.net',
-      Referer: `https://wap.newsmth.net/post?boardId=${params.boardId}`,
-      'User-Agent':
-        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
-      'test-uin-only': '1',
-    };
+    // 构建请求头（使用封装好的函数）
+    const headers = buildPostHeaders(
+      cookies,
+      'application/x-www-form-urlencoded',
+      `https://wap.newsmth.net/post?boardId=${params.boardId}`
+    );
 
     // 构建Form Data格式的请求体（基于抓包结果）
     const timestamp = Date.now();
@@ -181,19 +177,12 @@ export const replyPost = async (params: PostParams): Promise<PostResponse> => {
       throw new Error('未登录，请先登录');
     }
 
-    // 构建请求头
-    const headers: Record<string, string> = {
-      Accept: 'application/json, text/plain, */*',
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Cookie: cookies,
-      Authorization: 'Basic Og==',
-      Origin: 'https://wap.newsmth.net',
-      // 构造 Referer
-      Referer: `https://wap.newsmth.net/article/${params.reId}?title=${encodeURIComponent(params.subject || '')}&from=board`,
-      'User-Agent':
-        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
-      'test-uin-only': '1',
-    };
+    // 构建请求头（使用封装好的函数）
+    const headers = buildPostHeaders(
+      cookies,
+      'application/x-www-form-urlencoded',
+      `https://wap.newsmth.net/article/${params.reId}?title=${encodeURIComponent(params.subject || '')}&from=board`
+    );
 
     // 构建Form Data
     const timestamp = Date.now();
@@ -333,27 +322,13 @@ export const checkPublish = async (boardId?: string): Promise<boolean> => {
       throw new Error('未登录，请先登录');
     }
 
-    const headers: Record<string, string> = {
-      Accept: 'application/json, text/plain, */*',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-      'access-control-allow-origin': '*',
-      Cookie: cookies,
-      Authorization: 'Basic Og==',
-      'Cache-Control': 'no-cache',
-      Pragma: 'no-cache',
-      Referer: boardId 
+    // 构建请求头（使用封装好的函数）
+    const headers = buildGetHeaders(
+      cookies,
+      boardId 
         ? `https://wap.newsmth.net/post?boardId=${boardId}` 
-        : 'https://wap.newsmth.net/',
-      'priority': 'u=1, i',
-      'sec-ch-ua': '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
-      'sec-ch-ua-mobile': '?0',
-      'sec-ch-ua-platform': '"macOS"',
-      'sec-fetch-dest': 'empty',
-      'sec-fetch-mode': 'cors',
-      'sec-fetch-site': 'same-origin',
-      'User-Agent':
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
-    };
+        : 'https://wap.newsmth.net/'
+    );
 
     logRequest.start(API_URL, 'GET');
 
@@ -392,30 +367,13 @@ export const getUploadToken = async (boardId?: string): Promise<string> => {
       throw new Error('未登录，请先登录');
     }
 
-    // 对比浏览器请求头，完善请求头设置
-    const headers: Record<string, string> = {
-      Accept: 'application/json, text/plain, */*',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-      'access-control-allow-origin': '*',
-      Cookie: cookies,
-      Authorization: 'Basic Og==',
-      'Cache-Control': 'no-cache',
-      Pragma: 'no-cache',
-      Origin: 'https://wap.newsmth.net',
-      Referer: boardId 
+    // 构建请求头（使用封装好的函数）
+    const headers = buildGetHeaders(
+      cookies,
+      boardId 
         ? `https://wap.newsmth.net/post?boardId=${boardId}` 
-        : 'https://wap.newsmth.net/',
-      'priority': 'u=1, i',
-      'sec-ch-ua': '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
-      'sec-ch-ua-mobile': '?0',
-      'sec-ch-ua-platform': '"macOS"',
-      'sec-fetch-dest': 'empty',
-      'sec-fetch-mode': 'cors',
-      'sec-fetch-site': 'same-origin',
-      'test-uin-only': '1',
-      'User-Agent':
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
-    };
+        : 'https://wap.newsmth.net/'
+    );
 
     logRequest.start(API_URL, 'GET');
 
@@ -558,30 +516,14 @@ export const uploadImages = async (
     logRequest.start(API_URL, 'POST');
     logRequest.params({boardId, token, imageCount: imageAssets.length});
 
-    // 构建请求头 - 直接使用缓存的 cookies
+    // 构建请求头（使用封装好的函数）
     // set_identity 已在登录后由 api.ts 自动构造并持久化，无需再手动构造
-    const requestHeaders = {
-      Accept: 'application/json, text/plain, */*',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-      'access-control-allow-origin': '*',
-      Cookie: cookies,
-      Authorization: 'Basic Og==',
-      Origin: 'https://wap.newsmth.net',
-      Referer: `https://wap.newsmth.net/post?boardId=${boardId}`,
-      'Cache-Control': 'no-cache',
-      Pragma: 'no-cache',
-      'priority': 'u=1, i',
-      'sec-ch-ua': '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
-      'sec-ch-ua-mobile': '?0',
-      'sec-ch-ua-platform': '"macOS"',
-      'sec-fetch-dest': 'empty',
-      'sec-fetch-mode': 'cors',
-      'sec-fetch-site': 'same-origin',
-      'test-uin-only': '1',
-      'User-Agent':
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
-      // Content-Type 由 rn-fetch-blob 自动设置为 multipart/form-data
-    };
+    // Content-Type 由 rn-fetch-blob 自动设置为 multipart/form-data，所以这里不传 contentType
+    const requestHeaders = buildPostHeaders(
+      cookies,
+      undefined, // Content-Type 由 rn-fetch-blob 自动设置
+      `https://wap.newsmth.net/post?boardId=${boardId}`
+    );
 
     // 使用 rn-fetch-blob 上传文件
     const response = await RNFetchBlob.config({

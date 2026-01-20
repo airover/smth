@@ -1,4 +1,6 @@
 // API 服务
+// 职责：认证（登录/登出）、用户信息、搜索、帖子操作（删帖/收藏/点赞）
+// 缓存：getUserInfo 使用 cacheManager 统一管理
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   fetchWithRetry,
@@ -12,6 +14,8 @@ import {
   buildDeleteHeaders,
   buildLoginHeaders,
 } from '../utils/requestUtils';
+import {getCookies, storeCookies} from './auth';
+import {setCache, getCacheWithTimestamp, clearCache as clearCacheManager} from './cacheManager';
 
 const BASE_URL = 'https://wap.newsmth.net';
 const WAP_BASE_URL = 'https://wap.newsmth.net';
@@ -21,49 +25,7 @@ const DEFAULT_PAGE = 1; // 默认页码
 const DEFAULT_PAGE_SIZE = 20; // 默认每页数量
 const DEFAULT_SEARCH_STATUS = 0; // 默认搜索状态
 
-// 存储 Cookie（合并新旧 cookie，保留 set_identity 等自定义 cookie）
-const storeCookies = async (newCookies: string, replace: boolean = false) => {
-  if (replace) {
-    // 完全替换模式（用于登出等场景）
-    await AsyncStorage.setItem('cookies', newCookies);
-    return;
-  }
-  
-  // 合并模式：保留已有的 set_identity 等自定义 cookie
-  const existingCookies = await AsyncStorage.getItem('cookies') || '';
-  
-  // 从已有 cookies 中提取 set_identity（如果存在）
-  const setIdentityMatch = existingCookies.match(/set_identity=([^;]+)/);
-  const existingSetIdentity = setIdentityMatch ? setIdentityMatch[0] : null;
-  
-  // 解析新的 cookies，提取有效的 cookie 键值对
-  // Set-Cookie 格式可能是: "kbs-info=xxx; path=/; domain=.newsmth.net, kbs-key=yyy; path=/; domain=.newsmth.net"
-  const cookieParts: string[] = [];
-  
-  // 提取 kbs-info
-  const kbsInfoMatch = newCookies.match(/kbs-info=([^;,\s]+)/);
-  if (kbsInfoMatch) {
-    cookieParts.push(`kbs-info=${kbsInfoMatch[1]}`);
-  }
-  
-  // 提取 kbs-key
-  const kbsKeyMatch = newCookies.match(/kbs-key=([^;,\s]+)/);
-  if (kbsKeyMatch) {
-    cookieParts.push(`kbs-key=${kbsKeyMatch[1]}`);
-  }
-  
-  // 如果新 cookies 中没有 set_identity，但已有 cookies 中有，则保留
-  const newSetIdentityMatch = newCookies.match(/set_identity=([^;]+)/);
-  if (newSetIdentityMatch) {
-    cookieParts.push(newSetIdentityMatch[0]);
-  } else if (existingSetIdentity) {
-    cookieParts.push(existingSetIdentity);
-  }
-  
-  // 组合最终的 cookies
-  const finalCookies = cookieParts.length > 0 ? cookieParts.join('; ') : newCookies;
-  await AsyncStorage.setItem('cookies', finalCookies);
-};
+// storeCookies 已移至 auth.ts 统一管理
 
 // 更新 set_identity cookie
 const updateSetIdentityCookie = async (userInfo: any) => {
@@ -131,10 +93,7 @@ const updateSetIdentityCookie = async (userInfo: any) => {
   }
 };
 
-// 获取 Cookie
-const getCookies = async (): Promise<string | null> => {
-  return await AsyncStorage.getItem('cookies');
-};
+// getCookies 已移至 auth.ts 统一管理
 
 // 通用请求函数
 const request = async (
@@ -279,7 +238,7 @@ export const login = async (
 
 
 // 重新导出数据获取函数（使用新的实现）
-export {getTopTen, getHotPosts, getHotBoards, getBoards, getSubBoards, getBoardPosts, getPostDetail, getTopicReplies, getFavoriteBoards, getMessages, getConversationMessages, markMessageAsRead, sendMessage, addFriend, removeFriend, checkIsHerBlack, addBlack, getFriendsList, getBlackList, fetchUserInfo} from './dataFetcher';
+export {getTopTen, getHotPosts, getHotBoards, getBoards, getSubBoards, getBoardPosts, getPostDetail, getTopicReplies, getFavoriteBoards, getMessages, getConversationMessages, markMessageAsRead, sendMessage, addFriend, removeFriend, checkIsHerBlack, addBlack, removeBlack, getFriendsList, getFansList, getBlackList, fetchUserInfo} from './dataFetcher';
 
 // 获取收藏版面（已移至 dataFetcher，此处保留类型定义兼容性，如果需要的话可以删除）
 // export const getFavoriteBoards = async (): Promise<any[]> => { ... };
@@ -288,11 +247,9 @@ export {getTopTen, getHotPosts, getHotBoards, getBoards, getSubBoards, getBoardP
 
 // getBoardPosts 和 getPostDetail 已从 dataFetcher 导出
 
-// 用户信息缓存（内存缓存）
-let userInfoCache: {data: any; timestamp: number} | null = null;
+// 用户信息缓存配置
 const USER_INFO_CACHE_DURATION = 60 * 1000; // 1分钟缓存
-
-// 用户信息持久化存储的key
+// 用户信息持久化存储的key（用于 AsyncStorage 备份）
 const USER_INFO_STORAGE_KEY = 'userInfo';
 const USER_INFO_TIMESTAMP_KEY = 'userInfoTimestamp';
 
@@ -378,18 +335,13 @@ const fetchUserInfoFromServer = async (): Promise<any> => {
         await AsyncStorage.setItem('username', account.name);
       }
       
-      const now = Date.now();
+      // 使用 cacheManager 统一管理缓存
+      setCache('userInfo', undefined, userInfo, USER_INFO_CACHE_DURATION);
       
-      // 更新内存缓存
-      userInfoCache = {
-        data: userInfo,
-        timestamp: now,
-      };
-      
-      // 持久化用户信息到AsyncStorage
+      // 同时持久化到 AsyncStorage（用于离线场景和 App 重启后恢复）
       try {
         await AsyncStorage.setItem(USER_INFO_STORAGE_KEY, JSON.stringify(userInfo));
-        await AsyncStorage.setItem(USER_INFO_TIMESTAMP_KEY, now.toString());
+        await AsyncStorage.setItem(USER_INFO_TIMESTAMP_KEY, Date.now().toString());
         console.log('用户信息已持久化到本地存储');
         
         // 更新 set_identity cookie
@@ -429,9 +381,9 @@ const fetchUserInfoFromServer = async (): Promise<any> => {
 // 从 wap API 获取用户信息（带持久化缓存）
 // API: POST https://wap.newsmth.net/wap/api/profile
 // 响应: {code: 1, data: {account: {name, nick, avatar, ...}}}
-// 缓存策略：
-// 1. 优先使用内存缓存（1分钟有效期）
-// 2. 内存缓存失效时，使用持久化缓存（AsyncStorage）
+// 缓存策略（使用 cacheManager 统一管理）：
+// 1. 优先使用 cacheManager 内存缓存（1分钟有效期）
+// 2. 内存缓存失效时，使用 AsyncStorage 持久化缓存
 // 3. 持久化缓存过期时，异步更新
 // 4. 无任何缓存时，同步获取
 // 5. forceRefresh=true 时，跳过缓存直接从服务器获取（用于下拉刷新）
@@ -444,13 +396,14 @@ export const getUserInfo = async (forceRefresh: boolean = false): Promise<any> =
     return await fetchUserInfoFromServer();
   }
   
-  // 第一层：检查内存缓存（最快）
-  if (userInfoCache && (now - userInfoCache.timestamp) < USER_INFO_CACHE_DURATION) {
-    console.log('getUserInfo: 使用内存缓存，剩余有效期:', Math.floor((USER_INFO_CACHE_DURATION - (now - userInfoCache.timestamp)) / 1000), '秒');
-    return userInfoCache.data;
+  // 第一层：检查 cacheManager 内存缓存（最快）
+  const cachedData = getCacheWithTimestamp<any>('userInfo');
+  if (cachedData && (now - cachedData.timestamp) < USER_INFO_CACHE_DURATION) {
+    console.log('getUserInfo: 使用 cacheManager 内存缓存，剩余有效期:', Math.floor((USER_INFO_CACHE_DURATION - (now - cachedData.timestamp)) / 1000), '秒');
+    return cachedData.data;
   }
   
-  // 第二层：检查持久化缓存
+  // 第二层：检查 AsyncStorage 持久化缓存
   try {
     const storedUserInfo = await AsyncStorage.getItem(USER_INFO_STORAGE_KEY);
     const storedTimestamp = await AsyncStorage.getItem(USER_INFO_TIMESTAMP_KEY);
@@ -460,27 +413,23 @@ export const getUserInfo = async (forceRefresh: boolean = false): Promise<any> =
       const timestamp = parseInt(storedTimestamp, 10);
       const age = now - timestamp;
       
-      // 如果持久化缓存未过期（1分钟内），恢复内存缓存并返回
+      // 如果持久化缓存未过期（1分钟内），恢复到 cacheManager 并返回
       if (age < USER_INFO_CACHE_DURATION) {
         console.log('getUserInfo: 使用持久化缓存，剩余有效期:', Math.floor((USER_INFO_CACHE_DURATION - age) / 1000), '秒');
-        // 恢复内存缓存（使用原始时间戳）
-        userInfoCache = {
-          data: userInfo,
-          timestamp: timestamp,
-        };
+        // 恢复到 cacheManager（保持原始时间戳行为）
+        setCache('userInfo', undefined, userInfo, USER_INFO_CACHE_DURATION);
         return userInfo;
       }
       
       // 持久化缓存已过期，返回旧数据并异步更新
       console.log('getUserInfo: 持久化缓存已过期（', Math.floor(age / 1000), '秒前），返回旧数据并异步更新');
       
-      // 异步更新（fetchUserInfoFromServer 会自动更新内存缓存和持久化缓存，使用新的时间戳）
+      // 异步更新
       fetchUserInfoFromServer().catch(error => {
         console.error('getUserInfo: 异步更新缓存失败:', error);
       });
       
-      // 立即返回旧数据（不恢复内存缓存，避免使用旧时间戳）
-      // 下次调用时，如果异步更新已完成，会使用新的缓存（新时间戳）
+      // 立即返回旧数据
       return userInfo;
     }
   } catch (error) {
@@ -495,9 +444,9 @@ export const getUserInfo = async (forceRefresh: boolean = false): Promise<any> =
 // 清除用户信息缓存（用于登出等场景）
 export const clearUserInfoCache = async () => {
   console.log('clearUserInfoCache: 清除用户信息缓存');
-  // 清除内存缓存
-  userInfoCache = null;
-  // 清除持久化缓存
+  // 清除 cacheManager 中的用户信息缓存
+  clearCacheManager('userInfo');
+  // 清除 AsyncStorage 持久化缓存
   try {
     await AsyncStorage.removeItem(USER_INFO_STORAGE_KEY);
     await AsyncStorage.removeItem(USER_INFO_TIMESTAMP_KEY);
@@ -783,15 +732,13 @@ export const deletePost = async (postId: string, title?: string, board?: string)
 
 // 登出
 export const logout = async () => {
-  const {clearCache} = require('./cacheManager');
-  
   // 清除所有AsyncStorage中的登录数据
   await AsyncStorage.removeItem('cookies');
   await AsyncStorage.removeItem('username');
   await AsyncStorage.removeItem('isLoggedIn');
   
-  // 清除所有内存缓存
-  clearCache();
+  // 清除所有内存缓存（使用已导入的 clearCacheManager）
+  clearCacheManager();
   
   // 清除用户信息缓存（包括持久化缓存）
   await clearUserInfoCache();
@@ -882,7 +829,7 @@ export const getMyArticles = async (
         
         return {
           id: article.id,
-          title: article.title,
+          title: article.title || article.subject,
           board: boardValue,
           boardName: boardNameValue,
           author: article.author,
@@ -920,6 +867,106 @@ export const getMyArticles = async (
     };
   } catch (error) {
     console.error('getMyArticles error:', error);
+    throw error;
+  }
+};
+
+// 获取我喜欢的文章列表
+// API: GET https://wap.newsmth.net/wap/api/profile/mylikes?t=xxx&type=2&page=1&sort=DESC
+// 参数说明：
+// - type: 2=喜欢的文章
+// - page: 页码
+// - sort: 排序方式，DESC=倒序，ASC=正序
+export const getMyLikes = async (
+  page: number = 1,
+  sort: 'DESC' | 'ASC' = 'DESC'
+): Promise<{
+  articles: MyArticle[];
+  total: number;
+  hasMore: boolean;
+  page: number;
+  pageSize: number;
+}> => {
+  try {
+    const timestamp = Date.now();
+    const cookies = await getCookies();
+    
+    if (!cookies) {
+      console.log('getMyLikes: No cookies found');
+      return {
+        articles: [],
+        total: 0,
+        hasMore: false,
+        page,
+        pageSize: 20,
+      };
+    }
+    
+    const params = new URLSearchParams({
+      t: timestamp.toString(),
+      type: '2',
+      page: page.toString(),
+      sort: sort,
+    });
+    
+    const headers = buildGetHeaders(cookies, 'https://wap.newsmth.net/myArticle');
+    
+    const url = `${WAP_BASE_URL}/wap/api/profile/mylikes?${params.toString()}`;
+    console.log('getMyLikes URL:', url);
+    
+    const response = await fetchWithRetry(url, {
+      method: 'GET',
+      headers,
+    }, DEFAULT_TIMEOUT);
+    
+    const json = await response.json();
+    console.log('getMyLikes response:', JSON.stringify(json).substring(0, 500));
+    
+    if (json.code === 1 && json.data && json.data.likes) {
+      const articles = (json.data.likes || []).map((like: any) => {
+        const article = like.article || {};
+        const board = article.board || {};
+        
+        return {
+          id: article.id || like.articleId,
+          title: article.subject || '无标题',
+          board: board.name || board.id || '',
+          boardName: board.title || board.name || '',
+          author: article.account?.name || '',
+          time: like.time || article.postTime,
+          replyCount: 0, // 喜欢列表不显示回复数
+          content: like.body || article.body || '',
+          topicId: article.topicId,
+        };
+      });
+      
+      const pager = json.data.pager || {};
+      const totalPages = pager.total || 0; // 总页数
+      const pageSize = pager.size || 20;
+      const currentPage = pager.page || page;
+      const itemsCount = pager.items || 0; // 当前页实际条目数
+      
+      // 判断是否还有更多：当前页 < 总页数
+      const hasMore = currentPage < totalPages;
+      
+      return {
+        articles,
+        total: itemsCount,
+        hasMore,
+        page: currentPage,
+        pageSize,
+      };
+    }
+    
+    return {
+      articles: [],
+      total: 0,
+      hasMore: false,
+      page,
+      pageSize: 20,
+    };
+  } catch (error) {
+    console.error('getMyLikes error:', error);
     throw error;
   }
 };

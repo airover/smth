@@ -18,7 +18,7 @@ import {
   ActionSheetIOS,
 } from 'react-native';
 import {useRoute, useNavigation} from '@react-navigation/native';
-import {getUserInfo, fetchUserInfo, sendMessage, addBlack, addFriend, removeFriend, checkIsHerBlack, getFriendsList} from '../services/api';
+import {getUserInfo, fetchUserInfo, sendMessage, addBlack, removeBlack, addFriend, removeFriend, checkIsHerBlack, getFriendsList, getBlackList} from '../services/api';
 import {User} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
@@ -88,6 +88,8 @@ const UserProfileScreen: React.FC = () => {
   const [sendingMessage, setSendingMessage] = useState(false);
   const [isFollowing, setIsFollowing] = useState(false);
   const [followingLoading, setFollowingLoading] = useState(false);
+  const [isInBlacklist, setIsInBlacklist] = useState(false);
+  const [blacklistLoading, setBlacklistLoading] = useState(false);
 
   const checkAndLoadUserInfo = async () => {
     try {
@@ -106,13 +108,40 @@ const UserProfileScreen: React.FC = () => {
       
       const userInfo = await loadUserInfo(isSelf);
       
-      // 如果是查看他人资料，检查关注状态
+      // 如果是查看他人资料，检查关注状态和黑名单状态
       // 传入userInfo，因为此时user状态可能还没更新
       if (!isSelf && username) {
         await checkFollowingStatus(username, false, userInfo);
+        await checkBlacklistStatus(username, false, userInfo);
       }
     } catch (err) {
       console.error('Check and load user info error:', err);
+    }
+  };
+
+  // 检查目标用户是否在当前用户的黑名单中
+  // userInfo参数用于传入刚获取的用户信息，避免user状态未更新的问题
+  const checkBlacklistStatus = async (targetUsername: string, forceRefresh: boolean = false, userInfo?: User | null) => {
+    try {
+      const currentUsername = await AsyncStorage.getItem('username');
+      if (!currentUsername) {
+        console.log('Not logged in, skip checking blacklist status');
+        return;
+      }
+      
+      const result = await getBlackList(forceRefresh);
+      if (result.success && result.blacklist) {
+        // 检查目标用户的ID或用户名是否在黑名单中
+        // 优先使用传入的userInfo，其次使用user状态
+        const targetUserId = userInfo?.id || user?.id || '';
+        const isInList = result.blacklist.some(
+          (item: any) => item.id === targetUserId || item.username === targetUsername
+        );
+        setIsInBlacklist(isInList);
+        console.log('Blacklist status for', targetUsername, ':', isInList, 'userId:', targetUserId);
+      }
+    } catch (error) {
+      console.error('Check blacklist status error:', error);
     }
   };
 
@@ -129,62 +158,111 @@ const UserProfileScreen: React.FC = () => {
       const result = await getFriendsList(currentUsername, 1, forceRefresh);
       if (result.success && result.friends) {
         // 检查目标用户的ID或用户名是否在关注列表中
-        // friends数组同时包含用户ID和用户名
+        // friends现在是用户对象数组，包含id和username字段
         // 优先使用传入的userInfo，其次使用user状态
         const targetUserId = userInfo?.id || user?.id || '';
-        const isInList = result.friends.includes(targetUserId) || 
-                        result.friends.includes(targetUsername);
+        const isInList = result.friends.some(
+          (friend: any) => friend.id === targetUserId || friend.username === targetUsername
+        );
         setIsFollowing(isInList);
-        console.log('Following status for', targetUsername, ':', isInList, 'userId:', targetUserId, 'friends:', result.friends);
+        console.log('Following status for', targetUsername, ':', isInList, 'userId:', targetUserId, 'friends count:', result.friends.length);
       }
     } catch (error) {
       console.error('Check following status error:', error);
     }
   };
 
-  // 处理拉黑用户
+  // 处理拉黑/移除黑名单
   const handleBlockUser = async () => {
-    Alert.alert(
-      '确认拉黑',
-      `确定要拉黑 ${user?.username || username} 吗？拉黑后对方将无法关注您或给您发送消息。`,
-      [
-        {text: '取消', style: 'cancel'},
-        {
-          text: '确定',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const userId = user?.id || username || '';
-              const result = await addBlack(userId);
-              if (result.success) {
-                Alert.alert('成功', result.message || '拉黑成功');
-                // 拉黑成功后返回上一页
-                navigation.goBack();
-              } else {
-                Alert.alert('失败', result.message || '拉黑失败');
+    const userId = user?.id || username || '';
+    const targetUsername = user?.username || username || '';
+
+    if (isInBlacklist) {
+      // 移除黑名单
+      Alert.alert(
+        '移除黑名单',
+        `确定要将 ${targetUsername} 从黑名单中移除吗？`,
+        [
+          {text: '取消', style: 'cancel'},
+          {
+            text: '确定',
+            onPress: async () => {
+              try {
+                setBlacklistLoading(true);
+                const result = await removeBlack(userId);
+                if (result.success) {
+                  setIsInBlacklist(false);
+                  Alert.alert('成功', result.message || '已移除黑名单');
+                  // 强制刷新黑名单缓存
+                  await checkBlacklistStatus(targetUsername, true, user);
+                } else {
+                  Alert.alert('失败', result.message || '移除失败');
+                }
+              } catch (err: any) {
+                console.error('Remove from blacklist error:', err);
+                if (err.message === 'LOGIN_EXPIRED') {
+                  Alert.alert(
+                    '登录已过期',
+                    '请重新登录后操作',
+                    [
+                      {text: '去登录', onPress: () => navigation.navigate('Login' as never)},
+                      {text: '取消', style: 'cancel'},
+                    ]
+                  );
+                } else {
+                  Alert.alert('错误', '移除失败，请稍后重试');
+                }
+              } finally {
+                setBlacklistLoading(false);
               }
-            } catch (err: any) {
-              console.error('Block user error:', err);
-              if (err.message === 'LOGIN_EXPIRED') {
-                Alert.alert(
-                  '登录已过期',
-                  '请重新登录后操作',
-                  [
-                    {
-                      text: '去登录',
-                      onPress: () => navigation.navigate('Login' as never),
-                    },
-                    {text: '取消', style: 'cancel'},
-                  ]
-                );
-              } else {
-                Alert.alert('错误', '拉黑失败，请稍后重试');
-              }
-            }
+            },
           },
-        },
-      ]
-    );
+        ]
+      );
+    } else {
+      // 拉黑
+      Alert.alert(
+        '确认拉黑',
+        `确定要拉黑 ${targetUsername} 吗？拉黑后对方将无法关注您或给您发送消息。`,
+        [
+          {text: '取消', style: 'cancel'},
+          {
+            text: '确定',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                setBlacklistLoading(true);
+                const result = await addBlack(userId);
+                if (result.success) {
+                  setIsInBlacklist(true);
+                  Alert.alert('成功', result.message || '拉黑成功');
+                  // 强制刷新黑名单缓存
+                  await checkBlacklistStatus(targetUsername, true, user);
+                } else {
+                  Alert.alert('失败', result.message || '拉黑失败');
+                }
+              } catch (err: any) {
+                console.error('Block user error:', err);
+                if (err.message === 'LOGIN_EXPIRED') {
+                  Alert.alert(
+                    '登录已过期',
+                    '请重新登录后操作',
+                    [
+                      {text: '去登录', onPress: () => navigation.navigate('Login' as never)},
+                      {text: '取消', style: 'cancel'},
+                    ]
+                  );
+                } else {
+                  Alert.alert('错误', '拉黑失败，请稍后重试');
+                }
+              } finally {
+                setBlacklistLoading(false);
+              }
+            },
+          },
+        ]
+      );
+    }
   };
 
   // 处理关注/取消关注
@@ -356,9 +434,10 @@ const UserProfileScreen: React.FC = () => {
     setRefreshing(true);
     // 下拉刷新时强制从API获取最新数据
     const userInfo = await loadUserInfo(isCurrentUser, true);
-    // 如果是查看他人资料，强制刷新关注状态
+    // 如果是查看他人资料，强制刷新关注状态和黑名单状态
     if (!isCurrentUser && username) {
       await checkFollowingStatus(username, true, userInfo);
+      await checkBlacklistStatus(username, true, userInfo);
     }
     setRefreshing(false);
   };
@@ -485,11 +564,12 @@ const UserProfileScreen: React.FC = () => {
                     ]);
                   } else {
                     // 使用ActionSheetIOS实现垂直菜单
+                    const blockActionText = isInBlacklist ? '移除黑名单' : '拉黑';
                     if (Platform.OS === 'ios') {
                       ActionSheetIOS.showActionSheetWithOptions(
                         {
-                          options: ['取消', '拉黑'],
-                          destructiveButtonIndex: 1,
+                          options: ['取消', blockActionText],
+                          destructiveButtonIndex: isInBlacklist ? undefined : 1,
                           cancelButtonIndex: 0,
                           title: '更多操作',
                         },
@@ -503,8 +583,8 @@ const UserProfileScreen: React.FC = () => {
                       // Android使用Alert
                       Alert.alert('更多操作', '', [
                         {
-                          text: '拉黑',
-                          style: 'destructive',
+                          text: blockActionText,
+                          style: isInBlacklist ? undefined : 'destructive',
                           onPress: handleBlockUser,
                         },
                         {text: '取消', style: 'cancel'},

@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import {useNavigation, useFocusEffect} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {getMyArticles, MyArticle} from '../services/api';
+import {getMyArticles, getMyLikes, MyArticle} from '../services/api';
 import {formatRelativeTime} from '../utils/timeFormat';
 import {useTheme} from '../components/ThemedComponents';
 import {useSettings} from '../context/SettingsContext';
@@ -27,6 +27,7 @@ import {
 // 缓存 key
 const MY_ARTICLES_CACHE_KEY = 'my_articles_cache';
 const MY_REPLIES_CACHE_KEY = 'my_replies_cache';
+const MY_LIKES_CACHE_KEY = 'my_likes_cache';
 const CACHE_DURATION = 5 * 60 * 1000; // 5分钟缓存
 
 interface CachedData {
@@ -43,8 +44,8 @@ const MyArticlesScreen: React.FC = () => {
   const {settings} = useSettings();
   const fontSizes = getFontSizes(settings.fontSize);
   
-  // Tab状态：0=帖子, 1=回复
-  const [activeTab, setActiveTab] = useState<0 | 1>(0);
+  // Tab状态：0=帖子, 1=回复, 2=喜欢
+  const [activeTab, setActiveTab] = useState<0 | 1 | 2>(0);
   
   // 帖子数据
   const [articles, setArticles] = useState<MyArticle[]>([]);
@@ -58,6 +59,12 @@ const MyArticlesScreen: React.FC = () => {
   const [repliesTotal, setRepliesTotal] = useState(0);
   const [repliesHasMore, setRepliesHasMore] = useState(false);
   
+  // 喜欢数据
+  const [likes, setLikes] = useState<MyArticle[]>([]);
+  const [likesPage, setLikesPage] = useState(1);
+  const [likesTotal, setLikesTotal] = useState(0);
+  const [likesHasMore, setLikesHasMore] = useState(false);
+  
   // 加载状态
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -67,9 +74,9 @@ const MyArticlesScreen: React.FC = () => {
   const isLoadingRef = useRef(false);
 
   // 加载缓存数据
-  const loadCachedData = async (type: 0 | 1): Promise<CachedData | null> => {
+  const loadCachedData = async (type: 0 | 1 | 2): Promise<CachedData | null> => {
     try {
-      const cacheKey = type === 0 ? MY_ARTICLES_CACHE_KEY : MY_REPLIES_CACHE_KEY;
+      const cacheKey = type === 0 ? MY_ARTICLES_CACHE_KEY : type === 1 ? MY_REPLIES_CACHE_KEY : MY_LIKES_CACHE_KEY;
       const cached = await AsyncStorage.getItem(cacheKey);
       if (cached) {
         const data: CachedData = JSON.parse(cached);
@@ -85,9 +92,9 @@ const MyArticlesScreen: React.FC = () => {
   };
 
   // 保存缓存数据
-  const saveCachedData = async (type: 0 | 1, data: Omit<CachedData, 'timestamp'>) => {
+  const saveCachedData = async (type: 0 | 1 | 2, data: Omit<CachedData, 'timestamp'>) => {
     try {
-      const cacheKey = type === 0 ? MY_ARTICLES_CACHE_KEY : MY_REPLIES_CACHE_KEY;
+      const cacheKey = type === 0 ? MY_ARTICLES_CACHE_KEY : type === 1 ? MY_REPLIES_CACHE_KEY : MY_LIKES_CACHE_KEY;
       const cachedData: CachedData = {
         ...data,
         timestamp: Date.now(),
@@ -99,7 +106,7 @@ const MyArticlesScreen: React.FC = () => {
   };
 
   // 加载数据
-  const loadData = async (type: 0 | 1, page: number = 1, isRefresh: boolean = false) => {
+  const loadData = async (type: 0 | 1 | 2, page: number = 1, isRefresh: boolean = false) => {
     if (isLoadingRef.current && !isRefresh) {
       return;
     }
@@ -117,11 +124,16 @@ const MyArticlesScreen: React.FC = () => {
             setArticlesPage(cached.page);
             setArticlesTotal(cached.total);
             setArticlesHasMore(cached.hasMore);
-          } else {
+          } else if (type === 1) {
             setReplies(cached.articles);
             setRepliesPage(cached.page);
             setRepliesTotal(cached.total);
             setRepliesHasMore(cached.hasMore);
+          } else {
+            setLikes(cached.articles);
+            setLikesPage(cached.page);
+            setLikesTotal(cached.total);
+            setLikesHasMore(cached.hasMore);
           }
           setLoading(false);
           
@@ -131,7 +143,7 @@ const MyArticlesScreen: React.FC = () => {
         }
       }
       
-      const result = await getMyArticles(type, page);
+      const result = type === 2 ? await getMyLikes(page) : await getMyArticles(type, page);
       
       if (page === 1) {
         // 第一页，替换数据
@@ -140,11 +152,16 @@ const MyArticlesScreen: React.FC = () => {
           setArticlesPage(1);
           setArticlesTotal(result.total);
           setArticlesHasMore(result.hasMore);
-        } else {
+        } else if (type === 1) {
           setReplies(result.articles);
           setRepliesPage(1);
           setRepliesTotal(result.total);
           setRepliesHasMore(result.hasMore);
+        } else {
+          setLikes(result.articles);
+          setLikesPage(1);
+          setLikesTotal(result.total);
+          setLikesHasMore(result.hasMore);
         }
         
         // 保存到缓存
@@ -161,11 +178,16 @@ const MyArticlesScreen: React.FC = () => {
           setArticles(newArticles);
           setArticlesPage(page);
           setArticlesHasMore(result.hasMore);
-        } else {
+        } else if (type === 1) {
           const newReplies = [...replies, ...result.articles];
           setReplies(newReplies);
           setRepliesPage(page);
           setRepliesHasMore(result.hasMore);
+        } else {
+          const newLikes = [...likes, ...result.articles];
+          setLikes(newLikes);
+          setLikesPage(page);
+          setLikesHasMore(result.hasMore);
         }
       }
     } catch (error) {
@@ -185,7 +207,7 @@ const MyArticlesScreen: React.FC = () => {
 
   // Tab切换时加载
   useEffect(() => {
-    const currentData = activeTab === 0 ? articles : replies;
+    const currentData = activeTab === 0 ? articles : activeTab === 1 ? replies : likes;
     if (currentData.length === 0) {
       setLoading(true);
       loadData(activeTab);
@@ -207,8 +229,8 @@ const MyArticlesScreen: React.FC = () => {
 
   // 加载更多
   const onLoadMore = useCallback(() => {
-    const hasMore = activeTab === 0 ? articlesHasMore : repliesHasMore;
-    const currentPage = activeTab === 0 ? articlesPage : repliesPage;
+    const hasMore = activeTab === 0 ? articlesHasMore : activeTab === 1 ? repliesHasMore : likesHasMore;
+    const currentPage = activeTab === 0 ? articlesPage : activeTab === 1 ? repliesPage : likesPage;
     
     if (!hasMore || loadingMore || isLoadingRef.current) {
       return;
@@ -216,15 +238,13 @@ const MyArticlesScreen: React.FC = () => {
     
     setLoadingMore(true);
     loadData(activeTab, currentPage + 1);
-  }, [activeTab, articlesHasMore, repliesHasMore, articlesPage, repliesPage, loadingMore]);
+  }, [activeTab, articlesHasMore, repliesHasMore, likesHasMore, articlesPage, repliesPage, likesPage, loadingMore]);
 
   // 点击帖子
   const handleArticlePress = (item: MyArticle) => {
-    // 对于回复，如果有 topicId 则跳转到主题帖
-    const postId = activeTab === 1 && item.topicId ? item.topicId : item.id;
     navigation.navigate('PostDetail', {
       board: item.board,
-      postId: postId,
+      postId: item.topicId,
     });
   };
 
@@ -245,8 +265,8 @@ const MyArticlesScreen: React.FC = () => {
         >
           {item.title}
         </Text>
-        {/* 回复类型显示内容摘要 */}
-        {activeTab === 1 && item.content && (
+        {/* 回复和喜欢类型显示内容摘要 */}
+        {(activeTab === 1 || activeTab === 2) && item.content && (
           <Text 
             style={[
               styles.contentPreview, 
@@ -280,7 +300,7 @@ const MyArticlesScreen: React.FC = () => {
 
   // 渲染列表底部
   const renderFooter = () => {
-    const hasMore = activeTab === 0 ? articlesHasMore : repliesHasMore;
+    const hasMore = activeTab === 0 ? articlesHasMore : activeTab === 1 ? repliesHasMore : likesHasMore;
     
     if (loadingMore) {
       return (
@@ -291,7 +311,7 @@ const MyArticlesScreen: React.FC = () => {
       );
     }
     
-    if (!hasMore && (activeTab === 0 ? articles : replies).length > 0) {
+    if (!hasMore && (activeTab === 0 ? articles : activeTab === 1 ? replies : likes).length > 0) {
       return (
         <View style={styles.footerContainer}>
           <Text style={[styles.footerText, {color: theme.secondaryText}]}>没有更多了</Text>
@@ -310,12 +330,12 @@ const MyArticlesScreen: React.FC = () => {
     
     return (
       <View style={styles.emptyContainer}>
-        <Text style={styles.emptyIcon}>{activeTab === 0 ? '📝' : '💬'}</Text>
+        <Text style={styles.emptyIcon}>{activeTab === 0 ? '📝' : activeTab === 1 ? '💬' : '❤️'}</Text>
         <Text style={[styles.emptyText, {color: theme.secondaryText}]}>
-          {activeTab === 0 ? '暂无发表的帖子' : '暂无回复记录'}
+          {activeTab === 0 ? '暂无发表的帖子' : activeTab === 1 ? '暂无回复记录' : '暂无喜欢的内容'}
         </Text>
         <Text style={[styles.emptyHint, {color: theme.secondaryText}]}>
-          {activeTab === 0 ? '去版面发表你的第一篇帖子吧' : '去参与讨论留下你的第一条回复吧'}
+          {activeTab === 0 ? '去版面发表你的第一篇帖子吧' : activeTab === 1 ? '去参与讨论留下你的第一条回复吧' : '去给喜欢的帖子点个赞吧'}
         </Text>
       </View>
     );
@@ -323,8 +343,8 @@ const MyArticlesScreen: React.FC = () => {
 
   // 渲染头部统计
   const renderHeader = () => {
-    const total = activeTab === 0 ? articlesTotal : repliesTotal;
-    const dataLength = (activeTab === 0 ? articles : replies).length;
+    const total = activeTab === 0 ? articlesTotal : activeTab === 1 ? repliesTotal : likesTotal;
+    const dataLength = (activeTab === 0 ? articles : activeTab === 1 ? replies : likes).length;
     
     if (dataLength === 0) {
       return null;
@@ -340,7 +360,7 @@ const MyArticlesScreen: React.FC = () => {
   };
 
   // 当前显示的数据
-  const currentData = activeTab === 0 ? articles : replies;
+  const currentData = activeTab === 0 ? articles : activeTab === 1 ? replies : likes;
 
   return (
     <View style={[styles.container, {backgroundColor: theme.background}]}>
@@ -378,6 +398,23 @@ const MyArticlesScreen: React.FC = () => {
             ]}
           >
             回复
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.tab,
+            activeTab === 2 && [styles.activeTab, {backgroundColor: theme.primary}],
+            {backgroundColor: activeTab === 2 ? theme.primary : theme.background},
+          ]}
+          onPress={() => setActiveTab(2)}
+        >
+          <Text
+            style={[
+              styles.tabText,
+              {color: activeTab === 2 ? '#fff' : theme.text},
+            ]}
+          >
+            喜欢
           </Text>
         </TouchableOpacity>
       </View>
