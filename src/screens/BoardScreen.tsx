@@ -140,7 +140,7 @@ const BoardScreen: React.FC = () => {
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [readPosts, setReadPosts] = useState<Set<string>>(new Set());
-  const [searchText, setSearchText] = useState('');
+
   const [channels, setChannels] = useState<Channel[]>([]);
   const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
   const [showChannels, setShowChannels] = useState(true);
@@ -1261,19 +1261,14 @@ const BoardScreen: React.FC = () => {
   const renderSearchBar = () => {
     return (
       <View style={styles.searchBarContainer}>
-        <TextInput
+        <TouchableOpacity
           style={styles.searchInput}
-          placeholder="搜索文章/版面/用户"
-          value={searchText}
-          onChangeText={setSearchText}
-          returnKeyType="search"
-          onSubmitEditing={() => {
-            if (searchText.trim()) {
-              navigation.navigate('Search', {keyword: searchText.trim()});
-              setSearchText(''); // 清空搜索框
-            }
+          onPress={() => {
+            navigation.navigate('SearchInput');
           }}
-        />
+          activeOpacity={0.7}>
+          <Text style={styles.searchPlaceholder}>🔍 搜索文章/版面/用户</Text>
+        </TouchableOpacity>
       </View>
     );
   };
@@ -1988,9 +1983,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#f0f0f0',
     borderRadius: 18,
     paddingHorizontal: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  searchPlaceholder: {
     fontSize: 14,
-    color: '#333',
-    textAlign: 'center',
+    color: '#999',
   },
   channelsContainer: {
     backgroundColor: '#fff',

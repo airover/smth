@@ -18,6 +18,7 @@ import UserProfileScreen from '../screens/UserProfileScreen';
 import MailDetailScreen from '../screens/MailDetailScreen';
 import BrowsingHistoryScreen from '../screens/BrowsingHistoryScreen';
 import SearchScreen from '../screens/SearchScreen';
+import SearchInputScreen from '../screens/SearchInputScreen';
 import CreatePostScreen from '../screens/CreatePostScreen';
 // WebViewPostScreen 已移除使用
 import MyArticlesScreen from '../screens/MyArticlesScreen';
@@ -190,6 +191,13 @@ const AppNavigator = () => {
         component={SearchScreen}
         options={{
           title: '搜索',
+        }}
+      />
+      <Stack.Screen
+        name="SearchInput"
+        component={SearchInputScreen}
+        options={{
+          headerShown: false,
         }}
       />
       <Stack.Screen

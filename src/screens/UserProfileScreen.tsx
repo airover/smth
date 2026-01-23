@@ -17,12 +17,14 @@ import {
   Platform,
   ActionSheetIOS,
 } from 'react-native';
+import ImageCropPicker from 'react-native-image-crop-picker';
 import {useRoute, useNavigation} from '@react-navigation/native';
 import {getUserInfo, fetchUserInfo, sendMessage, addBlack, removeBlack, addFriend, removeFriend, checkIsHerBlack, getFriendsList, getBlackList} from '../services/api';
 import {User} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import RNFetchBlob from 'rn-fetch-blob';
 import {getCache, setCache, getCacheWithTimestamp} from '../services/cacheManager';
 import {
   RESPONSIVE,
@@ -37,6 +39,10 @@ import {
 } from '../utils/responsive';
 
 const SCREEN_WIDTH = RESPONSIVE.SCREEN_WIDTH;
+
+// 用户数据目录（独立于缓存，不会被清除）
+const USER_DATA_DIR = `${RNFetchBlob.fs.dirs.DocumentDir}/user_data`;
+const BACKGROUND_IMAGE_PATH = `${USER_DATA_DIR}/profile_background.jpg`;
 
 // 辅助函数：移除HTML标签
 const stripHtmlTags = (html: string): string => {
@@ -90,6 +96,7 @@ const UserProfileScreen: React.FC = () => {
   const [followingLoading, setFollowingLoading] = useState(false);
   const [isInBlacklist, setIsInBlacklist] = useState(false);
   const [blacklistLoading, setBlacklistLoading] = useState(false);
+  const [showImageSourceModal, setShowImageSourceModal] = useState(false);
 
   const checkAndLoadUserInfo = async () => {
     try {
@@ -100,9 +107,9 @@ const UserProfileScreen: React.FC = () => {
       
       // 加载背景图片配置
       if (isSelf) {
-        const savedBg = await AsyncStorage.getItem('profile_background_image');
-        if (savedBg) {
-          setBackgroundImage(savedBg);
+        const bgExists = await RNFetchBlob.fs.exists(BACKGROUND_IMAGE_PATH);
+        if (bgExists) {
+          setBackgroundImage(`file://${BACKGROUND_IMAGE_PATH}`);
         }
       }
       
@@ -442,6 +449,157 @@ const UserProfileScreen: React.FC = () => {
     setRefreshing(false);
   };
 
+  // 选择背景图片来源
+  const handleChangeBackgroundImage = () => {
+    const hasBackground = backgroundImage !== null;
+    
+    if (Platform.OS === 'ios') {
+      const options = hasBackground 
+        ? ['取消', '拍照', '从相册选择', '删除背景图片']
+        : ['取消', '拍照', '从相册选择'];
+      
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options,
+          cancelButtonIndex: 0,
+          destructiveButtonIndex: hasBackground ? 3 : undefined,
+          title: '选择背景图片',
+        },
+        (buttonIndex) => {
+          if (buttonIndex === 1) {
+            handleTakePhoto();
+          } else if (buttonIndex === 2) {
+            handleSelectFromGallery();
+          } else if (buttonIndex === 3 && hasBackground) {
+            handleDeleteBackgroundImage();
+          }
+        }
+      );
+    } else {
+      setShowImageSourceModal(true);
+    }
+  };
+
+  // 删除背景图片
+  const handleDeleteBackgroundImage = () => {
+    Alert.alert(
+      '删除背景图片',
+      '确定要删除背景图片吗？',
+      [
+        {text: '取消', style: 'cancel'},
+        {
+          text: '删除',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const exists = await RNFetchBlob.fs.exists(BACKGROUND_IMAGE_PATH);
+              if (exists) {
+                await RNFetchBlob.fs.unlink(BACKGROUND_IMAGE_PATH);
+              }
+              setBackgroundImage(null);
+              Alert.alert('成功', '背景图片已删除');
+            } catch (error) {
+              console.error('删除背景图片失败:', error);
+              Alert.alert('失败', '删除背景图片失败，请稍后重试');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // 从相册选择图片
+  const handleSelectFromGallery = async () => {
+    setShowImageSourceModal(false);
+    
+    try {
+      // 设置裁剪框尺寸与展示区域一致
+      const cropWidth = SCREEN_WIDTH;
+      const cropHeight = responsiveSize(200, 240, 260, 300);
+      
+      const image = await ImageCropPicker.openPicker({
+        width: cropWidth,
+        height: cropHeight,
+        cropping: true,
+        cropperToolbarTitle: '调整背景图片',
+        freeStyleCropEnabled: false, // 禁用自由裁剪，固定裁剪框大小
+        includeBase64: false,
+        compressImageQuality: 1.0, // 使用最高质量，不压缩
+        mediaType: 'photo',
+      });
+
+      if (image && image.path) {
+        await saveBackgroundImage(image.path);
+      }
+    } catch (error: any) {
+      if (error.code !== 'E_PICKER_CANCELLED') {
+        console.error('选择图片失败:', error);
+        Alert.alert('失败', '选择图片失败，请稍后重试');
+      }
+    }
+  };
+
+  // 拍照
+  const handleTakePhoto = async () => {
+    setShowImageSourceModal(false);
+    
+    try {
+      // 设置裁剪框尺寸与展示区域一致
+      const cropWidth = SCREEN_WIDTH;
+      const cropHeight = responsiveSize(200, 240, 260, 300);
+      
+      const image = await ImageCropPicker.openCamera({
+        width: cropWidth,
+        height: cropHeight,
+        cropping: true,
+        cropperToolbarTitle: '调整背景图片',
+        freeStyleCropEnabled: false, // 禁用自由裁剪，固定裁剪框大小
+        includeBase64: false,
+        compressImageQuality: 1.0, // 使用最高质量，不压缩
+        mediaType: 'photo',
+      });
+
+      if (image && image.path) {
+        await saveBackgroundImage(image.path);
+      }
+    } catch (error: any) {
+      if (error.code !== 'E_PICKER_CANCELLED') {
+        console.error('拍照失败:', error);
+        Alert.alert('失败', '拍照失败，请稍后重试');
+      }
+    }
+  };
+
+  // 保存背景图片到独立目录
+  const saveBackgroundImage = async (sourcePath: string) => {
+    try {
+      // 确保用户数据目录存在
+      const dirExists = await RNFetchBlob.fs.exists(USER_DATA_DIR);
+      if (!dirExists) {
+        await RNFetchBlob.fs.mkdir(USER_DATA_DIR);
+      }
+
+      // 如果旧图片存在，先删除
+      const oldImageExists = await RNFetchBlob.fs.exists(BACKGROUND_IMAGE_PATH);
+      if (oldImageExists) {
+        await RNFetchBlob.fs.unlink(BACKGROUND_IMAGE_PATH);
+        console.log('已删除旧背景图片');
+      }
+
+      // 移除 file:// 前缀（如果有）
+      const cleanPath = sourcePath.replace('file://', '');
+
+      // 复制新图片到用户数据目录
+      await RNFetchBlob.fs.cp(cleanPath, BACKGROUND_IMAGE_PATH);
+      
+      setBackgroundImage(`file://${BACKGROUND_IMAGE_PATH}`);
+      Alert.alert('成功', '背景图片已更换');
+    } catch (error) {
+      console.error('保存背景图片失败:', error);
+      Alert.alert('失败', '保存背景图片失败，请稍后重试');
+    }
+  };
+
   // 发送消息
   const handleSendMessage = async () => {
     if (!messageSubject.trim()) {
@@ -529,7 +687,16 @@ const UserProfileScreen: React.FC = () => {
         }
       >
         {/* 顶部背景图片区域 */}
-        <View style={styles.headerBackground}>
+        <TouchableOpacity 
+          style={styles.headerBackground}
+          activeOpacity={0.9}
+          onPress={() => {
+            if (isCurrentUser) {
+              handleChangeBackgroundImage();
+            }
+          }}
+          disabled={!isCurrentUser}
+        >
           {backgroundImage && (
             <ImageBackground
               source={{uri: backgroundImage}}
@@ -548,7 +715,7 @@ const UserProfileScreen: React.FC = () => {
             <View style={styles.topBarActions}>
               <TouchableOpacity 
                 style={styles.topBarButton}
-                onPress={() => Alert.alert('提示', '搜索功能开发中')}
+                onPress={() => navigation.navigate('SearchInput' as never)}
               >
                 <Text style={styles.topBarIcon}>🔍</Text>
               </TouchableOpacity>
@@ -557,11 +724,28 @@ const UserProfileScreen: React.FC = () => {
                 style={styles.topBarButton}
                 onPress={() => {
                   if (isCurrentUser) {
-                    Alert.alert('更多功能', '编辑资料\n更换背景图片\n设置', [
-                      {text: '取消', style: 'cancel'},
-                      {text: '编辑资料', onPress: () => Alert.alert('提示', '编辑资料功能开发中')},
-                      {text: '更换背景图片', onPress: () => Alert.alert('提示', '更换背景图片功能开发中')},
-                    ]);
+                    if (Platform.OS === 'ios') {
+                      ActionSheetIOS.showActionSheetWithOptions(
+                        {
+                          options: ['取消', '编辑资料', '更换背景图片'],
+                          cancelButtonIndex: 0,
+                          title: '更多功能',
+                        },
+                        (buttonIndex) => {
+                          if (buttonIndex === 1) {
+                            Alert.alert('提示', '编辑资料功能开发中');
+                          } else if (buttonIndex === 2) {
+                            handleChangeBackgroundImage();
+                          }
+                        }
+                      );
+                    } else {
+                      Alert.alert('更多功能', '', [
+                        {text: '编辑资料', onPress: () => Alert.alert('提示', '编辑资料功能开发中')},
+                        {text: '更换背景图片', onPress: handleChangeBackgroundImage},
+                        {text: '取消', style: 'cancel'},
+                      ]);
+                    }
                   } else {
                     // 使用ActionSheetIOS实现垂直菜单
                     const blockActionText = isInBlacklist ? '移除黑名单' : '拉黑';
@@ -627,7 +811,7 @@ const UserProfileScreen: React.FC = () => {
               )}
             </View>
           </View>
-        </View>
+        </TouchableOpacity>
 
         {/* 用户名和签名信息区域 */}
         <View style={styles.userInfoSection}>
@@ -941,6 +1125,54 @@ const UserProfileScreen: React.FC = () => {
           </TouchableOpacity>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* 图片来源选择弹窗（仅Android使用） */}
+      {Platform.OS === 'android' && (
+        <Modal
+          visible={showImageSourceModal}
+          transparent={true}
+          animationType="slide"
+          onRequestClose={() => setShowImageSourceModal(false)}
+        >
+          <TouchableOpacity
+            style={styles.imageSourceOverlay}
+            activeOpacity={1}
+            onPress={() => setShowImageSourceModal(false)}
+          >
+            <View style={styles.imageSourceModal}>
+              <TouchableOpacity
+                style={styles.imageSourceButton}
+                onPress={handleTakePhoto}
+              >
+                <Text style={styles.imageSourceButtonText}>📷 拍照</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.imageSourceButton}
+                onPress={handleSelectFromGallery}
+              >
+                <Text style={styles.imageSourceButtonText}>🖼️ 从相册选择</Text>
+              </TouchableOpacity>
+              {backgroundImage && (
+                <TouchableOpacity
+                  style={styles.imageSourceButton}
+                  onPress={() => {
+                    setShowImageSourceModal(false);
+                    handleDeleteBackgroundImage();
+                  }}
+                >
+                  <Text style={[styles.imageSourceButtonText, styles.imageSourceDeleteText]}>🗑️ 删除背景图片</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                style={[styles.imageSourceButton, styles.imageSourceCancelButton]}
+                onPress={() => setShowImageSourceModal(false)}
+              >
+                <Text style={[styles.imageSourceButtonText, styles.imageSourceCancelText]}>取消</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+      )}
     </View>
   );
 };
@@ -1487,6 +1719,41 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZE.lg,
     fontWeight: '600',
     color: '#fff',
+  },
+  // 图片来源选择弹窗样式
+  imageSourceOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  imageSourceModal: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: BORDER_RADIUS.xl,
+    borderTopRightRadius: BORDER_RADIUS.xl,
+    paddingBottom: RESPONSIVE.BOTTOM_SAFE_AREA_HEIGHT + SPACING.lg,
+  },
+  imageSourceButton: {
+    paddingVertical: SPACING.lg,
+    paddingHorizontal: SPACING.xl,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#e0e0e0',
+    alignItems: 'center',
+  },
+  imageSourceButtonText: {
+    fontSize: FONT_SIZE.xl,
+    color: '#007AFF',
+    fontWeight: '500',
+  },
+  imageSourceCancelButton: {
+    borderBottomWidth: 0,
+    marginTop: SPACING.sm,
+    backgroundColor: '#f8f8f8',
+  },
+  imageSourceCancelText: {
+    color: '#666',
+  },
+  imageSourceDeleteText: {
+    color: '#FF3B30',
   },
 });
 

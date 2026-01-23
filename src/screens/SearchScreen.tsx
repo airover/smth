@@ -25,6 +25,8 @@ import {
 const DEFAULT_PAGE = 1; // 默认页码
 const DEFAULT_PAGE_SIZE = 20; // 默认每页数量
 const LOAD_MORE_THRESHOLD = 0.3; // 触底加载阈值
+const SEARCH_HISTORY_KEY = 'search_history'; // 搜索历史存储key
+const MAX_HISTORY_COUNT = 10; // 最多保存10条搜索历史
 
 // 搜索结果文章类型
 interface SearchArticle {
@@ -89,10 +91,22 @@ type SearchTab = 'article' | 'board' | 'account';
 const SearchScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const route = useRoute();
-  const params = route.params as {keyword?: string} | undefined;
+  const params = route.params as {
+    keyword?: string;
+    searchArticle?: boolean;
+    searchBoard?: boolean;
+    searchUser?: boolean;
+  } | undefined;
   
   const [keyword, setKeyword] = useState(params?.keyword || '');
-  const [activeTab, setActiveTab] = useState<SearchTab>('article');
+  // 根据传入的搜索类型参数决定默认显示哪个tab
+  const getDefaultTab = (): SearchTab => {
+    if (params?.searchArticle !== false) return 'article';
+    if (params?.searchBoard !== false) return 'board';
+    if (params?.searchUser !== false) return 'account';
+    return 'article';
+  };
+  const [activeTab, setActiveTab] = useState<SearchTab>(getDefaultTab());
   
   // 文章搜索状态
   const [articles, setArticles] = useState<SearchArticle[]>([]);
@@ -153,6 +167,24 @@ const SearchScreen: React.FC = () => {
     }
   };
 
+  // 保存搜索历史
+  const saveSearchHistory = async (searchKeyword: string) => {
+    try {
+      const history = await AsyncStorage.getItem(SEARCH_HISTORY_KEY);
+      let searchHistory: string[] = history ? JSON.parse(history) : [];
+      
+      // 去重并添加到最前面
+      searchHistory = [
+        searchKeyword,
+        ...searchHistory.filter(item => item !== searchKeyword),
+      ].slice(0, MAX_HISTORY_COUNT);
+      
+      await AsyncStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(searchHistory));
+    } catch (error) {
+      console.error('Save search history error:', error);
+    }
+  };
+
   const markAsRead = async (postId: string) => {
     if (readPosts.has(postId)) return;
 
@@ -172,6 +204,9 @@ const SearchScreen: React.FC = () => {
       return;
     }
     
+    // 保存搜索历史
+    await saveSearchHistory(keyword.trim());
+    
     // 重置所有状态
     setArticles([]);
     setBoards([]);
@@ -184,12 +219,33 @@ const SearchScreen: React.FC = () => {
     setSearched(true);
     
     try {
-      // 并行调用三个搜索接口
-      const [articleResult, boardResult, accountResult] = await Promise.all([
-        searchArticles(keyword.trim(), DEFAULT_PAGE, DEFAULT_PAGE_SIZE),
-        searchBoards(keyword.trim()),
-        searchAccounts(keyword.trim(), DEFAULT_PAGE, DEFAULT_PAGE_SIZE),
-      ]);
+      // 根据搜索类型参数决定调用哪些接口
+      const shouldSearchArticle = params?.searchArticle !== false;
+      const shouldSearchBoard = params?.searchBoard !== false;
+      const shouldSearchUser = params?.searchUser !== false;
+      
+      const promises: Promise<any>[] = [];
+      
+      if (shouldSearchArticle) {
+        promises.push(searchArticles(keyword.trim(), DEFAULT_PAGE, DEFAULT_PAGE_SIZE));
+      } else {
+        promises.push(Promise.resolve({ articles: [], total: 0, hasMore: false }));
+      }
+      
+      if (shouldSearchBoard) {
+        promises.push(searchBoards(keyword.trim()));
+      } else {
+        promises.push(Promise.resolve([]));
+      }
+      
+      if (shouldSearchUser) {
+        promises.push(searchAccounts(keyword.trim(), DEFAULT_PAGE, DEFAULT_PAGE_SIZE));
+      } else {
+        promises.push(Promise.resolve({ accounts: [], total: 0, hasMore: false }));
+      }
+      
+      // 并行调用需要的搜索接口
+      const [articleResult, boardResult, accountResult] = await Promise.all(promises);
       
       setArticles(articleResult.articles);
       setArticleTotal(articleResult.total);
