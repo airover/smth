@@ -52,9 +52,16 @@ class ReactNativeDelegate: RCTDefaultReactNativeFactoryDelegate {
 
   override func bundleURL() -> URL? {
 #if DEBUG
-    RCTBundleURLProvider.sharedSettings().jsBundleURL(forBundleRoot: "index")
+    // 使用 RCTBundleURLProvider 自动检测 Metro bundler 地址
+    // 支持远程调试和真机开发
+    if let url = RCTBundleURLProvider.sharedSettings().jsBundleURL(forBundleRoot: "index") {
+      return url
+    }
+    
+    // 降级方案：使用 localhost（仅适用于模拟器）
+    return URL(string: "http://localhost:8081/index.bundle?platform=ios&dev=true&minify=false")
 #else
-    Bundle.main.url(forResource: "main", withExtension: "jsbundle")
+    return Bundle.main.url(forResource: "main", withExtension: "jsbundle")
 #endif
   }
 }
