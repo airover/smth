@@ -12,6 +12,7 @@ import {useNavigation, useFocusEffect} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {SwipeListView} from 'react-native-swipe-list-view';
 import {formatRelativeTime} from '../utils/timeFormat';
+import {useTheme} from '../components/ThemedComponents';
 import {
   SPACING,
   FONT_SIZE,
@@ -35,6 +36,7 @@ const MAX_HISTORY_ITEMS = 100; // 最多保存100条历史记录
 
 const BrowsingHistoryScreen: React.FC = () => {
   const navigation = useNavigation<any>();
+  const theme = useTheme();
   const [history, setHistory] = useState<BrowsingHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -126,37 +128,37 @@ const BrowsingHistoryScreen: React.FC = () => {
 
   const renderItem = ({item}: {item: BrowsingHistoryItem}) => (
     <TouchableOpacity
-      style={styles.historyItem}
+      style={[styles.historyItem, {backgroundColor: theme.cardBackground}]}
       onPress={() => handlePostPress(item)}
       activeOpacity={0.7}
     >
       <View style={styles.itemContent}>
-        <Text style={styles.title} numberOfLines={2}>
+        <Text style={[styles.title, {color: theme.text}]} numberOfLines={2}>
           {item.title}
         </Text>
         <View style={styles.metaRow}>
-          <Text style={styles.metaText}>
+          <Text style={[styles.metaText, {color: theme.secondaryText}]}>
             {item.boardName || item.board}
           </Text>
-          <Text style={styles.metaText}>·</Text>
-          <Text style={styles.metaText}>{item.author}</Text>
+          <Text style={[styles.metaText, {color: theme.secondaryText}]}>·</Text>
+          <Text style={[styles.metaText, {color: theme.secondaryText}]}>{item.author}</Text>
           {item.replyCount !== undefined && (
             <>
-              <Text style={styles.metaText}>·</Text>
-              <Text style={styles.metaText}>{item.replyCount} 回复</Text>
+              <Text style={[styles.metaText, {color: theme.secondaryText}]}>·</Text>
+              <Text style={[styles.metaText, {color: theme.secondaryText}]}>{item.replyCount} 回复</Text>
             </>
           )}
         </View>
-        <Text style={styles.timeText}>
+        <Text style={[styles.timeText, {color: theme.secondaryText}]}>
           浏览于 {formatRelativeTime(new Date(item.timestamp).toISOString())}
         </Text>
       </View>
-      <Text style={styles.chevron}>›</Text>
+      <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
     </TouchableOpacity>
   );
 
   const renderHiddenItem = ({item}: {item: BrowsingHistoryItem}) => (
-    <View style={styles.rowBack}>
+    <View style={[styles.rowBack, {backgroundColor: theme.background}]}>
       <TouchableOpacity
         style={styles.deleteButton}
         onPress={() => handleDeleteItem(item.postId)}
@@ -169,8 +171,8 @@ const BrowsingHistoryScreen: React.FC = () => {
   const renderEmpty = () => (
     <View style={styles.emptyContainer}>
       <Text style={styles.emptyIcon}>📜</Text>
-      <Text style={styles.emptyText}>暂无浏览历史</Text>
-      <Text style={styles.emptyHint}>浏览过的帖子会显示在这里</Text>
+      <Text style={[styles.emptyText, {color: theme.secondaryText}]}>暂无浏览历史</Text>
+      <Text style={[styles.emptyHint, {color: theme.secondaryText}]}>浏览过的帖子会显示在这里</Text>
     </View>
   );
 
@@ -179,7 +181,7 @@ const BrowsingHistoryScreen: React.FC = () => {
     
     return (
       <View style={styles.header}>
-        <Text style={styles.headerText}>共 {history.length} 条记录</Text>
+        <Text style={[styles.headerText, {color: theme.secondaryText}]}>共 {history.length} 条记录</Text>
         <TouchableOpacity onPress={handleClearAll}>
           <Text style={styles.clearAllText}>清空</Text>
         </TouchableOpacity>
@@ -191,14 +193,14 @@ const BrowsingHistoryScreen: React.FC = () => {
     return (
       <View style={styles.container}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
+          <ActivityIndicator size="large" color={theme.primary} />
         </View>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, {backgroundColor: theme.background}]}>
       <SwipeListView
         data={history}
         renderItem={renderItem}
@@ -215,8 +217,8 @@ const BrowsingHistoryScreen: React.FC = () => {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            colors={['#007AFF']}
-            tintColor="#007AFF"
+            colors={[theme.primary]}
+            tintColor={theme.primary}
           />
         }
       />
@@ -227,7 +229,6 @@ const BrowsingHistoryScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
   },
   loadingContainer: {
     flex: 1,
@@ -249,7 +250,6 @@ const styles = StyleSheet.create({
   },
   headerText: {
     fontSize: FONT_SIZE.md,
-    color: '#666',
   },
   clearAllText: {
     fontSize: FONT_SIZE.md,
@@ -257,7 +257,6 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   historyItem: {
-    backgroundColor: '#fff',
     borderRadius: BORDER_RADIUS.md,
     padding: SPACING.lg,
     marginBottom: SPACING.md,
@@ -270,7 +269,6 @@ const styles = StyleSheet.create({
   title: {
     fontSize: FONT_SIZE.lg,
     fontWeight: '500',
-    color: '#000',
     marginBottom: SPACING.sm,
     lineHeight: FONT_SIZE.xxl,
   },
@@ -281,16 +279,13 @@ const styles = StyleSheet.create({
   },
   metaText: {
     fontSize: FONT_SIZE.sm,
-    color: '#999',
     marginRight: SPACING.xs + 2,
   },
   timeText: {
     fontSize: FONT_SIZE.xs,
-    color: '#BBB',
   },
   chevron: {
     fontSize: FONT_SIZE.xl,
-    color: '#C7C7CC',
     marginLeft: SPACING.sm,
   },
   emptyContainer: {
@@ -305,17 +300,14 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: FONT_SIZE.lg,
-    color: '#666',
     marginBottom: SPACING.sm,
   },
   emptyHint: {
     fontSize: FONT_SIZE.md,
-    color: '#999',
     textAlign: 'center',
   },
   rowBack: {
     alignItems: 'flex-end',
-    backgroundColor: '#f5f5f5',
     flex: 1,
     flexDirection: 'row',
     justifyContent: 'flex-end',

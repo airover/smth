@@ -12,6 +12,7 @@ import {useNavigation} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 // logout 功能暂时未使用
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
+import {useTheme} from '../components/ThemedComponents';
 import {
   SPACING,
   FONT_SIZE,
@@ -29,6 +30,7 @@ interface SavedAccount {
 
 const AccountSwitchScreen: React.FC = () => {
   const navigation = useNavigation<any>();
+  const theme = useTheme();
   const [accounts, setAccounts] = useState<SavedAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentUsername, setCurrentUsername] = useState<string>('');
@@ -168,23 +170,23 @@ const AccountSwitchScreen: React.FC = () => {
 
   if (loading) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, {backgroundColor: theme.background}]}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
+          <ActivityIndicator size="large" color={theme.primary} />
         </View>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, {backgroundColor: theme.background}]}>
       <ScrollView style={styles.content}>
         {/* 当前账号 */}
         {currentUsername && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>当前账号</Text>
+            <Text style={[styles.sectionTitle, {color: theme.secondaryText}]}>当前账号</Text>
             {accounts.filter(acc => acc.isCurrent).map((account, index) => (
-              <View key={index} style={styles.currentAccountCard}>
+              <View key={index} style={[styles.currentAccountCard, {backgroundColor: theme.cardBackground}]}>
                 <View style={styles.accountLeft}>
                   {account.avatar ? (
                     <ImageWithPlaceholder
@@ -194,20 +196,20 @@ const AccountSwitchScreen: React.FC = () => {
                       isAvatar={true}
                     />
                   ) : (
-                    <View style={styles.avatarPlaceholder}>
+                    <View style={[styles.avatarPlaceholder, {backgroundColor: theme.primary}]}>
                       <Text style={styles.avatarText}>
                         {account.username.charAt(0).toUpperCase()}
                       </Text>
                     </View>
                   )}
                   <View style={styles.accountInfo}>
-                    <Text style={styles.accountName}>
+                    <Text style={[styles.accountName, {color: theme.text}]}>
                       {account.nickname || account.username}
                     </Text>
-                    <Text style={styles.accountUsername}>@{account.username}</Text>
+                    <Text style={[styles.accountUsername, {color: theme.secondaryText}]}>@{account.username}</Text>
                   </View>
                 </View>
-                <View style={styles.currentBadge}>
+                <View style={[styles.currentBadge, {backgroundColor: theme.primary}]}>
                   <Text style={styles.currentBadgeText}>当前</Text>
                 </View>
               </View>
@@ -218,11 +220,11 @@ const AccountSwitchScreen: React.FC = () => {
         {/* 其他账号 */}
         {accounts.filter(acc => !acc.isCurrent).length > 0 && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>其他账号</Text>
-            <View style={styles.card}>
+            <Text style={[styles.sectionTitle, {color: theme.secondaryText}]}>其他账号</Text>
+            <View style={[styles.card, {backgroundColor: theme.cardBackground}]}>
               {accounts.filter(acc => !acc.isCurrent).map((account, index) => (
                 <View key={index}>
-                  {index > 0 && <View style={styles.divider} />}
+                  {index > 0 && <View style={[styles.divider, {backgroundColor: theme.border}]} />}
                   <TouchableOpacity
                     style={styles.accountItem}
                     onPress={() => handleSwitchAccount(account)}
@@ -237,17 +239,17 @@ const AccountSwitchScreen: React.FC = () => {
                           isAvatar={true}
                         />
                       ) : (
-                        <View style={styles.avatarPlaceholder}>
+                        <View style={[styles.avatarPlaceholder, {backgroundColor: theme.primary}]}>
                           <Text style={styles.avatarText}>
                             {account.username.charAt(0).toUpperCase()}
                           </Text>
                         </View>
                       )}
                       <View style={styles.accountInfo}>
-                        <Text style={styles.accountName}>
+                        <Text style={[styles.accountName, {color: theme.text}]}>
                           {account.nickname || account.username}
                         </Text>
-                        <Text style={styles.accountUsername}>@{account.username}</Text>
+                        <Text style={[styles.accountUsername, {color: theme.secondaryText}]}>@{account.username}</Text>
                       </View>
                     </View>
                     <TouchableOpacity
@@ -255,7 +257,7 @@ const AccountSwitchScreen: React.FC = () => {
                       onPress={() => handleRemoveAccount(account)}
                       hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
                     >
-                      <Text style={styles.removeButtonText}>✕</Text>
+                      <Text style={[styles.removeButtonText, {color: theme.border}]}>✕</Text>
                     </TouchableOpacity>
                   </TouchableOpacity>
                 </View>
@@ -267,18 +269,18 @@ const AccountSwitchScreen: React.FC = () => {
         {/* 添加账号 */}
         <View style={styles.section}>
           <TouchableOpacity
-            style={styles.addButton}
+            style={[styles.addButton, {backgroundColor: theme.cardBackground}]}
             onPress={handleAddAccount}
             activeOpacity={0.8}
           >
-            <Text style={styles.addButtonIcon}>+</Text>
-            <Text style={styles.addButtonText}>添加账号</Text>
+            <Text style={[styles.addButtonIcon, {color: theme.primary}]}>+</Text>
+            <Text style={[styles.addButtonText, {color: theme.primary}]}>添加账号</Text>
           </TouchableOpacity>
         </View>
 
         {/* 提示文字 */}
         <View style={styles.section}>
-          <Text style={styles.hintText}>
+          <Text style={[styles.hintText, {color: theme.secondaryText}]}>
             切换账号不会退出当前账号，你可以随时切换回来
           </Text>
         </View>
@@ -293,7 +295,6 @@ const AccountSwitchScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#EDEDED',
   },
   loadingContainer: {
     flex: 1,
@@ -310,13 +311,11 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: FONT_SIZE.sm,
     fontWeight: '600',
-    color: '#8E8E93',
     marginBottom: SPACING.sm,
     marginLeft: SPACING.xs,
   },
   // 当前账号卡片
   currentAccountCard: {
-    backgroundColor: '#fff',
     borderRadius: BORDER_RADIUS.md,
     padding: SPACING.lg,
     flexDirection: 'row',
@@ -325,7 +324,6 @@ const styles = StyleSheet.create({
   },
   // 账号列表卡片
   card: {
-    backgroundColor: '#fff',
     borderRadius: BORDER_RADIUS.md,
     overflow: 'hidden',
   },
@@ -350,7 +348,6 @@ const styles = StyleSheet.create({
     width: scaleModerate(50),
     height: scaleModerate(50),
     borderRadius: BORDER_RADIUS.xs + 2,
-    backgroundColor: '#007AFF',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -366,15 +363,12 @@ const styles = StyleSheet.create({
   accountName: {
     fontSize: FONT_SIZE.xl,
     fontWeight: '600',
-    color: '#000',
     marginBottom: SPACING.xs,
   },
   accountUsername: {
     fontSize: FONT_SIZE.md,
-    color: '#888',
   },
   currentBadge: {
-    backgroundColor: '#007AFF',
     paddingHorizontal: SPACING.md,
     paddingVertical: SPACING.xs,
     borderRadius: BORDER_RADIUS.sm,
@@ -392,16 +386,13 @@ const styles = StyleSheet.create({
   },
   removeButtonText: {
     fontSize: FONT_SIZE.xl,
-    color: '#C7C7CC',
   },
   divider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: '#E5E5E5',
     marginLeft: scaleModerate(78),
   },
   // 添加账号按钮
   addButton: {
-    backgroundColor: '#fff',
     borderRadius: BORDER_RADIUS.md,
     paddingVertical: SPACING.md,
     flexDirection: 'row',
@@ -410,18 +401,15 @@ const styles = StyleSheet.create({
   },
   addButtonIcon: {
     fontSize: FONT_SIZE.xl,
-    color: '#007AFF',
     marginRight: SPACING.xs + 2,
   },
   addButtonText: {
     fontSize: FONT_SIZE.xl,
-    color: '#007AFF',
     fontWeight: '600',
   },
   // 提示文字
   hintText: {
     fontSize: FONT_SIZE.sm,
-    color: '#8E8E93',
     textAlign: 'center',
     lineHeight: FONT_SIZE.xl,
   },

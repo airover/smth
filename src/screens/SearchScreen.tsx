@@ -14,6 +14,7 @@ import {searchArticles, searchBoards, searchAccounts} from '../services/api';
 import {formatRelativeTime} from '../utils/timeFormat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
+import {useTheme} from '../components/ThemedComponents';
 import {
   SPACING,
   FONT_SIZE,
@@ -91,6 +92,7 @@ type SearchTab = 'article' | 'board' | 'account';
 const SearchScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const route = useRoute();
+  const theme = useTheme();
   const params = route.params as {
     keyword?: string;
     searchArticle?: boolean;
@@ -142,8 +144,9 @@ const SearchScreen: React.FC = () => {
       headerTitle: () => (
         <View style={styles.headerContainer}>
           <TextInput
-            style={styles.searchInput}
+            style={[styles.searchInput, {color: theme.text, backgroundColor: theme.background}]}
             placeholder="搜索文章/版面/用户"
+            placeholderTextColor={theme.secondaryText}
             value={keyword}
             onChangeText={setKeyword}
             returnKeyType="search"
@@ -153,7 +156,7 @@ const SearchScreen: React.FC = () => {
         </View>
       ),
     });
-  }, [keyword, navigation]);
+  }, [keyword, navigation, theme]);
 
   const loadReadPosts = async () => {
     try {
@@ -334,7 +337,7 @@ const SearchScreen: React.FC = () => {
     
     return (
       <TouchableOpacity
-        style={styles.articleItem}
+        style={[styles.articleItem, {backgroundColor: theme.cardBackground, borderBottomColor: theme.border}]}
         onPress={() => {
           markAsRead(item.topicId);
           navigation.navigate('PostDetail', {
@@ -346,6 +349,7 @@ const SearchScreen: React.FC = () => {
           <Text 
             style={[
               styles.articleTitle,
+              {color: isRead ? theme.secondaryText : theme.text},
               isRead && styles.readArticleTitle
             ]} 
             numberOfLines={2}
@@ -356,23 +360,23 @@ const SearchScreen: React.FC = () => {
         
         {/* 文章预览内容 */}
         {item.body && (
-          <Text style={styles.articleBody} numberOfLines={2}>
+          <Text style={[styles.articleBody, {color: theme.secondaryText}]} numberOfLines={2}>
             {item.body}
           </Text>
         )}
         
         <View style={styles.articleMeta}>
           <View style={styles.articleAuthorInfo}>
-            <Text style={styles.metaText}>
+            <Text style={[styles.metaText, {color: theme.secondaryText}]}>
               {item.account.nick} ({item.account.name})
             </Text>
             {item.account.levelTitle && (
-              <Text style={styles.levelTitle}> · {item.account.levelTitle}</Text>
+              <Text style={[styles.levelTitle, {color: theme.secondaryText}]}> · {item.account.levelTitle}</Text>
             )}
           </View>
           <View style={styles.articleStats}>
-            <Text style={styles.metaText}>{item.topic?.availables || 0} 回复</Text>
-            <Text style={styles.statsText}>{formatRelativeTime(item.postTime)}</Text>
+            <Text style={[styles.metaText, {color: theme.secondaryText}]}>{item.topic?.availables || 0} 回复</Text>
+            <Text style={[styles.statsText, {color: theme.secondaryText}]}>{formatRelativeTime(item.postTime)}</Text>
           </View>
         </View>
         
@@ -390,7 +394,7 @@ const SearchScreen: React.FC = () => {
                 },
               });
             }}>
-            <Text style={styles.boardNameText}>📋 {item.board.title}</Text>
+            <Text style={[styles.boardNameText, {color: theme.primary}]}>📋 {item.board.title}</Text>
           </TouchableOpacity>
         </View>
       </TouchableOpacity>
@@ -404,7 +408,7 @@ const SearchScreen: React.FC = () => {
     
     return (
       <TouchableOpacity
-        style={styles.boardItem}
+        style={[styles.boardItem, {backgroundColor: theme.cardBackground, borderBottomColor: theme.border}]}
         onPress={() => {
           navigation.navigate('MainTabs', {
             screen: 'Board',
@@ -416,12 +420,12 @@ const SearchScreen: React.FC = () => {
           });
         }}>
         <View style={styles.boardHeader}>
-          <Text style={styles.boardTitle}>{cleanTitle}</Text>
-          <Text style={styles.boardName}>({cleanName})</Text>
+          <Text style={[styles.boardTitle, {color: theme.text}]}>{cleanTitle}</Text>
+          <Text style={[styles.boardName, {color: theme.secondaryText}]}>({cleanName})</Text>
         </View>
         <View style={styles.boardStats}>
-          <Text style={styles.boardStatText}>📝 {item.articleCount} 篇文章</Text>
-          <Text style={styles.boardStatText}>🔥 今日 {item.todayPostCount} 帖</Text>
+          <Text style={[styles.boardStatText, {color: theme.secondaryText}]}>📝 {item.articleCount} 篇文章</Text>
+          <Text style={[styles.boardStatText, {color: theme.secondaryText}]}>🔥 今日 {item.todayPostCount} 帖</Text>
         </View>
       </TouchableOpacity>
     );
@@ -437,7 +441,7 @@ const SearchScreen: React.FC = () => {
     
     return (
       <TouchableOpacity
-        style={styles.accountItem}
+        style={[styles.accountItem, {backgroundColor: theme.cardBackground, borderBottomColor: theme.border}]}
         onPress={() => {
           navigation.navigate('UserProfile', { username: cleanName });
         }}>
@@ -451,7 +455,7 @@ const SearchScreen: React.FC = () => {
               isAvatar={true}
             />
           ) : (
-            <View style={styles.accountAvatarPlaceholder}>
+            <View style={[styles.accountAvatarPlaceholder, {backgroundColor: theme.primary}]}>
               <Text style={styles.accountAvatarText}>
                 {cleanNick.charAt(0) || cleanName.charAt(0) || '?'}
               </Text>
@@ -462,18 +466,18 @@ const SearchScreen: React.FC = () => {
           <View style={styles.accountContent}>
             <View style={styles.accountHeader}>
               <View style={styles.accountInfo}>
-                <Text style={styles.accountNick}>
+                <Text style={[styles.accountNick, {color: theme.text}]}>
                   {cleanNick} {genderIcon}
                 </Text>
-                <Text style={styles.accountName}>@{cleanName}</Text>
+                <Text style={[styles.accountName, {color: theme.secondaryText}]}>@{cleanName}</Text>
               </View>
               {cleanLevelTitle && (
-                <Text style={styles.accountLevel}>{cleanLevelTitle}</Text>
+                <Text style={[styles.accountLevel, {color: theme.primary, backgroundColor: theme.primary + '20'}]}>{cleanLevelTitle}</Text>
               )}
             </View>
             <View style={styles.accountMeta}>
-              <Text style={styles.accountMetaText}>积分: {item.score}</Text>
-              <Text style={styles.accountMetaText}>等级: {item.level}</Text>
+              <Text style={[styles.accountMetaText, {color: theme.secondaryText}]}>积分: {item.score}</Text>
+              <Text style={[styles.accountMetaText, {color: theme.secondaryText}]}>等级: {item.level}</Text>
             </View>
           </View>
         </View>
@@ -492,12 +496,12 @@ const SearchScreen: React.FC = () => {
     return (
       <View style={styles.footerContainer}>
         {loading ? (
-          <ActivityIndicator size="small" color="#007AFF" />
+          <ActivityIndicator size="small" color={theme.primary} />
         ) : (
           <TouchableOpacity 
-            style={styles.loadMoreButton}
+            style={[styles.loadMoreButton, {backgroundColor: theme.background, borderColor: theme.border}]}
             onPress={loadMore}>
-            <Text style={styles.loadMoreText}>加载更多</Text>
+            <Text style={[styles.loadMoreText, {color: theme.primary}]}>加载更多</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -510,8 +514,8 @@ const SearchScreen: React.FC = () => {
     if (!searched) {
       return (
         <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>请输入关键词进行搜索</Text>
-          <Text style={styles.hintText}>支持搜索文章、版面和用户</Text>
+          <Text style={[styles.emptyText, {color: theme.secondaryText}]}>请输入关键词进行搜索</Text>
+          <Text style={[styles.hintText, {color: theme.secondaryText}]}>支持搜索文章、版面和用户</Text>
         </View>
       );
     }
@@ -524,34 +528,34 @@ const SearchScreen: React.FC = () => {
     
     return (
       <View style={styles.emptyContainer}>
-        <Text style={styles.emptyText}>{emptyMessages[activeTab]}</Text>
-        <Text style={styles.hintText}>试试其他关键词</Text>
+        <Text style={[styles.emptyText, {color: theme.secondaryText}]}>{emptyMessages[activeTab]}</Text>
+        <Text style={[styles.hintText, {color: theme.secondaryText}]}>试试其他关键词</Text>
       </View>
     );
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, {backgroundColor: theme.background}]}>
       {/* Tab切换 */}
-      <View style={styles.tabContainer}>
+      <View style={[styles.tabContainer, {backgroundColor: theme.cardBackground, borderBottomColor: theme.border}]}>
         <TouchableOpacity
-          style={[styles.tabItem, activeTab === 'article' && styles.activeTabItem]}
+          style={[styles.tabItem, activeTab === 'article' && [styles.activeTabItem, {borderBottomColor: theme.primary}]]}
           onPress={() => setActiveTab('article')}>
-          <Text style={[styles.tabText, activeTab === 'article' && styles.activeTabText]}>
+          <Text style={[styles.tabText, {color: activeTab === 'article' ? theme.primary : theme.secondaryText}, activeTab === 'article' && styles.activeTabText]}>
             文章 {searched && articleTotal > 0 ? `(${articleTotal})` : ''}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.tabItem, activeTab === 'board' && styles.activeTabItem]}
+          style={[styles.tabItem, activeTab === 'board' && [styles.activeTabItem, {borderBottomColor: theme.primary}]]}
           onPress={() => setActiveTab('board')}>
-          <Text style={[styles.tabText, activeTab === 'board' && styles.activeTabText]}>
+          <Text style={[styles.tabText, {color: activeTab === 'board' ? theme.primary : theme.secondaryText}, activeTab === 'board' && styles.activeTabText]}>
             版面 {searched && boards.length > 0 ? `(${boards.length})` : ''}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.tabItem, activeTab === 'account' && styles.activeTabItem]}
+          style={[styles.tabItem, activeTab === 'account' && [styles.activeTabItem, {borderBottomColor: theme.primary}]]}
           onPress={() => setActiveTab('account')}>
-          <Text style={[styles.tabText, activeTab === 'account' && styles.activeTabText]}>
+          <Text style={[styles.tabText, {color: activeTab === 'account' ? theme.primary : theme.secondaryText}, activeTab === 'account' && styles.activeTabText]}>
             用户 {searched && accountTotal > 0 ? `(${accountTotal})` : ''}
           </Text>
         </TouchableOpacity>
@@ -559,7 +563,7 @@ const SearchScreen: React.FC = () => {
       
       {loading && !searched ? (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
+          <ActivityIndicator size="large" color={theme.primary} />
         </View>
       ) : (
         <>
@@ -613,7 +617,6 @@ const SearchScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
   },
   headerContainer: {
     flex: 1,
@@ -621,17 +624,13 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     height: scaleModerate(36),
-    backgroundColor: '#f0f0f0',
     borderRadius: BORDER_RADIUS.xl,
     paddingHorizontal: SPACING.lg,
     fontSize: FONT_SIZE.md,
-    color: '#333',
   },
   tabContainer: {
     flexDirection: 'row',
-    backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
   },
   tabItem: {
     flex: 1,
@@ -641,14 +640,12 @@ const styles = StyleSheet.create({
     borderBottomColor: 'transparent',
   },
   activeTabItem: {
-    borderBottomColor: '#007AFF',
+    borderBottomWidth: 2,
   },
   tabText: {
     fontSize: FONT_SIZE.lg,
-    color: '#666',
   },
   activeTabText: {
-    color: '#007AFF',
     fontWeight: '600',
   },
   loadingContainer: {
@@ -657,27 +654,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   articleItem: {
-    backgroundColor: '#fff',
     padding: SPACING.lg,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
   },
   articleHeader: {
     marginBottom: SPACING.sm,
   },
   articleTitle: {
     fontSize: FONT_SIZE.lg,
-    color: '#000',
     fontWeight: '500',
     lineHeight: FONT_SIZE.xxl,
   },
   readArticleTitle: {
-    color: '#999',
     fontWeight: 'normal',
   },
   articleBody: {
     fontSize: FONT_SIZE.md,
-    color: '#666',
     lineHeight: FONT_SIZE.xl,
     marginBottom: SPACING.sm,
   },
@@ -693,7 +685,6 @@ const styles = StyleSheet.create({
   },
   levelTitle: {
     fontSize: FONT_SIZE.xs,
-    color: '#999',
   },
   articleStats: {
     flexDirection: 'row',
@@ -701,11 +692,9 @@ const styles = StyleSheet.create({
   },
   metaText: {
     fontSize: FONT_SIZE.sm,
-    color: '#666',
   },
   statsText: {
     fontSize: FONT_SIZE.sm,
-    color: '#666',
     marginLeft: SPACING.md,
   },
   articleBoard: {
@@ -715,13 +704,10 @@ const styles = StyleSheet.create({
   },
   boardNameText: {
     fontSize: FONT_SIZE.sm,
-    color: '#1890ff',
   },
   boardItem: {
-    backgroundColor: '#fff',
     padding: SPACING.lg,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
   },
   boardHeader: {
     flexDirection: 'row',
@@ -730,13 +716,11 @@ const styles = StyleSheet.create({
   },
   boardTitle: {
     fontSize: FONT_SIZE.lg,
-    color: '#000',
     fontWeight: '500',
     marginRight: SPACING.sm,
   },
   boardName: {
     fontSize: FONT_SIZE.md,
-    color: '#666',
   },
   boardStats: {
     flexDirection: 'row',
@@ -744,14 +728,11 @@ const styles = StyleSheet.create({
   },
   boardStatText: {
     fontSize: FONT_SIZE.sm,
-    color: '#999',
     marginRight: SPACING.lg,
   },
   accountItem: {
-    backgroundColor: '#fff',
     padding: SPACING.lg,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
   },
   accountContainer: {
     flexDirection: 'row',
@@ -769,7 +750,6 @@ const styles = StyleSheet.create({
     height: scaleModerate(50),
     borderRadius: scaleModerate(25),
     marginRight: SPACING.md,
-    backgroundColor: '#007AFF',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -792,18 +772,14 @@ const styles = StyleSheet.create({
   },
   accountNick: {
     fontSize: FONT_SIZE.lg,
-    color: '#000',
     fontWeight: '500',
     marginBottom: SPACING.xs,
   },
   accountName: {
     fontSize: FONT_SIZE.md,
-    color: '#666',
   },
   accountLevel: {
     fontSize: FONT_SIZE.sm,
-    color: '#007AFF',
-    backgroundColor: '#E8F4FF',
     paddingHorizontal: SPACING.sm,
     paddingVertical: SPACING.xs,
     borderRadius: BORDER_RADIUS.sm,
@@ -814,7 +790,6 @@ const styles = StyleSheet.create({
   },
   accountMetaText: {
     fontSize: FONT_SIZE.sm,
-    color: '#999',
     marginRight: SPACING.lg,
   },
   emptyContainer: {
@@ -825,12 +800,10 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: FONT_SIZE.lg,
-    color: '#999',
     marginBottom: SPACING.sm,
   },
   hintText: {
     fontSize: FONT_SIZE.md,
-    color: '#ccc',
     textAlign: 'center',
     paddingHorizontal: SPACING.xxxl,
     lineHeight: FONT_SIZE.xl,
@@ -842,14 +815,11 @@ const styles = StyleSheet.create({
   loadMoreButton: {
     paddingHorizontal: SPACING.xxl,
     paddingVertical: SPACING.sm + 2,
-    backgroundColor: '#f9f9f9',
     borderRadius: BORDER_RADIUS.xl,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
   },
   loadMoreText: {
     fontSize: FONT_SIZE.md,
-    color: '#007AFF',
     fontWeight: '500',
   },
 });

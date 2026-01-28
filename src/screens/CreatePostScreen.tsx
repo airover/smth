@@ -14,8 +14,9 @@ import {
   Modal,
   Keyboard,
   InputAccessoryView,
+  ActionSheetIOS,
 } from 'react-native';
-import {launchImageLibrary} from 'react-native-image-picker';
+import ImageCropPicker from 'react-native-image-crop-picker';
 import {useNavigation, useRoute} from '@react-navigation/native';
 import {createPost, replyPost, getDraft, saveDraft, clearDraft, checkPublish, getUploadToken, uploadImages} from '../services/postApi';
 import PostCaptchaScreen from './PostCaptchaScreen';
@@ -240,63 +241,111 @@ const CreatePostScreen: React.FC = () => {
       Alert.alert('提示', '最多只能选择9张图片');
       return;
     }
-    setShowImageSourceModal(true);
+    
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ['取消', '拍照', '从相册选择'],
+          cancelButtonIndex: 0,
+          title: '选择图片来源',
+        },
+        (buttonIndex) => {
+          if (buttonIndex === 1) {
+            handleTakePhoto();
+          } else if (buttonIndex === 2) {
+            handleSelectFromGallery();
+          }
+        }
+      );
+    } else {
+      setShowImageSourceModal(true);
+    }
   };
 
   // 从相册选择图片
   const handleSelectFromGallery = async () => {
-    // 先关闭弹窗，延迟一下再打开相册，避免弹窗和相册冲突
+    // 先关闭弹窗
     setShowImageSourceModal(false);
-    
+
     // 最多选择9张图片
     if (selectedImages.length >= 9) {
       Alert.alert('提示', '最多只能选择9张图片');
       return;
     }
 
-    // 延迟执行，确保弹窗完全关闭
-    setTimeout(async () => {
-      try {
-        const options = {
-          mediaType: 'photo' as const,
-          selectionLimit: 9 - selectedImages.length, // 剩余可选数量
-          quality: 0.8 as const,
-        };
-        
-        const result = await launchImageLibrary(options);
+    try {
+      const images = await ImageCropPicker.openPicker({
+        multiple: true,
+        maxFiles: 9 - selectedImages.length, // 剩余可选数量
+        mediaType: 'photo',
+        compressImageQuality: 0.8,
+        includeBase64: false,
+      });
 
-        if (result.didCancel) {
-          return;
-        }
+      if (images && images.length > 0) {
+        // 转换为统一的 asset 格式
+        const newAssets = images.map((image: any) => ({
+          uri: image.path,
+          fileName: image.filename || `image_${Date.now()}.jpg`,
+          type: image.mime || 'image/jpeg',
+          fileSize: image.size,
+          width: image.width,
+          height: image.height,
+        }));
+        const newImages = [...selectedImages, ...newAssets];
+        setSelectedImages(newImages);
         
-        if (result.errorCode) {
-          console.error('选择图片失败, errorCode:', result.errorCode, 'errorMessage:', result.errorMessage);
-          Alert.alert('失败', '选择图片失败: ' + result.errorMessage);
-          return;
-        }
-        
-        if (result.assets && result.assets.length > 0) {
-          // 保存完整的 asset 对象，包含 uri, originalPath, fileName, type 等信息
-          const newAssets = result.assets.filter((asset: any) => asset.uri);
-          const newImages = [...selectedImages, ...newAssets];
-          setSelectedImages(newImages);
-          
-          // 清除之前的上传状态
-          setUploadToken(null);
-        }
-      } catch (error: any) {
-        console.error('选择图片异常:', error);
-        console.error('错误堆栈:', error.stack);
-        Alert.alert('失败', '选择图片失败: ' + error.message);
+        // 清除之前的上传状态
+        setUploadToken(null);
       }
-    }, 300);
+    } catch (error: any) {
+      if (error.code !== 'E_PICKER_CANCELLED') {
+        console.error('选择图片失败:', error);
+        Alert.alert('失败', '选择图片失败，请稍后重试');
+      }
+    }
   };
 
   // 从相机拍照
   const handleTakePhoto = async () => {
+    // 先关闭弹窗
     setShowImageSourceModal(false);
-    // TODO: 实现相机拍照功能
-    Alert.alert('提示', '相机功能开发中，请先使用相册选择');
+
+    // 最多选择9张图片
+    if (selectedImages.length >= 9) {
+      Alert.alert('提示', '最多只能选择9张图片');
+      return;
+    }
+
+    try {
+      const image = await ImageCropPicker.openCamera({
+        mediaType: 'photo',
+        compressImageQuality: 0.8,
+        includeBase64: false,
+      });
+
+      if (image && image.path) {
+        // 转换为统一的 asset 格式
+        const newAsset = {
+          uri: image.path,
+          fileName: image.filename || `photo_${Date.now()}.jpg`,
+          type: image.mime || 'image/jpeg',
+          fileSize: image.size,
+          width: image.width,
+          height: image.height,
+        };
+        const newImages = [...selectedImages, newAsset];
+        setSelectedImages(newImages);
+        
+        // 清除之前的上传状态
+        setUploadToken(null);
+      }
+    } catch (error: any) {
+      if (error.code !== 'E_PICKER_CANCELLED') {
+        console.error('拍照失败:', error);
+        Alert.alert('失败', '拍照失败，请稍后重试');
+      }
+    }
   };
 
   // 删除选中的图片
@@ -394,36 +443,44 @@ const CreatePostScreen: React.FC = () => {
   );
 
   // 渲染图片来源选择Modal
-  const renderImageSourceModal = () => (
-    <Modal
-      visible={showImageSourceModal}
-      transparent={true}
-      animationType="slide"
-      onRequestClose={() => setShowImageSourceModal(false)}>
-      <TouchableOpacity 
-        style={styles.imageSourceOverlay} 
-        activeOpacity={1}
-        onPress={() => setShowImageSourceModal(false)}>
-        <View style={styles.imageSourceModal}>
-          <TouchableOpacity
-            style={styles.imageSourceButton}
-            onPress={handleTakePhoto}>
-            <Text style={styles.imageSourceButtonText}>📷 拍照</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.imageSourceButton}
-            onPress={handleSelectFromGallery}>
-            <Text style={styles.imageSourceButtonText}>🖼️ 从相册选择</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.imageSourceButton, styles.imageSourceCancelButton]}
-            onPress={() => setShowImageSourceModal(false)}>
-            <Text style={[styles.imageSourceButtonText, styles.imageSourceCancelText]}>取消</Text>
-          </TouchableOpacity>
+  const renderImageSourceModal = () => {
+    if (Platform.OS !== 'android') return null;
+
+    return (
+      <Modal
+        visible={showImageSourceModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowImageSourceModal(false)}>
+        <View style={styles.imageSourceOverlay}>
+          {/* 点击空白区域关闭弹窗 */}
+          <TouchableOpacity 
+            style={styles.imageSourceBackdrop} 
+            activeOpacity={1}
+            onPress={() => setShowImageSourceModal(false)}
+          />
+          {/* 底部选项容器 */}
+          <View style={styles.imageSourceModalContainer}>
+            <TouchableOpacity
+              style={styles.imageSourceButton}
+              onPress={handleTakePhoto}>
+              <Text style={styles.imageSourceButtonText}>📷 拍照</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.imageSourceButton}
+              onPress={handleSelectFromGallery}>
+              <Text style={styles.imageSourceButtonText}>🖼️ 从相册选择</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.imageSourceButton, styles.imageSourceCancelButton]}
+              onPress={() => setShowImageSourceModal(false)}>
+              <Text style={[styles.imageSourceButtonText, styles.imageSourceCancelText]}>取消</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      </TouchableOpacity>
-    </Modal>
-  );
+      </Modal>
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -821,10 +878,13 @@ const styles = StyleSheet.create({
   },
   imageSourceOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'transparent',
     justifyContent: 'flex-end',
   },
-  imageSourceModal: {
+  imageSourceBackdrop: {
+    flex: 1,
+  },
+  imageSourceModalContainer: {
     backgroundColor: '#fff',
     borderTopLeftRadius: BORDER_RADIUS.xl,
     borderTopRightRadius: BORDER_RADIUS.xl,

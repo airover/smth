@@ -18,6 +18,8 @@ import {
   Animated,
   Easing,
   Share,
+  ActionSheetIOS,
+  AppState,
 } from 'react-native';
 import {useRoute, useNavigation} from '@react-navigation/native';
 import {WebView} from 'react-native-webview';
@@ -82,7 +84,6 @@ const PostDetailScreen: React.FC = () => {
   const [selectedImageUri, setSelectedImageUri] = useState('');
   const [imageSizes, setImageSizes] = useState<{[key: string]: {width: number; height: number}}>({});
   const [failedImages, setFailedImages] = useState<Set<string>>(new Set()); // 跟踪加载失败的图片
-  const [menuVisible, setMenuVisible] = useState(false);
   const [currentUsername, setCurrentUsername] = useState<string | null>(null);
   const [ratingModalVisible, setRatingModalVisible] = useState(false);
   const [ratingType, setRatingType] = useState<'like' | 'dislike'>('like');
@@ -93,6 +94,8 @@ const PostDetailScreen: React.FC = () => {
   const [captchaVerified, setCaptchaVerified] = useState(false); // 验证码是否已验证
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc'); // 回复排序：asc=正序，desc=倒序
   const [permissions, setPermissions] = useState<PostPermissions | null>(null);
+  const [webViewKey, setWebViewKey] = useState(0); // 用于强制刷新WebView
+  const appStateRef = useRef(AppState.currentState);
   const [throwingEgg, setThrowingEgg] = useState(false);
   const [exploding, setExploding] = useState(false);
   const [eggButtonLayout, setEggButtonLayout] = useState({x: 0, y: 0});
@@ -129,20 +132,105 @@ const PostDetailScreen: React.FC = () => {
     loadPermissions();
   }, []);
 
+  // 监听应用前后台切换，解决WebView内容丢失问题
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      // 从后台切换到前台时
+      if (
+        appStateRef.current.match(/inactive|background/) &&
+        nextAppState === 'active'
+      ) {
+        console.log('[PostDetail] App从后台切回前台，刷新WebView');
+        // 延迟一点执行，确保界面完全恢复
+        setTimeout(() => {
+          // 重置contentHeights并强制刷新WebView
+          setContentHeights({});
+          setWebViewKey(prev => prev + 1);
+        }, 100);
+      }
+      appStateRef.current = nextAppState;
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
+
   // 设置导航栏右侧按钮
   useEffect(() => {
     navigation.setOptions({
       headerRight: () => (
         <TouchableOpacity
           style={styles.headerMenuButton}
-          onPress={() => setMenuVisible(true)}
+          onPress={() => {
+            // 构建菜单选项
+            const options = [];
+            let deleteIndex = -1;
+            
+            // 只有当前用户是发帖人时才显示删除选项
+            if (currentUsername && post && currentUsername === post.author) {
+              options.push('删除');
+              deleteIndex = options.length - 1;
+            }
+            
+            options.push('回复', '收藏', '分享', '取消');
+            const cancelButtonIndex = options.length - 1;
+            
+            if (Platform.OS === 'ios') {
+              ActionSheetIOS.showActionSheetWithOptions(
+                {
+                  options,
+                  cancelButtonIndex,
+                  destructiveButtonIndex: deleteIndex >= 0 ? deleteIndex : undefined,
+                  title: '更多操作',
+                },
+                (buttonIndex) => {
+                  if (buttonIndex === cancelButtonIndex) {
+                    return;
+                  }
+                  
+                  // 根据选项执行对应操作
+                  const selectedOption = options[buttonIndex];
+                  if (selectedOption === '删除') {
+                    handleDeletePost();
+                  } else if (selectedOption === '回复') {
+                    handleReply();
+                  } else if (selectedOption === '收藏') {
+                    handleFavorite();
+                  } else if (selectedOption === '分享') {
+                    handleShare();
+                  }
+                }
+              );
+            } else {
+              // Android使用Alert
+              const buttons = [];
+              
+              if (currentUsername && post && currentUsername === post.author) {
+                buttons.push({
+                  text: '删除',
+                  style: 'destructive' as const,
+                  onPress: handleDeletePost,
+                });
+              }
+              
+              buttons.push(
+                {text: '回复', onPress: handleReply},
+                {text: '收藏', onPress: handleFavorite},
+                {text: '分享', onPress: handleShare},
+                {text: '取消', style: 'cancel' as const}
+              );
+              
+              Alert.alert('更多操作', '', buttons);
+            }
+          }}
           activeOpacity={0.7}
         >
-          <Text style={styles.headerMenuButtonText}>⋯</Text>
+          <Text style={styles.headerMenuButtonText}>⋮</Text>
         </TouchableOpacity>
       ),
     });
-  }, [navigation]);
+  }, [navigation, currentUsername, post]);
 
   const loadCurrentUser = async () => {
     try {
@@ -314,8 +402,6 @@ const PostDetailScreen: React.FC = () => {
   };
 
   const handleDeletePost = async () => {
-    setMenuVisible(false);
-    
     Alert.alert(
       '确认删除',
       '确定要删除这篇帖子吗？删除后无法恢复。',
@@ -355,8 +441,6 @@ const PostDetailScreen: React.FC = () => {
   };
 
   const handleFavorite = async () => {
-    setMenuVisible(false);
-    
     if (!post?.id) {
       Alert.alert('错误', '无法获取帖子ID');
       return;
@@ -375,8 +459,6 @@ const PostDetailScreen: React.FC = () => {
   };
 
   const handleReply = () => {
-    setMenuVisible(false);
-    
     if (!post) return;
 
     // 检查写权限
@@ -436,38 +518,33 @@ const PostDetailScreen: React.FC = () => {
     });
   };
 
-  const handleShare = () => {
-    setMenuVisible(false);
-    
+  const handleShare = async () => {
     if (!post) {
       Alert.alert('错误', '无法获取帖子信息');
       return;
     }
     
-    // 延迟执行分享，确保菜单 Modal 完全关闭后再弹出系统分享面板
-    setTimeout(async () => {
-      try {
-        // 构造帖子URL：https://wap.newsmth.net/article/{topicId}?title={boardName}&from=board
-        const topicId = post.id; // 使用 topicId
-        const boardName = encodeURIComponent(post.boardName || board); // URL编码版面名
-        const postUrl = `https://wap.newsmth.net/article/${topicId}?title=${boardName}&from=board`;
-        const shareMessage = `${post.title}\n\n${postUrl}`;
-        
-        await Share.share(
-          Platform.OS === 'ios'
-            ? {
-                message: post.title,
-                url: postUrl,
-              }
-            : {
-                message: shareMessage,
-              }
-        );
-      } catch (error) {
-        console.error('Share error:', error);
-        Alert.alert('分享失败', '无法分享帖子');
-      }
-    }, 300);
+    try {
+      // 构造帖子URL：https://wap.newsmth.net/article/{topicId}?title={boardName}&from=board
+      const topicId = post.id; // 使用 topicId
+      const boardName = encodeURIComponent(post.boardName || board); // URL编码版面名
+      const postUrl = `https://wap.newsmth.net/article/${topicId}?title=${boardName}&from=board`;
+      const shareMessage = `${post.title}\n\n${postUrl}`;
+      
+      await Share.share(
+        Platform.OS === 'ios'
+          ? {
+              message: post.title,
+              url: postUrl,
+            }
+          : {
+              message: shareMessage,
+            }
+      );
+    } catch (error) {
+      console.error('Share error:', error);
+      Alert.alert('分享失败', '无法分享帖子');
+    }
   };
 
   const handleLikePress = () => {
@@ -955,7 +1032,7 @@ const PostDetailScreen: React.FC = () => {
 
     return (
       <WebView
-        key={key}
+        key={`${key}-${webViewKey}`}
         source={{ html }}
         style={[styles.selectableWebView, { height }]}
         scrollEnabled={false}
@@ -964,17 +1041,27 @@ const PostDetailScreen: React.FC = () => {
         originWhitelist={['*']}
         onMessage={(event) => {
           const newHeight = parseInt(event.nativeEvent.data, 10);
-          if (newHeight && newHeight !== contentHeights[key]) {
+          if (newHeight && newHeight > 0 && newHeight !== contentHeights[key]) {
             setContentHeights(prev => ({ ...prev, [key]: newHeight }));
           }
+        }}
+        onLoadEnd={() => {
+          // WebView加载完成后，确保触发高度计算
+          // 这是一个备用机制，防止injectedJavaScript没有正常执行
         }}
         injectedJavaScript={`
           (function() {
             function sendHeight() {
               const height = document.body.scrollHeight;
-              window.ReactNativeWebView.postMessage(String(height));
+              if (height > 0) {
+                window.ReactNativeWebView.postMessage(String(height));
+              }
             }
+            // 立即执行一次
             sendHeight();
+            // 延迟执行，确保DOM完全渲染
+            setTimeout(sendHeight, 100);
+            setTimeout(sendHeight, 300);
             // 监听内容变化
             const observer = new MutationObserver(sendHeight);
             observer.observe(document.body, { childList: true, subtree: true });
@@ -1626,61 +1713,6 @@ const PostDetailScreen: React.FC = () => {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* 菜单弹窗 */}
-      <Modal
-        visible={menuVisible}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setMenuVisible(false)}
-      >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setMenuVisible(false)}
-        >
-          <View style={[styles.menuContainer, {backgroundColor: theme.cardBackground}]}>
-            {/* 只有当前用户是发帖人时才显示删除选项 */}
-            {currentUsername && post && currentUsername === post.author && (
-              <TouchableOpacity
-                style={[styles.menuItem, {borderBottomColor: theme.border}]}
-                onPress={handleDeletePost}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.menuItemText, styles.deleteText]}>️删除</Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity
-              style={[styles.menuItem, {borderBottomColor: theme.border}]}
-              onPress={handleReply}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.menuItemText, {color: theme.text}]}>回复</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.menuItem, {borderBottomColor: theme.border}]}
-              onPress={handleFavorite}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.menuItemText, {color: theme.text}]}>收藏</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.menuItem}
-              onPress={handleShare}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.menuItemText, {color: theme.text}]}>分享</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.cancelButton, {borderTopColor: theme.border}]}
-              onPress={() => setMenuVisible(false)}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.cancelButtonText, {color: theme.secondaryText}]}>取消</Text>
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
-      </Modal>
-
       {/* 验证码弹窗 - 放在最后确保显示在最上层 */}
       <Modal
         visible={showCaptchaModal}
@@ -1730,39 +1762,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-  },
-  menuContainer: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: BORDER_RADIUS.xl,
-    borderTopRightRadius: BORDER_RADIUS.xl,
-    paddingBottom: SPACING.xl,
-  },
-  menuItem: {
-    paddingVertical: SPACING.lg,
-    paddingHorizontal: SPACING.xl,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#e0e0e0',
-  },
-  menuItemText: {
-    fontSize: FONT_SIZE.lg,
-    color: '#333',
-    textAlign: 'center',
-  },
-  deleteText: {
-    color: '#FF3B30',
-  },
-  cancelButton: {
-    paddingVertical: SPACING.lg,
-    paddingHorizontal: SPACING.xl,
-    marginTop: SPACING.sm,
-    borderTopWidth: SPACING.xs + 2,
-    borderTopColor: '#f0f0f0',
-  },
-  cancelButtonText: {
-    fontSize: FONT_SIZE.lg,
-    color: '#666',
-    textAlign: 'center',
-    fontWeight: '500',
   },
   loadingContainer: {
     flex: 1,

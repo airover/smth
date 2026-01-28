@@ -1,4 +1,4 @@
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useRef} from 'react';
 import {
   View,
   Text,
@@ -16,8 +16,15 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActionSheetIOS,
+  PixelRatio,
+  Linking,
+  NativeModules,
 } from 'react-native';
+import Clipboard from '@react-native-clipboard/clipboard';
 import ImageCropPicker from 'react-native-image-crop-picker';
+import QRCode from 'react-native-qrcode-svg';
+import Svg, { Path, Circle, Rect } from 'react-native-svg';
+import {Camera, useCameraDevice, useCodeScanner} from 'react-native-vision-camera';
 import {useRoute, useNavigation} from '@react-navigation/native';
 import {getUserInfo, fetchUserInfo, sendMessage, addBlack, removeBlack, addFriend, removeFriend, checkIsHerBlack, getFriendsList, getBlackList} from '../services/api';
 import {User} from '../types';
@@ -37,8 +44,10 @@ import {
   BORDER_RADIUS,
   responsiveSize,
 } from '../utils/responsive';
+import {isQRCodeSafe, sanitizeForDisplay} from '../utils/securityUtils';
 
 const SCREEN_WIDTH = RESPONSIVE.SCREEN_WIDTH;
+const HEADER_HEIGHT = responsiveSize(200, 240, 260, 300);
 
 // 用户数据目录（独立于缓存，不会被清除）
 const USER_DATA_DIR = `${RNFetchBlob.fs.dirs.DocumentDir}/user_data`;
@@ -97,6 +106,12 @@ const UserProfileScreen: React.FC = () => {
   const [isInBlacklist, setIsInBlacklist] = useState(false);
   const [blacklistLoading, setBlacklistLoading] = useState(false);
   const [showImageSourceModal, setShowImageSourceModal] = useState(false);
+  const [showQRCode, setShowQRCode] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
+  const [hasPermission, setHasPermission] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
+  const isProcessingQR = useRef(false); // 使用 ref 防止重复处理
+  const device = useCameraDevice('back');
 
   const checkAndLoadUserInfo = async () => {
     try {
@@ -371,6 +386,262 @@ const UserProfileScreen: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [username]);
 
+  // 检查相机权限
+  useEffect(() => {
+    (async () => {
+      const status = await Camera.requestCameraPermission();
+      setHasPermission(status === 'granted');
+    })();
+  }, []);
+
+  // 二维码扫描器
+  const codeScanner = useCodeScanner({
+    codeTypes: ['qr', 'ean-13'],
+    onCodeScanned: (codes) => {
+      if (codes.length > 0 && codes[0].value) {
+        // 防抖处理，避免重复扫描
+        handleQRCodeScanned(codes[0].value);
+      }
+    },
+  });
+
+  // 处理扫描到的二维码
+  const handleQRCodeScanned = (data: string) => {
+    // 防止重复处理
+    if (isProcessingQR.current) {
+      console.log('正在处理二维码，忽略重复扫描');
+      return;
+    }
+    
+    isProcessingQR.current = true;
+    setShowScanner(false);
+    
+    // 安全检查
+    const safetyCheck = isQRCodeSafe(data);
+    if (!safetyCheck.safe) {
+      console.warn('二维码安全检查未通过:', {
+        reason: safetyCheck.reason,
+        dataLength: data.length,
+        dataPreview: data.substring(0, 50)
+      });
+      Alert.alert('安全提示', safetyCheck.reason || '该二维码内容不安全，已被拦截', [
+        {
+          text: '确定',
+          // onPress: () => setIsProcessingQR(false) // 移除重置
+        }
+      ]);
+      return;
+    }
+    
+    // 尝试解析为JSON格式
+    try {
+      const qrData = JSON.parse(data);
+      
+      // 类型1: 本应用的关注用户二维码
+      if (qrData.type === 'follow_user' && qrData.username) {
+        Alert.alert(
+          '关注用户',
+          `确定要关注 ${qrData.nickname || qrData.username} 吗？`,
+          [
+            {
+              text: '取消', 
+              style: 'cancel',
+              // onPress: () => setIsProcessingQR(false) // 移除重置
+            },
+            {
+              text: '确定',
+              onPress: async () => {
+                try {
+                  const result = await addFriend(qrData.userId);
+                  if (result.success) {
+                    Alert.alert('成功', result.message || '关注成功');
+                  } else {
+                    Alert.alert('失败', result.message || '关注失败');
+                  }
+                } catch (err: any) {
+                  console.error('Follow user error:', err);
+                  if (err.message === 'LOGIN_EXPIRED') {
+                    Alert.alert(
+                      '登录已过期',
+                      '请重新登录后操作',
+                      [
+                        {text: '去登录', onPress: () => {
+                          // setIsProcessingQR(false); // 移除重置
+                          navigation.navigate('Login' as never);
+                        }},
+                        {text: '取消', style: 'cancel'},
+                      ]
+                    );
+                  } else {
+                    Alert.alert('错误', '关注失败，请稍后重试');
+                  }
+                }
+              },
+            },
+          ]        );
+        return;
+      }
+      
+      // 类型2: 其他JSON格式的二维码（记录日志，不提示）
+      console.log('扫描到其他JSON格式二维码:', {
+        type: qrData.type,
+        data: qrData,
+        rawData: data
+      });
+      
+    } catch (error) {
+      // 不是JSON格式，尝试其他格式
+      
+      // 类型3: 网址二维码 (http/https)
+      if (data.startsWith('http://') || data.startsWith('https://')) {
+        Alert.alert(
+          '打开链接',
+          `是否在浏览器中打开此链接？\n\n${data.length > 50 ? data.substring(0, 50) + '...' : data}`,
+          [
+            {
+              text: '取消', 
+              style: 'cancel',
+              onPress: () => {
+                console.log('用户取消打开链接');
+                // setIsProcessingQR(false); // 移除重置
+              }
+            },
+            {
+              text: '打开',
+              onPress: () => {
+                Linking.openURL(data).catch(err => {
+                  console.error('打开链接失败:', err);
+                  Alert.alert('错误', '无法打开此链接');
+                });
+              },
+            },
+          ],
+          { cancelable: true }
+        );
+        return;
+      }
+      
+      // 类型4: 其他格式的二维码（纯文本、电话号码等，显示在界面上）
+      console.log('扫描到非JSON格式二维码:', {
+        dataType: typeof data,
+        dataLength: data.length,
+        dataPreview: data.substring(0, 100),
+        rawData: data
+      });
+      
+      // 安全过滤后显示文本内容
+      const safeContent = sanitizeForDisplay(data);
+      const displayContent = safeContent.length > 200 ? safeContent.substring(0, 200) + '...' : safeContent;
+      
+      Alert.alert(
+        '二维码内容',
+        displayContent,
+        [
+          {
+            text: '关闭', 
+            style: 'cancel',
+            // onPress: () => setIsProcessingQR(false) // 移除重置
+          },
+          {
+            text: '复制',
+            onPress: () => {
+              // 复制原始内容（已通过安全检查）
+              Clipboard.setString(data);
+              Alert.alert('提示', '内容已复制到剪贴板');
+            },
+          },
+        ],
+        { cancelable: true }
+      );
+    }
+  };
+
+  // 从相册选择二维码图片
+  const handleSelectQRFromGallery = async () => {
+    try {
+      // 选择图片并获取base64数据
+      const image = await ImageCropPicker.openPicker({
+        mediaType: 'photo',
+        cropping: false,
+        includeBase64: false,
+      });
+
+      if (image && image.path) {
+        try {
+          const qrData = await recognizeQRCodeFromImage(image.path);
+          
+          if (qrData) {
+            // 识别成功，处理二维码数据
+            handleQRCodeScanned(qrData);
+          } else {
+            Alert.alert('提示', '未能识别到二维码');
+          }
+        } catch (recognizeError: any) {
+          console.error('识别二维码失败:', recognizeError);
+          Alert.alert('提示', '识别失败，请重试');
+        }
+      }
+    } catch (error: any) {
+      if (error.code !== 'E_PICKER_CANCELLED') {
+        console.error('选择图片失败:', error);
+        Alert.alert('错误', '选择图片失败');
+      }
+    }
+  };
+
+  // 从图片中识别二维码（优先使用原生模块，回退到jsQR）
+  const recognizeQRCodeFromImage = async (imagePath: string): Promise<string | null> => {
+    const { QRCodeScanner } = NativeModules;
+    
+    // 如果原生模块可用，使用原生模块
+    if (QRCodeScanner && typeof QRCodeScanner.detectQRCode === 'function') {
+      try {
+        const result = await QRCodeScanner.detectQRCode(imagePath);
+        return result;
+      } catch (error: any) {
+        console.error('原生模块识别失败:', error);
+        // 原生模块失败，尝试jsQR
+      }
+    }
+    
+    // 回退方案：使用jsQR（需要重新选择图片获取base64）
+    console.log('原生模块不可用，尝试使用jsQR');
+    
+    try {
+      // 读取图片为base64
+      const cleanPath = imagePath.replace('file://', '');
+      const base64Data = await RNFetchBlob.fs.readFile(cleanPath, 'base64');
+      
+      // 由于React Native没有Canvas API，jsQR无法在这里直接使用
+      // 需要原生模块支持，提示用户重新构建应用
+      console.warn('jsQR在React Native中需要Canvas支持，请重新构建应用以启用原生二维码识别');
+      
+      // 返回null，上层会提示用户
+      return null;
+    } catch (error) {
+      console.error('读取图片失败:', error);
+      return null;
+    }
+  };
+
+  // 打开扫一扫
+  const handleOpenScanner = async () => {
+    if (!hasPermission) {
+      Alert.alert(
+        '需要相机权限',
+        '请在设置中允许访问相机',
+        [
+          {text: '取消', style: 'cancel'},
+          {text: '去设置', onPress: () => Linking.openSettings()},
+        ]
+      );
+      return;
+    }
+    isProcessingQR.current = false; // 重置防抖状态
+    setTorchOn(false); // 关闭手电筒
+    setShowScanner(true);
+  };
+
   const loadUserInfo = async (isSelf: boolean = isCurrentUser, forceRefresh: boolean = false): Promise<User | null> => {
     try {
       setLoading(true);
@@ -513,9 +784,11 @@ const UserProfileScreen: React.FC = () => {
     setShowImageSourceModal(false);
     
     try {
-      // 设置裁剪框尺寸与展示区域一致
-      const cropWidth = SCREEN_WIDTH;
-      const cropHeight = responsiveSize(200, 240, 260, 300);
+      // 获取屏幕像素密度
+      const pixelRatio = PixelRatio.get();
+      // 设置裁剪框尺寸与展示区域一致，但乘以像素密度以保证高清
+      const cropWidth = Math.round(SCREEN_WIDTH * pixelRatio);
+      const cropHeight = Math.round(HEADER_HEIGHT * pixelRatio);
       
       const image = await ImageCropPicker.openPicker({
         width: cropWidth,
@@ -544,9 +817,11 @@ const UserProfileScreen: React.FC = () => {
     setShowImageSourceModal(false);
     
     try {
-      // 设置裁剪框尺寸与展示区域一致
-      const cropWidth = SCREEN_WIDTH;
-      const cropHeight = responsiveSize(200, 240, 260, 300);
+      // 获取屏幕像素密度
+      const pixelRatio = PixelRatio.get();
+      // 设置裁剪框尺寸与展示区域一致，但乘以像素密度以保证高清
+      const cropWidth = Math.round(SCREEN_WIDTH * pixelRatio);
+      const cropHeight = Math.round(HEADER_HEIGHT * pixelRatio);
       
       const image = await ImageCropPicker.openCamera({
         width: cropWidth,
@@ -718,6 +993,13 @@ const UserProfileScreen: React.FC = () => {
                 onPress={() => navigation.navigate('SearchInput' as never)}
               >
                 <Text style={styles.topBarIcon}>🔍</Text>
+              </TouchableOpacity>
+              <View style={styles.topBarSpacer} />
+              <TouchableOpacity 
+                style={styles.topBarButton}
+                onPress={handleOpenScanner}
+              >
+                <Text style={styles.topBarIcon}>📷</Text>
               </TouchableOpacity>
               <View style={styles.topBarSpacer} />
               <TouchableOpacity 
@@ -915,6 +1197,38 @@ const UserProfileScreen: React.FC = () => {
             <Text style={styles.statLabel}>积分</Text>
           </View>
         </View>
+
+        {/* 二维码展示区域（仅主人态显示） */}
+        {isCurrentUser && (
+          <View style={styles.qrcodeSection}>
+            <TouchableOpacity 
+              style={styles.qrcodeToggleButton}
+              onPress={() => setShowQRCode(!showQRCode)}
+            >
+              <Text style={styles.qrcodeToggleText}>
+                {showQRCode ? '▲ 收起二维码' : '▼ 展开我的二维码'}
+              </Text>
+            </TouchableOpacity>
+            {showQRCode && (
+              <View style={styles.qrcodeContainer}>
+                <View style={styles.qrcodeWrapper}>
+                  <QRCode
+                    value={JSON.stringify({
+                      type: 'follow_user',
+                      username: user?.username || '',
+                      userId: user?.id || '',
+                      nickname: user?.nickname || '',
+                    })}
+                    size={responsiveSize(180, 200, 220, 240)}
+                    backgroundColor="white"
+                    color="black"
+                  />
+                </View>
+                <Text style={styles.qrcodeHint}>扫描二维码关注我</Text>
+              </View>
+            )}
+          </View>
+        )}
 
         {/* 操作按钮行 */}
         <View style={styles.actionButtonsRow}>
@@ -1173,6 +1487,97 @@ const UserProfileScreen: React.FC = () => {
           </TouchableOpacity>
         </Modal>
       )}
+
+      {/* 扫一扫相机界面 */}
+      <Modal
+        visible={showScanner}
+        transparent={false}
+        animationType="slide"
+        onRequestClose={() => {
+          setShowScanner(false);
+          isProcessingQR.current = false; // 重置防抖状态
+        }}
+      >
+        <View style={styles.scannerContainer}>
+          {device && hasPermission ? (
+            <>
+              <Camera
+                style={StyleSheet.absoluteFill}
+                device={device}
+                isActive={showScanner}
+                codeScanner={codeScanner}
+                torch={torchOn ? 'on' : 'off'}
+                enableZoomGesture={true}
+                photo={false}
+                video={false}
+                audio={false}
+              />
+              {/* 扫描框 */}
+              <View style={styles.scannerOverlay}>
+                <View style={styles.scannerTopMask} />
+                <View style={styles.scannerMiddleRow}>
+                  <View style={styles.scannerSideMask} />
+                  <View style={styles.scannerFrame}>
+                    <View style={[styles.scannerCorner, styles.scannerCornerTopLeft]} />
+                    <View style={[styles.scannerCorner, styles.scannerCornerTopRight]} />
+                    <View style={[styles.scannerCorner, styles.scannerCornerBottomLeft]} />
+                    <View style={[styles.scannerCorner, styles.scannerCornerBottomRight]} />
+                  </View>
+                  <View style={styles.scannerSideMask} />
+                </View>
+                <View style={styles.scannerBottomMask}>
+                  <Text style={styles.scannerHint}>将二维码放入框内，即可自动扫描</Text>
+                </View>
+              </View>
+              {/* 关闭按钮 */}
+              <TouchableOpacity
+                style={styles.scannerCloseButton}
+                onPress={() => {
+                  setShowScanner(false);
+                  setTorchOn(false);
+                  isProcessingQR.current = false; // 重置防抖状态
+                }}
+              >
+                <Text style={styles.scannerCloseText}>✕</Text>
+              </TouchableOpacity>
+              {/* 手电筒按钮 */}
+              <TouchableOpacity
+                style={styles.scannerTorchButton}
+                onPress={() => setTorchOn(!torchOn)}
+              >
+                <Text style={styles.scannerTorchText}>{torchOn ? '🔦' : '💡'}</Text>
+              </TouchableOpacity>
+              {/* 相册按钮 */}
+              <TouchableOpacity
+                style={styles.scannerGalleryButton}
+                onPress={handleSelectQRFromGallery}
+              >
+                <View style={styles.scannerGalleryIcon}>
+                  <Svg width={scaleModerate(24)} height={scaleModerate(24)} viewBox="0 0 24 24" fill="none">
+                    <Rect x="3" y="3" width="18" height="18" rx="2" ry="2" stroke="#fff" strokeWidth="2" />
+                    <Circle cx="8.5" cy="8.5" r="1.5" fill="#fff" />
+                    <Path d="M21 15l-5-5L5 21" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  </Svg>
+                </View>
+                <Text style={styles.scannerGalleryText}>相册</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <View style={styles.scannerErrorContainer}>
+              <Text style={styles.scannerErrorText}>无法访问相机</Text>
+              <TouchableOpacity
+                style={styles.scannerErrorButton}
+                onPress={() => {
+                  setShowScanner(false);
+                  isProcessingQR.current = false; // 重置防抖状态
+                }}
+              >
+                <Text style={styles.scannerErrorButtonText}>关闭</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -1208,7 +1613,7 @@ const styles = StyleSheet.create({
   // 新的背景图片区域
   headerBackground: {
     width: SCREEN_WIDTH,
-    height: responsiveSize(200, 240, 260, 300),
+    height: HEADER_HEIGHT,
     backgroundColor: '#E8F4FF', // 淡蓝色背景，与项目主题一致
   },
   headerBackgroundImage: {
@@ -1754,6 +2159,185 @@ const styles = StyleSheet.create({
   },
   imageSourceDeleteText: {
     color: '#FF3B30',
+  },
+  // 二维码区域样式
+  qrcodeSection: {
+    backgroundColor: '#fff',
+    marginTop: SPACING.md,
+    paddingHorizontal: SPACING.xl,
+    paddingVertical: SPACING.md,
+  },
+  qrcodeToggleButton: {
+    paddingVertical: SPACING.md,
+    alignItems: 'center',
+  },
+  qrcodeToggleText: {
+    fontSize: FONT_SIZE.md,
+    color: '#007AFF',
+    fontWeight: '500',
+  },
+  qrcodeContainer: {
+    alignItems: 'center',
+    paddingVertical: SPACING.xl,
+  },
+  qrcodeWrapper: {
+    padding: SPACING.lg,
+    backgroundColor: '#fff',
+    borderRadius: BORDER_RADIUS.lg,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  qrcodeHint: {
+    marginTop: SPACING.lg,
+    fontSize: FONT_SIZE.md,
+    color: '#666',
+    textAlign: 'center',
+  },
+  // 扫一扫相机样式
+  scannerContainer: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  scannerOverlay: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  scannerTopMask: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+  },
+  scannerMiddleRow: {
+    flexDirection: 'row',
+    height: responsiveSize(250, 280, 300, 320),
+  },
+  scannerSideMask: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+  },
+  scannerFrame: {
+    width: responsiveSize(250, 280, 300, 320),
+    height: responsiveSize(250, 280, 300, 320),
+    position: 'relative',
+  },
+  scannerCorner: {
+    position: 'absolute',
+    width: scaleModerate(30),
+    height: scaleModerate(30),
+    borderColor: '#fff',
+  },
+  scannerCornerTopLeft: {
+    top: 0,
+    left: 0,
+    borderTopWidth: 3,
+    borderLeftWidth: 3,
+  },
+  scannerCornerTopRight: {
+    top: 0,
+    right: 0,
+    borderTopWidth: 3,
+    borderRightWidth: 3,
+  },
+  scannerCornerBottomLeft: {
+    bottom: 0,
+    left: 0,
+    borderBottomWidth: 3,
+    borderLeftWidth: 3,
+  },
+  scannerCornerBottomRight: {
+    bottom: 0,
+    right: 0,
+    borderBottomWidth: 3,
+    borderRightWidth: 3,
+  },
+  scannerBottomMask: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'flex-start',
+    alignItems: 'center',
+    paddingTop: SPACING.xl,
+  },
+  scannerHint: {
+    fontSize: FONT_SIZE.lg,
+    color: '#fff',
+    textAlign: 'center',
+  },
+  scannerCloseButton: {
+    position: 'absolute',
+    top: RESPONSIVE.STATUS_BAR_HEIGHT + SPACING.lg,
+    right: SPACING.xl,
+    width: scaleModerate(44),
+    height: scaleModerate(44),
+    borderRadius: scaleModerate(22),
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  scannerCloseText: {
+    fontSize: FONT_SIZE.xxxl,
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  scannerTorchButton: {
+    position: 'absolute',
+    top: RESPONSIVE.STATUS_BAR_HEIGHT + SPACING.lg,
+    left: SPACING.xl,
+    width: scaleModerate(44),
+    height: scaleModerate(44),
+    borderRadius: scaleModerate(22),
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  scannerTorchText: {
+    fontSize: FONT_SIZE.xxl,
+  },
+  scannerGalleryButton: {
+    position: 'absolute',
+    bottom: SPACING.xxl,
+    right: SPACING.xl,
+    alignItems: 'center',
+  },
+  scannerGalleryIcon: {
+    width: scaleModerate(48),
+    height: scaleModerate(48),
+    borderRadius: scaleModerate(24),
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  scannerGalleryText: {
+    fontSize: FONT_SIZE.xs,
+    color: '#fff',
+    marginTop: SPACING.xs,
+    textShadowColor: 'rgba(0, 0, 0, 0.5)',
+    textShadowOffset: {width: 0, height: 1},
+    textShadowRadius: 2,
+  },
+  scannerErrorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#000',
+  },
+  scannerErrorText: {
+    fontSize: FONT_SIZE.xl,
+    color: '#fff',
+    marginBottom: SPACING.xl,
+  },
+  scannerErrorButton: {
+    backgroundColor: '#007AFF',
+    paddingHorizontal: SPACING.xxxl,
+    paddingVertical: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
+  },
+  scannerErrorButtonText: {
+    fontSize: FONT_SIZE.lg,
+    color: '#fff',
+    fontWeight: '600',
   },
 });
 

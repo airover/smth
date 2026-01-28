@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {useTheme} from '../components/ThemedComponents';
 import {
   SPACING,
   FONT_SIZE,
@@ -24,6 +25,7 @@ const SEARCH_TYPE_KEY = 'search_type_selection'; // 搜索类型选择存储key
 
 const SearchInputScreen: React.FC = () => {
   const navigation = useNavigation<any>();
+  const theme = useTheme();
   const [keyword, setKeyword] = useState('');
   const [searchHistory, setSearchHistory] = useState<string[]>([]);
   const [searchArticle, setSearchArticle] = useState(true);
@@ -160,33 +162,33 @@ const SearchInputScreen: React.FC = () => {
 
   // 渲染搜索历史项
   const renderHistoryItem = ({item}: {item: string}) => (
-    <View style={styles.historyItem}>
+    <View style={[styles.historyItem, {borderBottomColor: theme.border}]}>
       <TouchableOpacity
         style={styles.historyItemContent}
         onPress={() => handleSearch(item)}>
         <Text style={styles.historyIcon}>🕐</Text>
-        <Text style={styles.historyText} numberOfLines={1}>
+        <Text style={[styles.historyText, {color: theme.text}]} numberOfLines={1}>
           {item}
         </Text>
       </TouchableOpacity>
       <TouchableOpacity
         style={styles.deleteButton}
         onPress={() => deleteHistoryItem(item)}>
-        <Text style={styles.deleteIcon}>×</Text>
+        <Text style={[styles.deleteIcon, {color: theme.secondaryText}]}>×</Text>
       </TouchableOpacity>
     </View>
   );
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
       {/* 搜索输入框 */}
-      <View style={styles.searchContainer}>
-        <View style={styles.searchInputWrapper}>
+      <View style={[styles.searchContainer, {backgroundColor: theme.cardBackground, borderBottomColor: theme.border}]}>
+        <View style={[styles.searchInputWrapper, {backgroundColor: theme.background}]}>
           <Text style={styles.searchIcon}>🔍</Text>
           <TextInput
-            style={styles.searchInput}
+            style={[styles.searchInput, {color: theme.text}]}
             placeholder="搜索文章/版面/用户"
-            placeholderTextColor="#999"
+            placeholderTextColor={theme.secondaryText}
             value={keyword}
             onChangeText={setKeyword}
             returnKeyType="search"
@@ -197,19 +199,19 @@ const SearchInputScreen: React.FC = () => {
             <TouchableOpacity
               style={styles.clearButton}
               onPress={() => setKeyword('')}>
-              <Text style={styles.clearIcon}>×</Text>
+              <Text style={[styles.clearIcon, {color: theme.secondaryText}]}>×</Text>
             </TouchableOpacity>
           )}
         </View>
         <TouchableOpacity
           style={styles.cancelButton}
           onPress={() => navigation.goBack()}>
-          <Text style={styles.cancelText}>取消</Text>
+          <Text style={[styles.cancelText, {color: theme.primary}]}>取消</Text>
         </TouchableOpacity>
       </View>
 
       {/* 搜索类型选择 */}
-      <View style={styles.searchTypeContainer}>
+      <View style={[styles.searchTypeContainer, {backgroundColor: theme.cardBackground, borderBottomColor: theme.border}]}>
         <TouchableOpacity
           style={styles.checkboxItem}
           onPress={() => {
@@ -218,10 +220,10 @@ const SearchInputScreen: React.FC = () => {
             saveSearchTypeSelection(newValue, searchBoard, searchUser);
           }}
           activeOpacity={0.7}>
-          <View style={styles.checkbox}>
-            {searchArticle && <Text style={styles.checkmark}>✓</Text>}
+          <View style={[styles.checkbox, {borderColor: theme.primary}]}>
+            {searchArticle && <Text style={[styles.checkmark, {color: theme.primary}]}>✓</Text>}
           </View>
-          <Text style={styles.checkboxLabel}>文章</Text>
+          <Text style={[styles.checkboxLabel, {color: theme.text}]}>文章</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -232,10 +234,10 @@ const SearchInputScreen: React.FC = () => {
             saveSearchTypeSelection(searchArticle, newValue, searchUser);
           }}
           activeOpacity={0.7}>
-          <View style={styles.checkbox}>
-            {searchBoard && <Text style={styles.checkmark}>✓</Text>}
+          <View style={[styles.checkbox, {borderColor: theme.primary}]}>
+            {searchBoard && <Text style={[styles.checkmark, {color: theme.primary}]}>✓</Text>}
           </View>
-          <Text style={styles.checkboxLabel}>版面</Text>
+          <Text style={[styles.checkboxLabel, {color: theme.text}]}>版面</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -246,20 +248,20 @@ const SearchInputScreen: React.FC = () => {
             saveSearchTypeSelection(searchArticle, searchBoard, newValue);
           }}
           activeOpacity={0.7}>
-          <View style={styles.checkbox}>
-            {searchUser && <Text style={styles.checkmark}>✓</Text>}
+          <View style={[styles.checkbox, {borderColor: theme.primary}]}>
+            {searchUser && <Text style={[styles.checkmark, {color: theme.primary}]}>✓</Text>}
           </View>
-          <Text style={styles.checkboxLabel}>用户</Text>
+          <Text style={[styles.checkboxLabel, {color: theme.text}]}>用户</Text>
         </TouchableOpacity>
       </View>
 
       {/* 搜索历史 */}
       {searchHistory.length > 0 && (
-        <View style={styles.historyContainer}>
-          <View style={styles.historyHeader}>
-            <Text style={styles.historyTitle}>搜索历史</Text>
+        <View style={[styles.historyContainer, {backgroundColor: theme.cardBackground}]}>
+          <View style={[styles.historyHeader, {borderBottomColor: theme.border}]}>
+            <Text style={[styles.historyTitle, {color: theme.text}]}>搜索历史</Text>
             <TouchableOpacity onPress={clearSearchHistory}>
-              <Text style={styles.clearHistoryText}>清空</Text>
+              <Text style={[styles.clearHistoryText, {color: theme.primary}]}>清空</Text>
             </TouchableOpacity>
           </View>
           <FlatList
@@ -275,8 +277,8 @@ const SearchInputScreen: React.FC = () => {
       {searchHistory.length === 0 && (
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyIcon}>🔍</Text>
-          <Text style={styles.emptyText}>暂无搜索历史</Text>
-          <Text style={styles.emptyHint}>输入关键词开始搜索</Text>
+          <Text style={[styles.emptyText, {color: theme.secondaryText}]}>暂无搜索历史</Text>
+          <Text style={[styles.emptyHint, {color: theme.secondaryText}]}>输入关键词开始搜索</Text>
         </View>
       )}
     </SafeAreaView>
@@ -286,22 +288,18 @@ const SearchInputScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
   },
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.md,
-    backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
   },
   searchInputWrapper: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f0f0f0',
     borderRadius: BORDER_RADIUS.xl,
     paddingHorizontal: SPACING.md,
     height: scaleModerate(40),
@@ -313,7 +311,6 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     fontSize: FONT_SIZE.lg,
-    color: '#333',
     padding: 0,
   },
   clearButton: {
@@ -321,7 +318,6 @@ const styles = StyleSheet.create({
   },
   clearIcon: {
     fontSize: FONT_SIZE.xxl,
-    color: '#999',
     fontWeight: '300',
   },
   cancelButton: {
@@ -330,11 +326,9 @@ const styles = StyleSheet.create({
   },
   cancelText: {
     fontSize: FONT_SIZE.lg,
-    color: '#007AFF',
   },
   historyContainer: {
     flex: 1,
-    backgroundColor: '#fff',
     marginTop: SPACING.md,
   },
   historyHeader: {
@@ -344,16 +338,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.md,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
   },
   historyTitle: {
     fontSize: FONT_SIZE.lg,
     fontWeight: '600',
-    color: '#333',
   },
   clearHistoryText: {
     fontSize: FONT_SIZE.md,
-    color: '#007AFF',
   },
   historyItem: {
     flexDirection: 'row',
@@ -361,7 +352,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.sm,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#f0f0f0',
   },
   historyItemContent: {
     flex: 1,
@@ -375,7 +365,6 @@ const styles = StyleSheet.create({
   historyText: {
     flex: 1,
     fontSize: FONT_SIZE.lg,
-    color: '#333',
   },
   deleteButton: {
     padding: SPACING.sm,
@@ -383,7 +372,6 @@ const styles = StyleSheet.create({
   },
   deleteIcon: {
     fontSize: FONT_SIZE.xxxl,
-    color: '#999',
     fontWeight: '300',
   },
   emptyContainer: {
@@ -399,12 +387,10 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: FONT_SIZE.xl,
-    color: '#999',
     marginBottom: SPACING.sm,
   },
   emptyHint: {
     fontSize: FONT_SIZE.md,
-    color: '#ccc',
   },
   searchTypeContainer: {
     flexDirection: 'row',
@@ -412,9 +398,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-start',
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.md,
-    backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
   },
   checkboxItem: {
     flexDirection: 'row',
@@ -425,7 +409,6 @@ const styles = StyleSheet.create({
     width: scaleModerate(20),
     height: scaleModerate(20),
     borderWidth: 1.5,
-    borderColor: '#007AFF',
     borderRadius: BORDER_RADIUS.sm,
     justifyContent: 'center',
     alignItems: 'center',
@@ -433,12 +416,10 @@ const styles = StyleSheet.create({
   },
   checkmark: {
     fontSize: FONT_SIZE.md,
-    color: '#007AFF',
     fontWeight: 'bold',
   },
   checkboxLabel: {
     fontSize: FONT_SIZE.lg,
-    color: '#333',
   },
 });
 
