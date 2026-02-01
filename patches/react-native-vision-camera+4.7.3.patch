@@ -1,0 +1,40 @@
+diff --git a/node_modules/react-native-vision-camera/ios/Core/Extensions/UIApplication+interfaceOrientation.swift b/node_modules/react-native-vision-camera/ios/Core/Extensions/UIApplication+interfaceOrientation.swift
+index 96464fa..7eb44d4 100644
+--- a/node_modules/react-native-vision-camera/ios/Core/Extensions/UIApplication+interfaceOrientation.swift
++++ b/node_modules/react-native-vision-camera/ios/Core/Extensions/UIApplication+interfaceOrientation.swift
+@@ -8,6 +8,7 @@
+ import Foundation
+ import UIKit
+ 
++@available(iOS 13.0, *)
+ extension UIApplication {
+   private var windowScene: UIWindowScene? {
+     // Get all active scenes
+diff --git a/node_modules/react-native-vision-camera/ios/Core/OrientationManager.swift b/node_modules/react-native-vision-camera/ios/Core/OrientationManager.swift
+index d9a4180..8f83dd0 100644
+--- a/node_modules/react-native-vision-camera/ios/Core/OrientationManager.swift
++++ b/node_modules/react-native-vision-camera/ios/Core/OrientationManager.swift
+@@ -96,7 +96,11 @@ final class OrientationManager {
+   init() {
+     // Default values for Orientation
+     sensorOrientation = DEFAULT_SENSOR_ORIENTATION
+-    interfaceOrientation = Orientation(interfaceOrientation: UIApplication.shared.interfaceOrientation)
++    if #available(iOS 13.0, *) {
++      interfaceOrientation = Orientation(interfaceOrientation: UIApplication.shared.interfaceOrientation)
++    } else {
++      interfaceOrientation = DEFAULT_SENSOR_ORIENTATION
++    }
+     deviceOrientation = interfaceOrientation
+ 
+     // Start listening to UI-orientation changes
+@@ -141,7 +145,9 @@ final class OrientationManager {
+   private func onDeviceOrientationChanged(notification _: NSNotification) {
+     // Whenever the UIDevice orientation changes, we get the current interface orientation (UI).
+     // Interface orientation determines previewOrientation. This will not be called if rotation is locked in control center.
+-    interfaceOrientation = Orientation(interfaceOrientation: UIApplication.shared.interfaceOrientation)
++    if #available(iOS 13.0, *) {
++      interfaceOrientation = Orientation(interfaceOrientation: UIApplication.shared.interfaceOrientation)
++    }
+   }
+ 
+   private func maybeUpdateOrientations() {

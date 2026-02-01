@@ -10,6 +10,7 @@ import MailScreen from '../screens/MailScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import SettingsDetailScreen from '../screens/SettingsDetailScreen';
 import AccountSwitchScreen from '../screens/AccountSwitchScreen';
+import ChangePasswordScreen from '../screens/ChangePasswordScreen';
 import PostDetailScreen from '../screens/PostDetailScreen';
 import BoardListScreen from '../screens/BoardListScreen';
 import CacheManagementScreen from '../screens/CacheManagementScreen';
@@ -156,6 +157,13 @@ const AppNavigator = () => {
         component={AccountSwitchScreen}
         options={{
           title: '切换帐号',
+        }}
+      />
+      <Stack.Screen
+        name="ChangePassword"
+        component={ChangePasswordScreen}
+        options={{
+          title: '修改密码',
         }}
       />
       <Stack.Screen

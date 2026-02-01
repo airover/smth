@@ -15,8 +15,9 @@ import {
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {logout} from '../services/api';
+// import {logout} from '../services/api'; // 移除直接导入
 import {useSettings} from '../context/SettingsContext';
+import {useAuth} from '../context/AuthContext'; // 导入 useAuth
 import {useTheme} from '../components/ThemedComponents';
 import {
   SPACING,
@@ -29,7 +30,8 @@ const SettingsDetailScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const theme = useTheme();
   const [username, setUsername] = useState<string>('');
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  // const [isLoggedIn, setIsLoggedIn] = useState(false); // 移除本地状态
+  const {isLoggedIn, logout} = useAuth(); // 使用 AuthContext
   const {settings, updateSettings} = useSettings();
   const [showFontSizeModal, setShowFontSizeModal] = useState(false);
   const [showThemeModal, setShowThemeModal] = useState(false);
@@ -41,12 +43,12 @@ const SettingsDetailScreen: React.FC = () => {
   const loadUserStatus = async () => {
     try {
       const storedUsername = await AsyncStorage.getItem('username');
-      const loginStatus = await AsyncStorage.getItem('isLoggedIn');
+      // const loginStatus = await AsyncStorage.getItem('isLoggedIn'); // 不需要手动读取
       
       if (storedUsername) {
         setUsername(storedUsername);
       }
-      setIsLoggedIn(loginStatus === 'true');
+      // setIsLoggedIn(loginStatus === 'true'); // 不需要手动设置
     } catch (error) {
       console.error('Load user status error:', error);
     }
@@ -62,11 +64,11 @@ const SettingsDetailScreen: React.FC = () => {
         text: '确定',
         style: 'destructive',
         onPress: async () => {
-          await logout();
+          await logout(); // 使用 AuthContext 的 logout
           setUsername('');
-          setIsLoggedIn(false);
-          // 返回上一页
-          navigation.goBack();
+          // setIsLoggedIn(false); // 不需要手动设置
+          // 不需要手动导航，App.tsx 会自动切换到登录界面
+          // 这样重新登录后会回到首页而不是当前页面
         },
       },
     ]);
@@ -318,15 +320,30 @@ const SettingsDetailScreen: React.FC = () => {
         {/* 账号操作 */}
         {isLoggedIn && (
           <>
-            {/* 切换帐号 */}
+            {/* 账号管理 */}
             <View style={styles.section}>
-              <TouchableOpacity 
-                style={[styles.switchAccountButton, {backgroundColor: theme.cardBackground}]}
-                onPress={() => navigation.navigate('AccountSwitch')}
-                activeOpacity={0.8}
-              >
-                <Text style={[styles.switchAccountButtonText, {color: theme.primary}]}>切换帐号</Text>
-              </TouchableOpacity>
+              <Text style={[styles.sectionTitle, {color: theme.secondaryText}]}>账号管理</Text>
+              <View style={[styles.card, {backgroundColor: theme.cardBackground}]}>
+                <TouchableOpacity 
+                  style={styles.menuItem}
+                  onPress={() => navigation.navigate('ChangePassword')}>
+                  <View style={styles.menuItemLeft}>
+                    <Text style={styles.menuIcon}>🔒</Text>
+                    <Text style={[styles.menuItemText, {color: theme.text}]}>修改密码</Text>
+                  </View>
+                  <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
+                </TouchableOpacity>
+                <View style={[styles.divider, {backgroundColor: theme.border}]} />
+                <TouchableOpacity 
+                  style={styles.menuItem}
+                  onPress={() => navigation.navigate('AccountSwitch')}>
+                  <View style={styles.menuItemLeft}>
+                    <Text style={styles.menuIcon}>👥</Text>
+                    <Text style={[styles.menuItemText, {color: theme.text}]}>切换账号</Text>
+                  </View>
+                  <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
+                </TouchableOpacity>
+              </View>
             </View>
 
             {/* 退出登录 */}
@@ -469,17 +486,6 @@ const styles = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     // backgroundColor 由主题动态控制
     marginLeft: SPACING.lg,
-  },
-  // 切换帐号按钮
-  switchAccountButton: {
-    // backgroundColor 由主题动态控制
-    borderRadius: BORDER_RADIUS.md,
-    paddingVertical: SPACING.md,
-    alignItems: 'center',
-  },
-  switchAccountButtonText: {
-    fontSize: FONT_SIZE.xl,
-    // color 由主题动态控制
   },
   // 退出登录按钮
   logoutButton: {

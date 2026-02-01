@@ -584,6 +584,11 @@ export const getPostDetail = async (
       const topic = json.data.topic;
       const article = topic.article;
       
+      // 调试：打印 topic.board 的完整结构
+      console.log('[getPostDetail] topic.board 完整结构:', JSON.stringify(topic.board, null, 2));
+      console.log('[getPostDetail] topic.boardId:', topic.boardId);
+      console.log('[getPostDetail] _board (传入参数):', _board);
+      
       // 提取头像，优先使用 k3sUrl/ks3Url（云存储）
       let avatar = article?.account?.k3sUrl || article?.account?.ks3Url ||
                    article?.user?.k3sUrl || article?.user?.ks3Url ||

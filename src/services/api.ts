@@ -1251,6 +1251,64 @@ export const addLike = async (
   }
 };
 
+// Remove like (delete like comment)
+export const removeLike = async (
+  topicId: string,
+  boardName: string
+): Promise<{success: boolean; message?: string}> => {
+  try {
+    const cookies = await getCookies();
+    
+    if (!cookies) {
+      return {
+        success: false,
+        message: '未登录，无法操作'
+      };
+    }
+    
+    const url = `${WAP_BASE_URL}/wap/api/topic/removeLike?id=${topicId}&boardName=${encodeURIComponent(boardName)}`;
+    
+    const headers = buildDeleteHeaders(
+      cookies,
+      'application/json',
+      `https://wap.newsmth.net/article/${topicId}?title=${encodeURIComponent(boardName)}&from=board`
+    );
+    
+    console.log('删除点赞 URL:', url);
+    console.log('删除点赞参数:', {topicId, boardName});
+    console.log('删除点赞headers:', headers);
+    
+    const response = await fetchWithRetry(url, {
+      method: 'DELETE',
+      headers,
+      body: JSON.stringify({}),
+      credentials: 'include',
+    }, DEFAULT_TIMEOUT);
+    
+    const json = await response.json();
+    console.log('删除点赞响应:', json);
+    
+    // 检查 code 和 kbsCode
+    if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
+      return {
+        success: true,
+        message: json.message || '删除成功'
+      };
+    } else {
+      return {
+        success: false,
+        message: json.message || '删除失败'
+      };
+    }
+  } catch (error) {
+    console.error('Remove like error:', error);
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : '删除失败'
+    };
+  }
+};
+
 // 获取帖子读写权限
 // API: GET https://wap.newsmth.net/wap/api/detail/rw/permissions?t=xxx&topicId=xxx
 // 响应: {
@@ -1325,6 +1383,75 @@ export const getPostPermissions = async (
     return {
       success: false,
       message: error instanceof Error ? error.message : '获取权限信息失败'
+    };
+  }
+};
+
+// Change password API
+// API: POST https://wap.newsmth.net/wap/api/profile/changePwd
+// Body: newPassword=xxx&origPassword=xxx&t=xxx
+// Response: { code: 1, message: "操作成功" }
+export const changePassword = async (
+  oldPassword: string,
+  newPassword: string
+): Promise<{success: boolean; message?: string}> => {
+  try {
+    const cookies = await getCookies();
+    
+    if (!cookies) {
+      return {
+        success: false,
+        message: '未登录，无法修改密码'
+      };
+    }
+    
+    const timestamp = Date.now();
+    const body = new URLSearchParams({
+      origPassword: oldPassword,
+      newPassword: newPassword,
+      t: timestamp.toString(),
+    });
+    
+    const headers = {
+      'accept': 'application/json, text/plain, */*',
+      'accept-language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+      'access-control-allow-origin': '*',
+      'authorization': 'Basic Og==',
+      'cache-control': 'no-cache',
+      'content-type': 'application/x-www-form-urlencoded',
+      'pragma': 'no-cache',
+      'Cookie': cookies,
+    };
+    
+    const url = `${WAP_BASE_URL}/wap/api/profile/changePwd`;
+    console.log('修改密码 URL:', url);
+    
+    const response = await fetchWithRetry(url, {
+      method: 'POST',
+      headers,
+      body: body.toString(),
+      credentials: 'include',
+    }, DEFAULT_TIMEOUT);
+    
+    const json = await response.json();
+    console.log('修改密码响应:', json);
+    
+    if (json.code === 1) {
+      return {
+        success: true,
+        message: json.message || '密码修改成功'
+      };
+    } else {
+      return {
+        success: false,
+        message: json.message || '密码修改失败'
+      };
+    }
+  } catch (error) {
+    console.error('Change password error:', error);
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : '密码修改失败'
     };
   }
 };

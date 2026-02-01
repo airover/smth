@@ -23,7 +23,7 @@ import {
 } from 'react-native';
 import {useRoute, useNavigation} from '@react-navigation/native';
 import {WebView} from 'react-native-webview';
-import {getPostDetail, getTopicReplies, deletePost, getUserInfo, addFavoriteTopic, addLike, getPostPermissions, PostPermissions} from '../services/api';
+import {getPostDetail, getTopicReplies, deletePost, getUserInfo, addFavoriteTopic, addLike, removeLike, getPostPermissions, PostPermissions} from '../services/api';
 import PostCaptchaScreen from './PostCaptchaScreen';
 import {Post, Reply, Attachment, Like} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
@@ -64,6 +64,9 @@ const formatDateTime = (time: string): string => {
 
 const SCREEN_WIDTH = RESPONSIVE.SCREEN_WIDTH;
 const SCREEN_HEIGHT = RESPONSIVE.SCREEN_HEIGHT;
+
+// 点赞/扔鸡蛋专用的 Captcha ID
+const LIKE_CAPTCHA_ID = '3a6990c763f90e33fa62a97faad3a05f';
 
 const PostDetailScreen: React.FC = () => {
   const route = useRoute();
@@ -108,6 +111,18 @@ const PostDetailScreen: React.FC = () => {
   const explosionScale = useRef(new Animated.Value(0)).current;
   const explosionOpacity = useRef(new Animated.Value(0)).current;
   const modalAnim = useRef(new Animated.Value(0)).current;
+  // 使用 ref 追踪评分和评论的最新值，避免闭包陷阱
+  const ratingScoreRef = useRef(ratingScore);
+  const ratingCommentRef = useRef(ratingComment);
+
+  useEffect(() => {
+    ratingScoreRef.current = ratingScore;
+  }, [ratingScore]);
+
+  useEffect(() => {
+    ratingCommentRef.current = ratingComment;
+  }, [ratingComment]);
+
   // 蛋清飞溅粒子动画（20个方向，模拟蛋黄和蛋清）
   const splashParticles = useRef(
     Array.from({length: 20}, () => ({
@@ -815,38 +830,57 @@ const PostDetailScreen: React.FC = () => {
     });
   };
 
-  const handleSubmitRating = async () => {
+  const executeSubmit = async (params: any) => {
     if (!post?.id) {
       Alert.alert('错误', '无法获取帖子ID');
       return;
     }
 
-    // 如果没有选择评分，默认为0
-    const finalScore = ratingScore !== null ? ratingScore : 0;
+    // 使用 ref 获取最新值，避免闭包导致的数据陈旧
+    const currentScore = ratingScoreRef.current;
+    const currentComment = ratingCommentRef.current;
+    const finalScore = currentScore !== null ? currentScore : 0;
     
-    // 评分非0或评论内容非空才可提交
-    if (finalScore === 0 && !ratingComment.trim()) {
+    // Debug log: 检查提交参数
+    console.log('[点赞/扔鸡蛋] executeSubmit 被调用，参数:', {
+      postId: post.id,
+      board: board,
+      finalScore: finalScore,
+      ratingScoreState: ratingScore, // 打印 state 值对比
+      ratingScoreRef: currentScore,  // 打印 ref 值对比
+      ratingCommentState: ratingComment, // 打印 state 值对比
+      ratingCommentRef: currentComment,  // 打印 ref 值对比
+      captchaParams: params,
+      postBoard: post.board,
+      postBoardName: post.boardName,
+    });
+    
+    if (finalScore === 0 && !currentComment.trim()) {
       Alert.alert('提示', '请选择评分或输入评价内容');
       return;
     }
 
-    // 检查验证码是否已验证
-    if (!captchaVerified || !captchaParams) {
-      Alert.alert('提示', '请先完成人机验证');
-      return;
-    }
-
     try {
+      // 优先使用 post.board (从 API 返回的版面英文名称，如 FamilyLife)
+      // 而非路由参数中的 board (hash ID，如 c82c03ff780d34e0a6404a05361cb69d)
+      // 后台 API 期望的 boardName 是英文名称，不是 hash ID
+      const boardNameForApi = post.board || board;
+      console.log('[点赞/扔鸡蛋] 使用的版面参数:', {
+        'post.board (API返回的英文名)': post.board,
+        'board (路由参数hash ID)': board,
+        '最终使用': boardNameForApi,
+      });
+      
       const result = await addLike(
         post.id, // 使用 topicId
-        post.boardName || board,
+        boardNameForApi, // 使用版面英文名称
         finalScore,
-        ratingComment.trim(),
-        captchaParams
+        currentComment.trim(),
+        params
       );
-      closeModal();
       
       if (result.success) {
+        closeModal();
         Alert.alert('成功', result.message || '评价成功');
         // 刷新帖子详情以显示新的点评
         await loadPostDetail(1, true);
@@ -867,6 +901,23 @@ const PostDetailScreen: React.FC = () => {
     }
   };
 
+  const handleSubmitRating = () => {
+    const currentScore = ratingScoreRef.current;
+    const currentComment = ratingCommentRef.current;
+    const finalScore = currentScore !== null ? currentScore : 0;
+    
+    if (finalScore === 0 && !currentComment.trim()) {
+      Alert.alert('提示', '请选择评分或输入评价内容');
+      return;
+    }
+
+    if (!captchaVerified || !captchaParams) {
+      handleCaptchaVerify();
+    } else {
+      executeSubmit(captchaParams);
+    }
+  };
+
   // 显示验证码弹窗
   const handleCaptchaVerify = () => {
     // 先关闭评价弹窗，避免 Modal 冲突
@@ -879,30 +930,50 @@ const PostDetailScreen: React.FC = () => {
 
   // 验证码验证成功
   const handleCaptchaSuccess = (ticket: string, randstr: string) => {
+    // Debug log: 验证码回调
+    console.log('[点赞/扔鸡蛋] handleCaptchaSuccess 被调用:', {
+      ticket: ticket,
+      randstr: randstr,
+      currentRatingScore: ratingScoreRef.current,
+      currentRatingComment: ratingCommentRef.current,
+    });
+    
     // 解析验证码参数
     const parts = ticket.split('|');
     if (parts.length >= 4) {
+      // 构造验证码参数对象，包含验证成功后的 token 信息
       const params = {
-        captcha_id: '3a6990c763f90e33fa62a97faad3a05f', // 点赞专用的captcha_id
+        captcha_id: LIKE_CAPTCHA_ID, // 使用常量
         lot_number: parts[0],
         captcha_output: parts[1],
         pass_token: parts[2],
         gen_time: parts[3],
       };
+      
+      console.log('[点赞/扔鸡蛋] 解析后的验证码参数:', params);
+      
       setCaptchaParams(params);
       setCaptchaVerified(true);
+      
+      setShowCaptchaModal(false);
+      // 验证成功后，直接提交点评数据，不再重新打开评价弹窗
+      // 这里直接使用解析出的 params，确保使用最新的验证 token
+      setTimeout(() => {
+        executeSubmit(params);
+      }, 300);
+    } else {
+      console.log('[点赞/扔鸡蛋] 验证码解析失败，parts:', parts);
+      setShowCaptchaModal(false);
+      // 验证失败也重新打开弹窗
+      setTimeout(() => {
+        setRatingModalVisible(true);
+        Animated.timing(modalAnim, {
+          toValue: 1,
+          duration: 300,
+          useNativeDriver: true,
+        }).start();
+      }, 300);
     }
-    setShowCaptchaModal(false);
-    // 验证成功后，重新打开评价弹窗
-    setTimeout(() => {
-      setRatingModalVisible(true);
-      // 确保动画状态正确
-      Animated.timing(modalAnim, {
-        toValue: 1,
-        duration: 300,
-        useNativeDriver: true,
-      }).start();
-    }, 300);
   };
   // 验证码取消
   const handleCaptchaCancel = () => {
@@ -917,6 +988,44 @@ const PostDetailScreen: React.FC = () => {
         useNativeDriver: true,
       }).start();
     }, 300);
+  };
+
+  const handleRemoveLike = async (likeId: string) => {
+    if (!post?.id) {
+      Alert.alert('错误', '无法获取帖子ID');
+      return;
+    }
+
+    Alert.alert(
+      '确认删除',
+      '确定要删除这条点赞评论吗？',
+      [
+        {
+          text: '取消',
+          style: 'cancel'
+        },
+        {
+          text: '删除',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const boardNameForApi = post.board || board;
+              const result = await removeLike(post.id, boardNameForApi);
+              
+              if (result.success) {
+                Alert.alert('成功', result.message || '删除成功');
+                // 刷新帖子详情以更新点赞列表
+                await loadPostDetail(1, true);
+              } else {
+                Alert.alert('失败', result.message || '删除失败');
+              }
+            } catch (error) {
+              Alert.alert('错误', '删除失败，请稍后重试');
+            }
+          }
+        }
+      ]
+    );
   };
 
   const toggleSortOrder = () => {
@@ -1195,47 +1304,60 @@ const PostDetailScreen: React.FC = () => {
         <View style={styles.likesHeader}>
           <Text style={[styles.likesTitle, {color: theme.secondaryText}]}>点赞/点评 ({likes.length})</Text>
         </View>
-        {displayedLikes.map((like, index) => (
-          <View key={like.id || index} style={styles.likeItem}>
-            <View style={styles.likeUserInfo}>
-              <TouchableOpacity
-                onPress={() => {
-                  navigation.navigate('UserProfile', { username: like.author });
-                }}
-                activeOpacity={0.7}
-              >
-                {like.avatar ? (
-                  <ImageWithPlaceholder
-                    uri={like.avatar}
-                    style={styles.likeAvatar}
-                    resizeMode="cover"
-                    isAvatar={true}
-                  />
-                ) : (
-                  <View style={[styles.likeAvatar, styles.likeAvatarPlaceholder]}>
-                    <Text style={styles.likeAvatarText}>
-                      {like.author.charAt(0).toUpperCase()}
-                    </Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-              <View style={styles.likeTextContainer}>
-                <Text style={[styles.likeContent, {color: theme.text}]}>
-                  <Text style={[styles.likeAuthor, {color: theme.text}]}>
-                    {like.author}
-                  </Text>
-                  {like.score !== undefined && like.score !== null && like.score !== 0 && (
-                    <Text style={[styles.likeScore, {color: theme.error}]}>
-                      {' '}[{like.score > 0 ? '+' : ''}{like.score}分]
-                    </Text>
+        {displayedLikes.map((like, index) => {
+          const isCurrentUser = currentUsername && like.author === currentUsername;
+          
+          return (
+            <View key={like.id || index} style={styles.likeItem}>
+              <View style={styles.likeUserInfo}>
+                <TouchableOpacity
+                  onPress={() => {
+                    navigation.navigate('UserProfile', { username: like.author });
+                  }}
+                  activeOpacity={0.7}
+                >
+                  {like.avatar ? (
+                    <ImageWithPlaceholder
+                      uri={like.avatar}
+                      style={styles.likeAvatar}
+                      resizeMode="cover"
+                      isAvatar={true}
+                    />
+                  ) : (
+                    <View style={[styles.likeAvatar, styles.likeAvatarPlaceholder]}>
+                      <Text style={styles.likeAvatarText}>
+                        {like.author.charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
                   )}
-                  <Text style={[styles.likeColon, {color: theme.secondaryText}]}>: </Text>
-                  <Text style={[styles.likeBody, {color: theme.text}]}>{like.body}</Text>
-                </Text>
+                </TouchableOpacity>
+                <View style={styles.likeTextContainer}>
+                  <Text style={[styles.likeContent, {color: theme.text}]}>
+                    <Text style={[styles.likeAuthor, {color: theme.text}]}>
+                      {like.author}
+                    </Text>
+                    {like.score !== undefined && like.score !== null && like.score !== 0 && (
+                      <Text style={[styles.likeScore, {color: theme.error}]}>
+                        {' '}[{like.score > 0 ? '+' : ''}{like.score}分]
+                      </Text>
+                    )}
+                    <Text style={[styles.likeColon, {color: theme.secondaryText}]}>: </Text>
+                    <Text style={[styles.likeBody, {color: theme.text}]}>{like.body}</Text>
+                  </Text>
+                </View>
+                {isCurrentUser && (
+                  <TouchableOpacity
+                    style={[styles.likeDeleteButton, {borderColor: theme.border}]}
+                    onPress={() => handleRemoveLike(like.id)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.likeDeleteButtonText, {color: theme.error}]}>删除</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             </View>
-          </View>
-        ))}
+          );
+        })}
         {showCollapse && (
           <TouchableOpacity
             style={[styles.likesExpandButton, {borderTopColor: theme.border}]}
@@ -1670,42 +1792,26 @@ const PostDetailScreen: React.FC = () => {
               <View style={[styles.commentInputContainer, {borderColor: theme.border}]}>
                 <TextInput
                   style={[styles.commentInput, {color: theme.text}]}
-                  placeholder="请留下你的评论"
+                  placeholder="请留下你的评论，最多30个字"
                   placeholderTextColor={theme.secondaryText}
                   multiline
-                  numberOfLines={4}
+                  numberOfLines={3}
                   value={ratingComment}
                   onChangeText={setRatingComment}
-                  maxLength={200}
+                  maxLength={30}
                 />
               </View>
               
-              {/* 人机验证和提交按钮 */}
+              {/* 提交按钮 */}
               <View style={styles.actionButtonsRow}>
                 <TouchableOpacity
-                  style={[
-                    styles.captchaButton,
-                    {
-                      borderColor: captchaVerified ? theme.primary : theme.border,
-                      backgroundColor: captchaVerified ? '#f0fff0' : theme.background
-                    }
-                  ]}
-                  onPress={handleCaptchaVerify}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[
-                    styles.captchaButtonText,
-                    {color: captchaVerified ? '#34C759' : theme.text}
-                  ]}>
-                    {captchaVerified ? '✅ 已验证' : '🤖 人机验证'}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.submitButton, {backgroundColor: theme.primary}]}
+                  style={[styles.submitButtonFull, {backgroundColor: theme.primary}]}
                   onPress={handleSubmitRating}
                   activeOpacity={0.7}
                 >
-                  <Text style={styles.submitButtonText}>提交</Text>
+                  <Text style={styles.submitButtonText}>
+                    {captchaVerified ? '✅ 提交' : '提交'}
+                  </Text>
                 </TouchableOpacity>
               </View>
             </ScrollView>
@@ -1725,7 +1831,7 @@ const PostDetailScreen: React.FC = () => {
             <PostCaptchaScreen
               onCaptchaSuccess={handleCaptchaSuccess}
               onCancel={handleCaptchaCancel}
-              captchaId="3a6990c763f90e33fa62a97faad3a05f"
+              captchaId={LIKE_CAPTCHA_ID}
             />
           </View>
         </View>
@@ -1972,6 +2078,17 @@ const styles = StyleSheet.create({
   },
   likeTextContainer: {
     flex: 1,
+  },
+  likeDeleteButton: {
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.xs,
+    borderRadius: BORDER_RADIUS.sm,
+    borderWidth: 1,
+    marginLeft: SPACING.sm,
+  },
+  likeDeleteButtonText: {
+    fontSize: FONT_SIZE.xs,
+    fontWeight: '500',
   },
   likeContent: {
     fontSize: FONT_SIZE.sm,
@@ -2301,6 +2418,13 @@ const styles = StyleSheet.create({
   },
   submitButton: {
     flex: 1,
+    backgroundColor: '#007AFF',
+    borderRadius: BORDER_RADIUS.lg,
+    paddingVertical: SPACING.lg,
+    alignItems: 'center',
+  },
+  submitButtonFull: {
+    width: '100%',
     backgroundColor: '#007AFF',
     borderRadius: BORDER_RADIUS.lg,
     paddingVertical: SPACING.lg,

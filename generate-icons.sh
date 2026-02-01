@@ -80,15 +80,19 @@ generate_icon() {
     local desc=$3
     
     echo -e "  生成 ${GREEN}${size}x${size}${NC} -> $desc"
-    convert "$SOURCE_ICON" -resize ${size}x${size} "$output"
+    # 将白色背景转换为透明背景，然后调整尺寸
+    convert "$SOURCE_ICON" -resize ${size}x${size} \
+        -fuzz 10% -transparent white \
+        "$output"
 }
 
 # ==================== iOS 图标 ====================
 echo -e "${BLUE}[1/2] 生成 iOS 图标...${NC}"
 echo ""
 
-# iOS 所需的所有尺寸（去重）
-IOS_SIZES=(16 20 29 32 40 48 50 55 57 58 60 64 66 72 76 80 87 88 92 100 102 108 114 120 128 144 152 167 172 180 196 216 234 256 258 512 1024)
+# iOS 所需的所有尺寸（适用于 iOS 12+ 和 macOS）
+# 包含：通知图标、设置图标、Spotlight图标、App图标、iPad图标、Mac图标、App Store图标
+IOS_SIZES=(16 20 29 32 40 58 60 64 76 80 87 114 120 128 136 152 167 180 192 256 512 1024)
 
 for size in "${IOS_SIZES[@]}"; do
     generate_icon $size "$TEMP_DIR/${size}.png" "${size}.png"

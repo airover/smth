@@ -45,6 +45,7 @@ const AccountSwitchScreen: React.FC = () => {
       
       // 获取当前登录的用户
       const username = await AsyncStorage.getItem('username');
+      const currentCookies = await AsyncStorage.getItem('cookies');
       setCurrentUsername(username || '');
       
       // 获取保存的账号列表
@@ -56,6 +57,18 @@ const AccountSwitchScreen: React.FC = () => {
         ...acc,
         isCurrent: acc.username === username,
       }));
+      
+      // 如果当前登录的账号不在列表中，添加进去
+      if (username && currentCookies) {
+        const currentAccountExists = savedAccounts.some(acc => acc.username === username);
+        if (!currentAccountExists) {
+          savedAccounts.push({
+            username,
+            cookies: currentCookies,
+            isCurrent: true,
+          });
+        }
+      }
       
       setAccounts(savedAccounts);
     } catch (error) {
@@ -209,9 +222,7 @@ const AccountSwitchScreen: React.FC = () => {
                     <Text style={[styles.accountUsername, {color: theme.secondaryText}]}>@{account.username}</Text>
                   </View>
                 </View>
-                <View style={[styles.currentBadge, {backgroundColor: theme.primary}]}>
-                  <Text style={styles.currentBadgeText}>当前</Text>
-                </View>
+                <Text style={[styles.checkIcon, {color: theme.primary}]}>✓</Text>
               </View>
             ))}
           </View>
@@ -368,14 +379,8 @@ const styles = StyleSheet.create({
   accountUsername: {
     fontSize: FONT_SIZE.md,
   },
-  currentBadge: {
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.xs,
-    borderRadius: BORDER_RADIUS.sm,
-  },
-  currentBadgeText: {
-    fontSize: FONT_SIZE.sm,
-    color: '#fff',
+  checkIcon: {
+    fontSize: FONT_SIZE.xxl,
     fontWeight: '600',
   },
   removeButton: {

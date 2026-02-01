@@ -668,6 +668,11 @@ const UserProfileScreen: React.FC = () => {
             fetchUserInfo(username!).then(freshData => {
               if (freshData) {
                 console.log('UserProfileScreen: Background update for', username);
+                // 如果积分为负数，不更新界面和缓存（数据可能异常）
+                if (freshData.score !== undefined && freshData.score < 0) {
+                  console.log('UserProfileScreen: Skip update due to negative score:', freshData.score);
+                  return;
+                }
                 setUser(freshData);
                 setCache('otherUserInfo', username!, freshData);
                 // 使用新数据重新检查关注状态，确保状态同步
@@ -685,9 +690,21 @@ const UserProfileScreen: React.FC = () => {
         userInfo = await fetchUserInfo(username!);
         console.log('UserProfileScreen fetchUserInfo result:', userInfo);
         
-        // 保存到缓存
+        // 如果积分为负数，不更新界面和缓存（数据可能异常）
         if (userInfo) {
-          setCache('otherUserInfo', username!, userInfo);
+          if (userInfo.score !== undefined && userInfo.score < 0) {
+            console.log('UserProfileScreen: Skip update due to negative score:', userInfo.score);
+            // 尝试从缓存获取之前的正常数据
+            const cachedData = getCacheWithTimestamp<any>('otherUserInfo', username!);
+            if (cachedData && cachedData.data) {
+              console.log('UserProfileScreen: Using cached data due to negative score');
+              setUser(cachedData.data);
+              return cachedData.data;
+            }
+            // 没有缓存数据，仍然显示当前数据，但不保存缓存
+          } else {
+            setCache('otherUserInfo', username!, userInfo);
+          }
         }
       }
       
