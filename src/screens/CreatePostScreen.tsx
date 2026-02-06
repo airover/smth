@@ -280,6 +280,7 @@ const CreatePostScreen: React.FC = () => {
         mediaType: 'photo',
         compressImageQuality: 0.8,
         includeBase64: false,
+        forceJpg: true, // 强制转换为 JPEG 格式（仅 iOS 有效）
       });
 
       if (images && images.length > 0) {
@@ -322,6 +323,7 @@ const CreatePostScreen: React.FC = () => {
         mediaType: 'photo',
         compressImageQuality: 0.8,
         includeBase64: false,
+        forceJpg: true, // 强制转换为 JPEG 格式（仅 iOS 有效）
       });
 
       if (image && image.path) {

@@ -1,7 +1,8 @@
 import React from 'react';
 import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
-import {Text} from 'react-native';
+import {Text, TouchableOpacity} from 'react-native';
+import Svg, {Path} from 'react-native-svg';
 
 // Screens
 import HomeScreen from '../screens/HomeScreen';
@@ -105,7 +106,7 @@ const MainTabs = () => {
 const AppNavigator = () => {
   return (
     <Stack.Navigator
-      screenOptions={{
+      screenOptions={({navigation}) => ({
         headerStyle: {
           backgroundColor: '#fff',
         },
@@ -114,14 +115,37 @@ const AppNavigator = () => {
           fontWeight: '600',
           color: '#000', // 标题颜色使用黑色
         },
-        headerBackTitle: '', // 完全不显示返回文字
-      }}>
+        headerBackTitleVisible: false, // 隐藏返回文字
+        headerBackTitle: '', // 不显示返回文字
+        headerLeft: ({canGoBack}) =>
+          canGoBack ? (
+            <TouchableOpacity
+              onPress={() => navigation.goBack()}
+              style={{marginLeft: -4, padding: 4, paddingRight: 12}}>
+              <Svg width={28} height={28} viewBox="0 0 24 24" fill="none">
+                <Path
+                  d="M15 18L9 12L15 6"
+                  stroke="#007AFF"
+                  strokeWidth={2.5}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </Svg>
+            </TouchableOpacity>
+          ) : null,
+      })}>
       <Stack.Screen
         name="MainTabs"
         component={MainTabs}
         options={{
           headerShown: false,
           title: '', // 设置空标题，避免返回时显示 "MainTabs"
+          headerBackTitleVisible: false,
+          headerBackTitle: '',
+          headerBackTitleStyle: {
+            display: 'none',
+            opacity: 0,
+          },
         }}
       />
       <Stack.Screen
@@ -129,6 +153,12 @@ const AppNavigator = () => {
         component={PostDetailScreen}
         options={{
           title: '',
+          headerBackTitleVisible: false,
+          headerBackTitle: '',
+          headerBackTitleStyle: {
+            display: 'none',
+            opacity: 0,
+          },
         }}
       />
       <Stack.Screen

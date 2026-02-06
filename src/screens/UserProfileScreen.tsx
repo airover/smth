@@ -45,6 +45,7 @@ import {
   responsiveSize,
 } from '../utils/responsive';
 import {isQRCodeSafe, sanitizeForDisplay} from '../utils/securityUtils';
+import {cleanHtml} from '../utils/htmlParser';
 
 const SCREEN_WIDTH = RESPONSIVE.SCREEN_WIDTH;
 const HEADER_HEIGHT = responsiveSize(200, 240, 260, 300);
@@ -52,19 +53,6 @@ const HEADER_HEIGHT = responsiveSize(200, 240, 260, 300);
 // 用户数据目录（独立于缓存，不会被清除）
 const USER_DATA_DIR = `${RNFetchBlob.fs.dirs.DocumentDir}/user_data`;
 const BACKGROUND_IMAGE_PATH = `${USER_DATA_DIR}/profile_background.jpg`;
-
-// 辅助函数：移除HTML标签
-const stripHtmlTags = (html: string): string => {
-  if (!html) return '';
-  return html
-    .replace(/<[^>]*>/g, '') // 移除HTML标签
-    .replace(/&nbsp;/g, ' ') // 替换&nbsp;
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&')
-    .replace(/&quot;/g, '"')
-    .trim();
-};
 
 // 辅助函数：计算字符串长度（中文算2，英文算1）
 const getStringLength = (str: string): number => {
@@ -1187,7 +1175,7 @@ const UserProfileScreen: React.FC = () => {
           {/* 个性签名 */}
           {user?.signature && (
             <Text style={styles.signatureText} numberOfLines={2}>
-              {stripHtmlTags(user.signature)}
+              {cleanHtml(user.signature)}
             </Text>
           )}
 
@@ -1350,7 +1338,7 @@ const UserProfileScreen: React.FC = () => {
                     </Text>
                     {post.body ? (
                       <Text style={styles.postBody} numberOfLines={3}>
-                        {stripHtmlTags(post.body)}
+                        {cleanHtml(post.body)}
                       </Text>
                     ) : null}
                     <View style={styles.postMeta}>

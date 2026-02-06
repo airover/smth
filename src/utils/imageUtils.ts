@@ -15,17 +15,22 @@ export const normalizeImageUrl = (url: string | undefined | null): string => {
   const trimmedUrl = url.trim();
   if (!trimmedUrl) return '';
 
-  // 1. 如果是相对路径，添加HTTPS域名
+  // 1. 处理协议相对URL（以 // 开头）
+  if (trimmedUrl.startsWith('//')) {
+    return `https:${trimmedUrl}`;
+  }
+
+  // 2. 如果是相对路径，添加HTTPS域名
   if (!trimmedUrl.startsWith('http')) {
     return `https://file.mysmth.net/${trimmedUrl}`;
   }
 
-  // 2. 强制转换 HTTP 为 HTTPS
+  // 3. 强制转换 HTTP 为 HTTPS
   if (trimmedUrl.startsWith('http://')) {
     return trimmedUrl.replace('http://', 'https://');
   }
 
-  // 3. 已经是 HTTPS，直接返回
+  // 4. 已经是 HTTPS，直接返回
   return trimmedUrl;
 };
 
@@ -42,7 +47,19 @@ export const normalizeImageUrls = (urls: (string | undefined | null)[]): string[
 };
 
 /**
- * 判断URL是否为图片
+ * 判断附件是否为图片类型（基于接口返回的type字段）
+ * @param attachment 附件对象
+ * @returns 是否为图片附件
+ */
+export const isImageAttachment = (attachment: any): boolean => {
+  if (!attachment) return false;
+  const type = attachment.type || '';
+  // 根据接口返回的type字段判断，如 "image/jpeg", "image/png" 等
+  return type.startsWith('image/');
+};
+
+/**
+ * 判断URL是否为图片（基于URL或文件名后缀）
  * @param url 图片URL
  * @param name 可选的文件名
  * @returns 是否为图片
@@ -55,6 +72,18 @@ export const isImageUrl = (url: string, name?: string): boolean => {
     url.includes('/file/') ||
     url.includes('/attachment/')
   );
+};
+
+/**
+ * 判断附件是否为视频类型（基于接口返回的type字段）
+ * @param attachment 附件对象
+ * @returns 是否为视频附件
+ */
+export const isVideoAttachment = (attachment: any): boolean => {
+  if (!attachment) return false;
+  const type = attachment.type || '';
+  // 根据接口返回的type字段判断，如 "video/mp4", "video/quicktime" 等
+  return type.startsWith('video/');
 };
 
 /**
@@ -118,7 +147,7 @@ export const isValidImageUrl = (url: string): boolean => {
 export const extractImagesFromHtml = (html: string): string[] => {
   if (!html) return [];
   
-  const imgRegex = /<img[^>]+src="([^">]+)"/gi;
+  const imgRegex = /<img[^>]+src="([^"]+)"/gi;
   const urls: string[] = [];
   let match;
   
@@ -132,6 +161,26 @@ export const extractImagesFromHtml = (html: string): string[] => {
 };
 
 /**
+ * 从文章 HTML 中提取静态附件地址（//static.mysmth.net/nForum/att/...）
+ * @param html HTML 内容
+ * @returns 去重后的静态附件地址列表
+ */
+export const extractStaticAttachmentUrls = (html: string): string[] => {
+  if (!html) return [];
+
+  const urls: string[] = [];
+  const linkRegex = /<a[^>]+href="(\/\/static\.mysmth\.net\/nForum\/att\/[^\"#?]+)"/gi;
+  let match;
+
+  while ((match = linkRegex.exec(html)) !== null) {
+    if (match[1]) {
+      urls.push(normalizeImageUrl(match[1]));
+    }
+  }
+
+  return Array.from(new Set(urls));
+};
+/**
  * 生成图片占位符URL（用于加载失败时显示）
  * @param width 宽度
  * @param height 高度
@@ -140,4 +189,176 @@ export const extractImagesFromHtml = (html: string): string[] => {
 export const getPlaceholderImageUrl = (width: number = 400, height: number = 300): string => {
   // 可以使用 placeholder.com 或其他占位图服务
   return `https://via.placeholder.com/${width}x${height}/CCCCCC/666666?text=Image`;
+};
+
+/**
+ * 判断图片是否需要转码为 JPEG
+ * @param mimeType MIME 类型
+ * @param fileName 文件名
+ * @returns 是否需要转码
+ */
+export const needsJpegConversion = (mimeType?: string, fileName?: string): boolean => {
+  // 已经是 JPEG 格式，不需要转码
+  if (mimeType === 'image/jpeg' || mimeType === 'image/jpg') {
+    return false;
+  }
+  
+  // 根据文件扩展名判断
+  if (fileName) {
+    const ext = fileName.split('.').pop()?.toLowerCase();
+    if (ext === 'jpg' || ext === 'jpeg') {
+      return false;
+    }
+    // 这些格式需要转码
+    if (ext === 'heic' || ext === 'heif' || ext === 'png' || ext === 'webp' || ext === 'bmp') {
+      return true;
+    }
+  }
+  
+  // 根据 MIME 类型判断
+  if (mimeType) {
+    const needConvertTypes = ['image/heic', 'image/heif', 'image/png', 'image/webp', 'image/bmp'];
+    return needConvertTypes.includes(mimeType.toLowerCase());
+  }
+  
+  return false;
+};
+
+/**
+ * 将图片转码为 JPEG 格式
+ * 使用 react-native-image-crop-picker 进行转换
+ * @param imagePath 原始图片路径
+ * @param quality JPEG 压缩质量 (0-1)，默认 0.8
+ * @returns 转码后的图片信息，包含新路径、宽高等
+ */
+export const convertToJpeg = async (
+  imagePath: string,
+  quality: number = 0.8
+): Promise<{
+  path: string;
+  width: number;
+  height: number;
+  mime: string;
+  size: number;
+}> => {
+  // 动态导入 ImageCropPicker 以避免循环依赖
+  const ImageCropPicker = require('react-native-image-crop-picker').default;
+  
+  try {
+    // 使用 openCropper 进行转码，设置 freeStyleCropEnabled 允许自由裁剪
+    // 但我们不真正裁剪，只是利用它的转码能力
+    const result = await ImageCropPicker.openCropper({
+      path: imagePath,
+      mediaType: 'photo',
+      compressImageQuality: quality,
+      forceJpg: true, // 强制转换为 JPEG
+      freeStyleCropEnabled: true,
+      hideBottomControls: false,
+      showCropGuidelines: false,
+      includeBase64: false,
+    });
+    
+    return {
+      path: result.path,
+      width: result.width,
+      height: result.height,
+      mime: result.mime || 'image/jpeg',
+      size: result.size,
+    };
+  } catch (error: any) {
+    // 如果用户取消裁剪，返回原图路径
+    if (error.code === 'E_PICKER_CANCELLED') {
+      throw error;
+    }
+    console.error('图片转码失败:', error);
+    throw new Error(`图片转码失败: ${error.message}`);
+  }
+};
+
+/**
+ * 批量转码图片为 JPEG 格式（仅转换需要转码的图片）
+ * @param imageAssets 图片 asset 数组
+ * @param quality JPEG 压缩质量 (0-1)，默认 0.8
+ * @param onProgress 进度回调 (已处理数量, 总数量)
+ * @returns 转码后的图片 asset 数组
+ */
+export const convertImagesToJpeg = async (
+  imageAssets: Array<{
+    uri: string;
+    fileName?: string;
+    type?: string;
+    fileSize?: number;
+    width?: number;
+    height?: number;
+    originalPath?: string;
+  }>,
+  quality: number = 0.8,
+  onProgress?: (processed: number, total: number) => void
+): Promise<Array<{
+  uri: string;
+  fileName: string;
+  type: string;
+  fileSize?: number;
+  width?: number;
+  height?: number;
+  originalPath?: string;
+}>> => {
+  const results = [];
+  
+  for (let i = 0; i < imageAssets.length; i++) {
+    const asset = imageAssets[i];
+    
+    if (onProgress) {
+      onProgress(i, imageAssets.length);
+    }
+    
+    // 判断是否需要转码
+    if (needsJpegConversion(asset.type, asset.fileName)) {
+      try {
+        console.log(`正在转码图片 ${i + 1}/${imageAssets.length}: ${asset.fileName || asset.uri}`);
+        const converted = await convertToJpeg(asset.uri, quality);
+        
+        // 生成新的文件名（替换扩展名为 .jpg）
+        let newFileName = asset.fileName || `image_${Date.now()}.jpg`;
+        const lastDotIndex = newFileName.lastIndexOf('.');
+        if (lastDotIndex > 0) {
+          newFileName = newFileName.substring(0, lastDotIndex) + '.jpg';
+        } else {
+          newFileName = newFileName + '.jpg';
+        }
+        
+        results.push({
+          uri: converted.path,
+          fileName: newFileName,
+          type: 'image/jpeg',
+          fileSize: converted.size,
+          width: converted.width,
+          height: converted.height,
+          originalPath: converted.path,
+        });
+        console.log(`图片 ${i + 1} 转码完成: ${newFileName}`);
+      } catch (error: any) {
+        // 转码失败时保留原图
+        console.error(`图片 ${i + 1} 转码失败，使用原图:`, error.message);
+        results.push({
+          ...asset,
+          fileName: asset.fileName || `image_${Date.now()}.jpg`,
+          type: asset.type || 'image/jpeg',
+        } as any);
+      }
+    } else {
+      // 不需要转码，直接使用原图
+      results.push({
+        ...asset,
+        fileName: asset.fileName || `image_${Date.now()}.jpg`,
+        type: asset.type || 'image/jpeg',
+      } as any);
+    }
+  }
+  
+  if (onProgress) {
+    onProgress(imageAssets.length, imageAssets.length);
+  }
+  
+  return results;
 };

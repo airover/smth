@@ -88,7 +88,7 @@ export interface Attachment {
   id?: string;
   url: string;
   name?: string;
-  type?: number;
+  type?: string; // MIME类型，如 "image/jpeg", "image/png" 等
   size?: number;
 }
 
@@ -116,6 +116,7 @@ export interface TopTenItem {
   replyCount: number;
   postTime: string;
   lastReplyTime: string;
+  mSitePostId?: string | null; // M站短ID，用于帖子详情获取静态附件URL
 }
 
 export interface Mail {

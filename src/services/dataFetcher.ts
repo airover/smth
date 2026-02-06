@@ -8,12 +8,15 @@ import {
   DEFAULT_TIMEOUT,
   logRequest,
   safeJsonParse,
+  buildHeaders,
   buildGetHeaders,
   buildPostHeaders,
   buildDeleteHeaders,
 } from '../utils/requestUtils';
 import {setCache, getCacheWithTimestamp} from './cacheManager';
+import {extractStaticAttachmentUrls, isImageAttachment} from '../utils/imageUtils';
 import {getCookies} from './auth';
+import {cleanHtml} from '../utils/htmlParser';
 
 const WAP_BASE_URL = 'https://wap.newsmth.net';
 
@@ -41,6 +44,483 @@ const requestWithCookies = async (
   return response;
 };
 
+// 通过 M 站短 ID 获取静态附件 URL
+// 参数 mSitePostId 是通过 findMSitePostIdByTitle 获取的 M 站短 ID
+const fetchStaticAttachmentUrls = async (
+  boardName: string,
+  mSitePostId: string,
+): Promise<string[]> => {
+  if (!boardName || !mSitePostId) return [];
+
+  try {
+    const url = `https://m.newsmth.net/article/${boardName}/${mSitePostId}`;
+    const cookies = await getCookies();
+    const referer = `https://m.newsmth.net/board/${boardName}`;
+
+    const headers = buildHeaders({
+      cookie: cookies,
+      acceptType: 'html',
+      referer,
+      origin: 'https://m.newsmth.net',
+      customHeaders: {
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'Priority': 'u=0, i',
+      },
+    });
+
+    const response = await fetchWithRetry(url, {
+      method: 'GET',
+      headers,
+      cache: 'default',
+      credentials: 'include',
+      mode: 'cors',
+      redirect: 'follow',
+      referrer: referer,
+      referrerPolicy: 'strict-origin-when-cross-origin',
+    });
+
+    const html = await response.text();
+    const urls = extractStaticAttachmentUrls(html);
+    if (urls.length > 0) {
+      console.log('[PostDetail] Fallback static attachments:', urls);
+    }
+    return urls;
+  } catch (error: any) {
+    console.error('[PostDetail] Fetch static attachments failed:', error.message || error);
+    return [];
+  }
+};
+
+// 计算两个字符串的相似度（基于编辑距离）
+const getStringSimilarity = (a: string, b: string): number => {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  
+  const longer = a.length > b.length ? a : b;
+  const shorter = a.length > b.length ? b : a;
+  
+  if (longer.length === 0) return 1;
+  
+  // 使用编辑距离计算相似度
+  const editDistance = (s1: string, s2: string): number => {
+    const m = s1.length;
+    const n = s2.length;
+    
+    // 限制长度，避免过长字符串导致性能问题
+    if (m > 100 || n > 100) {
+      // 对于过长字符串，使用简化比较
+      const minLen = Math.min(m, n);
+      let commonPrefix = 0;
+      for (let i = 0; i < minLen; i++) {
+        if (s1[i] === s2[i]) commonPrefix++;
+        else break;
+      }
+      return Math.max(m, n) - commonPrefix;
+    }
+    
+    const dp: number[][] = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0));
+    
+    for (let i = 0; i <= m; i++) dp[i][0] = i;
+    for (let j = 0; j <= n; j++) dp[0][j] = j;
+    
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        if (s1[i - 1] === s2[j - 1]) {
+          dp[i][j] = dp[i - 1][j - 1];
+        } else {
+          dp[i][j] = Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1]) + 1;
+        }
+      }
+    }
+    return dp[m][n];
+  };
+  
+  const distance = editDistance(a, b);
+  const maxLen = Math.max(a.length, b.length);
+  return (maxLen - distance) / maxLen;
+};
+
+// 获取 M 站帖子短 ID
+// 通过 WAP 站的页码和位置，在 M 站搜索匹配的帖子
+// M 站每页30条，WAP 站每页20条
+export const findMSitePostId = async (
+  boardName: string,
+  wapPage: number,
+  wapPosition: number,
+  targetTitle: string
+): Promise<string | null> => {
+  if (!boardName || !targetTitle) return null;
+  
+  try {
+    const cookies = await getCookies();
+    
+    // 1. 计算理论全局索引及M站基准页
+    // WAP 站每页20条，M 站每页30条
+    const globalIndex = (wapPage - 1) * 20 + wapPosition;
+    const mBasePage = Math.floor(globalIndex / 30) + 1;
+    
+    // 2. 确定搜索窗口（考虑置顶帖导致的目标后移）
+    // 检查基准页及后续一页
+    const pagesToCheck = [mBasePage, mBasePage + 1];
+    
+    const targetClean = cleanHtml(targetTitle, {collapseWhitespace: true});
+    console.log(`[MMapper] 开始匹配: ${boardName} | WAP Page: ${wapPage}, Pos: ${wapPosition}`);
+    console.log(`[MMapper] 目标标题: ${targetClean}`);
+    
+    const headers = buildHeaders({
+      cookie: cookies,
+      acceptType: 'html',
+      referer: `https://m.newsmth.net/board/${boardName}`,
+      origin: 'https://m.newsmth.net',
+      customHeaders: {
+        'Accept-Language': 'zh-CN,zh;q=0.9',
+      },
+    });
+    
+    for (const page of pagesToCheck) {
+      const url = `https://m.newsmth.net/board/${boardName}?p=${page}`;
+      console.log(`[MMapper] 正在检索 M 站第 ${page} 页...`);
+      
+      try {
+        const response = await fetchWithRetry(url, {
+          method: 'GET',
+          headers,
+          credentials: 'include',
+        }, 10000); // 10秒超时
+        
+        if (!response.ok) {
+          console.log(`[MMapper] 第 ${page} 页请求失败: ${response.status}`);
+          continue;
+        }
+        
+        const pageHtml = await response.text();
+        
+        // 3. 提取该页所有帖子链接和标题
+        // 匹配格式: <a href="/article/BoardName/123456">标题内容</a>
+        const pattern = new RegExp(
+          `<a href="/article/${boardName}/(\\d+)"[^>]*>([\\s\\S]*?)</a>`,
+          'gi'
+        );
+        
+        const matches: Array<{postId: string, rawTitle: string}> = [];
+        let match;
+        while ((match = pattern.exec(pageHtml)) !== null) {
+          matches.push({
+            postId: match[1],
+            rawTitle: match[2],
+          });
+        }
+        
+        if (matches.length === 0) {
+          console.log(`[MMapper] 第 ${page} 页未找到帖子链接`);
+          continue;
+        }
+        
+        console.log(`[MMapper] 第 ${page} 页找到 ${matches.length} 个帖子`);
+        
+        let bestId: string | null = null;
+        let highestScore = 0;
+        
+        for (const {postId, rawTitle} of matches) {
+          const currentTitle = cleanHtml(rawTitle, {collapseWhitespace: true});
+          
+          // 优先进行前缀匹配 (性能最高)
+          if (targetClean.length >= 10 && currentTitle.includes(targetClean.substring(0, 10))) {
+            console.log(`[MMapper] 前缀匹配成功: ${postId}`);
+            return postId;
+          }
+          
+          // 精确匹配
+          if (currentTitle === targetClean) {
+            console.log(`[MMapper] 精确匹配成功: ${postId}`);
+            return postId;
+          }
+          
+          // 相似度兜底 (处理标题中间有换行或特殊截断的情况)
+          const score = getStringSimilarity(targetClean, currentTitle);
+          if (score > highestScore) {
+            highestScore = score;
+            bestId = postId;
+          }
+        }
+        
+        // 如果相似度极高（设定阈值为0.8），直接返回
+        if (highestScore > 0.9 && bestId) {
+          console.log(`[MMapper] 模糊匹配成功 (相似度: ${highestScore.toFixed(2)}): ${bestId}`);
+          return bestId;
+        }
+        
+      } catch (error: any) {
+        console.error(`[MMapper] 第 ${page} 页请求出错:`, error.message || error);
+      }
+    }
+    
+    console.log('[MMapper] 未找到匹配的帖子');
+    return null;
+  } catch (error: any) {
+    console.error('[MMapper] 查找 M 站帖子 ID 失败:', error.message || error);
+    return null;
+  }
+};
+
+// 通过帖子标题直接在 M 站搜索获取短 ID
+// 适用于不知道 WAP 站位置信息的场景
+export const findMSitePostIdByTitle = async (
+  boardName: string,
+  targetTitle: string,
+  maxPages: number = 3
+): Promise<string | null> => {
+  if (!boardName || !targetTitle) return null;
+  
+  try {
+    const cookies = await getCookies();
+    const targetClean = cleanHtml(targetTitle, {collapseWhitespace: true});
+    
+    console.log(`[MMapper] 按标题搜索: ${boardName}`);
+    console.log(`[MMapper] 目标标题: ${targetClean}`);
+    
+    const headers = buildHeaders({
+      cookie: cookies,
+      acceptType: 'html',
+      referer: `https://m.newsmth.net/board/${boardName}`,
+      origin: 'https://m.newsmth.net',
+      customHeaders: {
+        'Accept-Language': 'zh-CN,zh;q=0.9',
+      },
+    });
+    
+    for (let page = 1; page <= maxPages; page++) {
+      const url = `https://m.newsmth.net/board/${boardName}?p=${page}`;
+      console.log(`[MMapper] 正在检索 M 站第 ${page} 页...`);
+      
+      try {
+        const response = await fetchWithRetry(url, {
+          method: 'GET',
+          headers,
+          credentials: 'include',
+        }, 10000);
+        
+        if (!response.ok) continue;
+        
+        const pageHtml = await response.text();
+        
+        const pattern = new RegExp(
+          `<a href="/article/${boardName}/(\\d+)"[^>]*>([\\s\\S]*?)</a>`,
+          'gi'
+        );
+        
+        let match;
+        let bestId: string | null = null;
+        let highestScore = 0;
+        
+        while ((match = pattern.exec(pageHtml)) !== null) {
+          const postId = match[1];
+          const currentTitle = cleanHtml(match[2], {collapseWhitespace: true});
+          
+          // 精确匹配
+          if (currentTitle === targetClean) {
+            console.log(`[MMapper] 精确匹配成功: ${postId}`);
+            return postId;
+          }
+          
+          // 前缀匹配
+          if (targetClean.length >= 10 && currentTitle.includes(targetClean.substring(0, 10))) {
+            console.log(`[MMapper] 前缀匹配成功: ${postId}`);
+            return postId;
+          }
+          
+          // 相似度计算
+          const score = getStringSimilarity(targetClean, currentTitle);
+          if (score > highestScore) {
+            highestScore = score;
+            bestId = postId;
+          }
+        }
+        
+        if (highestScore > 0.9 && bestId) {
+          console.log(`[MMapper] 模糊匹配成功 (相似度: ${highestScore.toFixed(2)}): ${bestId}`);
+          return bestId;
+        }
+        
+      } catch (error: any) {
+        console.error(`[MMapper] 第 ${page} 页请求出错:`, error.message || error);
+      }
+    }
+    
+    console.log('[MMapper] 未找到匹配的帖子');
+    return null;
+  } catch (error: any) {
+    console.error('[MMapper] 按标题查找失败:', error.message || error);
+    return null;
+  }
+};
+
+// ============================================================
+// 公共辅助函数：用于检查和获取M站短ID
+// ============================================================
+
+/**
+ * 检查附件数组中是否有图片附件缺少云存储URL (k3sUrl 和 ks3Url 都为空)
+ * @param attachments 附件数组
+ * @returns 是否存在缺少云存储URL的图片附件
+ */
+export const hasImageAttachmentWithoutCloudUrl = (attachments: any[]): boolean => {
+  if (!attachments || attachments.length === 0) return false;
+  
+  return attachments.some((att: any) => {
+    const isImage = isImageAttachment(att);
+    const hasCloudUrl = att.k3sUrl || att.ks3Url;
+    return isImage && !hasCloudUrl;
+  });
+};
+
+/**
+ * 为帖子获取M站短ID（用于后续获取静态附件URL）
+ * 只在附件缺少云存储URL时才会尝试获取
+ * 
+ * @param params 参数对象
+ * @param params.attachments 附件数组
+ * @param params.boardName 版面英文名
+ * @param params.topicTitle 帖子标题
+ * @param params.logTag 日志标签，用于区分调用来源
+ * @param params.topicId 帖子ID，用于日志
+ * @param params.page WAP站页码（可选，用于精确查找）
+ * @param params.position WAP站位置（可选，用于精确查找）
+ * @param params.isTop 是否置顶帖（可选）
+ * @param params.maxSearchPages 最大搜索页数（默认2）
+ * @returns M站短ID，如果未找到则返回null
+ */
+export const getMSitePostIdForTopic = async (params: {
+  attachments: any[];
+  boardName: string;
+  topicTitle: string;
+  logTag: string;
+  topicId?: string;
+  page?: number;
+  position?: number;
+  isTop?: boolean;
+  maxSearchPages?: number;
+}): Promise<string | null> => {
+  const {
+    attachments,
+    boardName,
+    topicTitle,
+    logTag,
+    topicId = '',
+    page,
+    position,
+    isTop = false,
+    maxSearchPages = 2,
+  } = params;
+  
+  // 检查是否需要获取M站短ID
+  if (!hasImageAttachmentWithoutCloudUrl(attachments)) {
+    return null;
+  }
+  
+  if (!boardName || !topicTitle) {
+    return null;
+  }
+  
+  console.log(`[${logTag}] 帖子 ${topicId} 检测到图片附件缺少云存储URL，尝试获取M站短ID...`);
+  
+  try {
+    let mSitePostId: string | null = null;
+    
+    // 如果有精确的页码和位置信息（非置顶帖），使用精确查找
+    if (!isTop && page !== undefined && position !== undefined && position >= 0) {
+      mSitePostId = await findMSitePostId(boardName, page, position, topicTitle);
+    }
+    
+    // 如果精确查找未果或无法使用精确查找，则使用标题搜索方式
+    if (!mSitePostId) {
+      mSitePostId = await findMSitePostIdByTitle(boardName, topicTitle, maxSearchPages);
+    }
+    
+    if (mSitePostId) {
+      console.log(`[${logTag}] 帖子 ${topicId} 找到M站短ID: ${mSitePostId}`);
+    } else {
+      console.log(`[${logTag}] 帖子 ${topicId} 未找到M站短ID`);
+    }
+    
+    return mSitePostId;
+  } catch (err: any) {
+    console.log(`[${logTag}] 帖子 ${topicId} 获取M站短ID失败:`, err.message || err);
+    return null;
+  }
+};
+
+/**
+ * 为帖子获取M站静态附件URL数组
+ * 整合了获取M站短ID和获取静态URL的逻辑
+ * 只在附件缺少云存储URL时才会尝试获取
+ * 
+ * @param params 参数对象
+ * @param params.attachments 附件数组
+ * @param params.boardName 版面英文名
+ * @param params.topicTitle 帖子标题
+ * @param params.logTag 日志标签，用于区分调用来源
+ * @param params.topicId 帖子ID，用于日志
+ * @param params.maxSearchPages 最大搜索页数（默认2）
+ * @returns 静态附件URL数组，如果未找到或不需要则返回空数组
+ */
+export const getStaticAttachmentUrlsForTopic = async (params: {
+  attachments: any[];
+  boardName: string;
+  topicTitle: string;
+  logTag: string;
+  topicId?: string;
+  maxSearchPages?: number;
+}): Promise<string[]> => {
+  const {
+    attachments,
+    boardName,
+    topicTitle,
+    logTag,
+    topicId = '',
+    maxSearchPages = 2,
+  } = params;
+  
+  // 检查是否需要获取静态URL
+  if (!hasImageAttachmentWithoutCloudUrl(attachments)) {
+    return [];
+  }
+  
+  if (!boardName || !topicTitle) {
+    return [];
+  }
+  
+  console.log(`[${logTag}] 帖子 ${topicId} 检测到图片附件缺少云存储URL，尝试获取M站静态URL...`);
+  
+  try {
+    // 先获取M站短ID
+    const mSitePostId = await findMSitePostIdByTitle(boardName, topicTitle, maxSearchPages);
+    
+    if (!mSitePostId) {
+      console.log(`[${logTag}] 帖子 ${topicId} 未找到M站短ID，无法获取静态URL`);
+      return [];
+    }
+    
+    console.log(`[${logTag}] 帖子 ${topicId} 找到M站短ID: ${mSitePostId}，开始获取静态URL...`);
+    
+    // 获取静态附件URL
+    const staticUrls = await fetchStaticAttachmentUrls(boardName, mSitePostId);
+    
+    if (staticUrls.length > 0) {
+      console.log(`[${logTag}] 帖子 ${topicId} 获取到 ${staticUrls.length} 个静态URL`);
+    } else {
+      console.log(`[${logTag}] 帖子 ${topicId} 未获取到静态URL`);
+    }
+    
+    return staticUrls;
+  } catch (err: any) {
+    console.log(`[${logTag}] 帖子 ${topicId} 获取静态URL失败:`, err.message || err);
+    return [];
+  }
+};
+
 // 获取热门帖子（全站热帖）
 // API: GET https://wap.newsmth.net/wap/api/hot/global?t={timestamp}&page={page}&size={size}
 export const getHotPosts = async (
@@ -64,28 +544,45 @@ export const getHotPosts = async (
     const json = await response.json();
     console.log('getHotPosts API response code:', json.code);
 
-    if (json.code === 1 && json.data?.topics) {
+if (json.code === 1 && json.data?.topics) {
       const topics = json.data.topics || [];
       // API返回的是total表示总页数
       const totalPages = json.data.pager?.total || 1;
       
+      // 处理每个帖子，检查是否需要获取M站短ID
+      const processTopic = async (topic: any): Promise<any> => {
+        const article = topic.article || {};
+        const account = article.account || {};
+        const attachments = article.attachments || [];
+        
+        // 使用公共函数获取M站短ID（只在附件缺少云存储URL时才会尝试获取）
+        const mSitePostId = await getMSitePostIdForTopic({
+          attachments,
+          boardName: topic.board?.name || '',
+          topicTitle: topic.subject?.trim() || '',
+          logTag: 'HotPosts',
+          topicId: topic.id,
+        });
+        
+        return {
+          id: topic.id,
+          title: topic.subject?.trim(),
+          author: account.name || '',
+          board: topic.boardId,
+          boardName: topic.board?.title || topic.board?.name || '未知版面',
+          replyCount: Math.max(0, (topic.availables || 0) - 1),
+          postTime: new Date(article.postTime || Date.now()).toISOString(),
+          // 使用lastPostTime而不是flushTime作为最后回复时间
+          lastReplyTime: new Date(topic.lastPostTime || topic.flushTime || Date.now()).toISOString(),
+          mSitePostId: mSitePostId, // M站短ID，用于帖子详情获取静态附件URL
+        };
+      };
+      
+      // 并行处理所有帖子
+      const processedTopics = await Promise.all(topics.map((t: any) => processTopic(t)));
+      
       return {
-        topics: topics.map((topic: any) => {
-          const article = topic.article || {};
-          const account = article.account || {};
-          
-          return {
-            id: topic.id,
-            title: topic.subject?.trim(),
-            author: account.name || '',
-            board: topic.boardId,
-            boardName: topic.board?.title || topic.board?.name || '未知版面',
-            replyCount: Math.max(0, (topic.availables || 0) - 1),
-            postTime: new Date(article.postTime || Date.now()).toISOString(),
-            // 使用lastPostTime而不是flushTime作为最后回复时间
-            lastReplyTime: new Date(topic.lastPostTime || topic.flushTime || Date.now()).toISOString(),
-          };
-        }),
+        topics: processedTopics,
         totalPages: totalPages
       };
     }
@@ -129,7 +626,7 @@ export const getTopTen = async (): Promise<any[] | null> => {
     console.log('getTopTen API response code:', json.code);
     console.log('getTopTen API response keys:', json.data ? Object.keys(json.data) : 'no data');
 
-    if (json.code === 1 && json.data) {
+if (json.code === 1 && json.data) {
       const topics = json.data.topics || [];
       console.log('getTopTen found topics:', topics.length);
       
@@ -139,16 +636,37 @@ export const getTopTen = async (): Promise<any[] | null> => {
         return null;
       }
       
-      return topics.map((topic: any) => ({
-        id: topic.id, // 使用主题 ID (topicId)，用于详情接口
-        title: topic.subject?.trim(),
-        author: topic.article?.account?.name || topic.article?.user?.name || '',
-        board: topic.boardId, // 版面 ID (hash)
-        boardName: topic.board?.title || topic.board?.name || '未知版面',
-        replyCount: Math.max(0, (topic.availables || 0) - 1),
-        postTime: new Date(topic.flushTime || Date.now()).toISOString(),
-        lastReplyTime: new Date(topic.lastPostTime || Date.now()).toISOString(),
-      }));
+      // 处理每个帖子，检查是否需要获取M站短ID
+      const processTopic = async (topic: any): Promise<any> => {
+        const article = topic.article || {};
+        const attachments = article.attachments || [];
+        
+        // 使用公共函数获取M站短ID（只在附件缺少云存储URL时才会尝试获取）
+        const mSitePostId = await getMSitePostIdForTopic({
+          attachments,
+          boardName: topic.board?.name || '',
+          topicTitle: topic.subject?.trim() || '',
+          logTag: 'TopTen',
+          topicId: topic.id,
+        });
+        
+        return {
+          id: topic.id, // 使用主题 ID (topicId)，用于详情接口
+          title: topic.subject?.trim(),
+          author: topic.article?.account?.name || topic.article?.user?.name || '',
+          board: topic.boardId, // 版面 ID (hash)
+          boardName: topic.board?.title || topic.board?.name || '未知版面',
+          replyCount: Math.max(0, (topic.availables || 0) - 1),
+          postTime: new Date(topic.flushTime || Date.now()).toISOString(),
+          lastReplyTime: new Date(topic.lastPostTime || Date.now()).toISOString(),
+          mSitePostId: mSitePostId, // M站短ID，用于帖子详情获取静态附件URL
+        };
+      };
+      
+      // 并行处理所有帖子
+      const processedTopics = await Promise.all(topics.map((t: any) => processTopic(t)));
+      
+      return processedTopics;
     }
     
     console.log('getTopTen: API请求失败，保留本地缓存');
@@ -508,7 +1026,8 @@ export const getBoardPosts = async (
       // API返回的是total表示总页数，不是totalPages
       const totalPages = json.data.pager?.total || 1;
       
-      const processTopic = (topic: any, isTop: boolean = false) => {
+      // wapPosition: 页内位置（仅普通帖子有效，置顶帖为-1）
+      const processTopic = async (topic: any, isTop: boolean = false, wapPosition: number = -1) => {
         const article = topic.article || {};
         const account = article.account || {};
         
@@ -516,6 +1035,51 @@ export const getBoardPosts = async (
         if (avatar && avatar.startsWith('http:')) {
           avatar = avatar.replace('http:', 'https:');
         }
+
+        // 处理附件列表
+        const rawAttachments = (article.attachments || []).filter((att: any) => att != null);
+        
+        // 检查是否有图片类型附件缺少云存储URL (k3sUrl 和 ks3Url 都为空)
+        const hasImageWithoutCloudUrl = hasImageAttachmentWithoutCloudUrl(rawAttachments);
+
+        // 如果有图片附件缺少云存储URL，获取M站短ID用于传递到帖子详情
+        // 注意：列表页不获取静态URL，交给帖子详情处理
+        let mSitePostId: string | null = null;
+        if (hasImageWithoutCloudUrl && rawAttachments.length > 0) {
+          const boardNameForFetch = topic.board?.name || '';
+          const topicTitle = topic.subject?.trim() || '';
+          
+          // 使用公共函数获取M站短ID
+          mSitePostId = await getMSitePostIdForTopic({
+            attachments: rawAttachments,
+            boardName: boardNameForFetch,
+            topicTitle: topicTitle,
+            logTag: 'BoardPosts',
+            topicId: topic.id,
+            page: page,
+            position: wapPosition,
+            isTop: isTop,
+          });
+        }
+
+        // 处理附件URL
+        const processedAttachments = rawAttachments.map((att: any) => {
+          const attUrl = att.url || '';
+          
+          // 如果有云存储URL，优先使用
+          if (att.k3sUrl || att.ks3Url) {
+            return {
+              ...att,
+              url: att.k3sUrl || att.ks3Url || (attUrl.startsWith('http') ? attUrl : `https://file.mysmth.net/${attUrl}`)
+            };
+          }
+          
+          // 其他情况使用原始URL
+          return {
+            ...att,
+            url: attUrl.startsWith('http') ? attUrl : `https://file.mysmth.net/${attUrl}`
+          };
+        });
 
         return {
           id: topic.id, // topicId
@@ -532,18 +1096,21 @@ export const getBoardPosts = async (
           // 使用lastPostTime而不是flushTime作为最后回复时间
           lastReplyTime: new Date(topic.lastPostTime || topic.flushTime || Date.now()).toISOString(),
           isTop: isTop,
-          attachments: (article.attachments || [])
-            .filter((att: any) => att != null)
-            .map((att: any) => ({
-            ...att,
-            url: att.k3sUrl || att.ks3Url || (att.url?.startsWith('http') ? att.url : `https://file.mysmth.net/${att.url}`)
-          })),
+          attachments: processedAttachments,
+          mSitePostId: mSitePostId, // M站短ID，用于帖子详情获取静态附件URL
         };
       };
 
+      // processTopic 现在是异步函数，需要并行处理
+      // 普通帖子传入页内位置（index），置顶帖位置设为-1
+      const [processedTopics, processedTops] = await Promise.all([
+        Promise.all(topics.map((t: any, index: number) => processTopic(t, false, index))),
+        Promise.all(tops.map((t: any) => processTopic(t, true, -1))),
+      ]);
+
       return {
-        topics: topics.map((t: any) => processTopic(t, false)),
-        tops: tops.map((t: any) => processTopic(t, true)),
+        topics: processedTopics,
+        tops: processedTops,
         totalPages: totalPages
       };
     }
@@ -561,6 +1128,7 @@ export const getPostDetail = async (
   _board: string,
   topicId: string, // 现在传入的是 topicId
   _page: number = 1,
+  existingMSitePostId?: string | null, // 可选的M站短ID，如果传入则直接使用，避免重复查找
 ): Promise<any> => {
   try {
     const cookies = await getCookies();
@@ -597,10 +1165,87 @@ export const getPostDetail = async (
         avatar = avatar.replace('http:', 'https:');
       }
       
+      const boardNameForFetch = topic.board?.name || _board;
+
+      // 检查是否有任何附件的 k3sUrl 和 ks3Url 都为空
+      const rawAttachments = (article?.attachments || []).filter((att: any) => att != null);
+      const hasEmptyCloudUrl = rawAttachments.some((att: any) => !att.k3sUrl && !att.ks3Url);
+      
+      // 如果有附件缺少云存储URL，先获取静态URL备用
+      let staticUrls: string[] = [];
+      if (hasEmptyCloudUrl && rawAttachments.length > 0) {
+        const topicTitle = topic.subject?.trim() || '';
+        
+        // 优先使用传入的M站短ID，避免重复查找
+        let mSitePostId = existingMSitePostId || null;
+        if (!mSitePostId && boardNameForFetch && topicTitle) {
+          // 没有传入则使用公共函数查找
+          mSitePostId = await getMSitePostIdForTopic({
+            attachments: rawAttachments,
+            boardName: boardNameForFetch,
+            topicTitle: topicTitle,
+            logTag: 'PostDetail',
+            maxSearchPages: 3,
+          });
+        }
+        
+        if (mSitePostId) {
+          console.log('[PostDetail] 使用M站短ID:', mSitePostId, existingMSitePostId ? '(从列表传入)' : '(新查找)');
+          try {
+            staticUrls = await fetchStaticAttachmentUrls(boardNameForFetch, mSitePostId);
+            console.log('[PostDetail] 获取到静态URL数量:', staticUrls.length);
+          } catch (err: any) {
+            console.log('[PostDetail] 获取静态URL失败:', err.message || err);
+          }
+        }
+      }
+
+      // 处理附件列表
+      let staticUrlIndex = 0;
+      const finalAttachments = rawAttachments.map((att: any) => {
+        // 如果有云存储URL，优先使用
+        if (att.k3sUrl || att.ks3Url) {
+          let url = att.k3sUrl || att.ks3Url || '';
+          if (url && url.startsWith('http:')) {
+            url = url.replace('http:', 'https:');
+          }
+          console.log('📎 帖子详情附件(云存储):', { k3sUrl: att.k3sUrl, ks3Url: att.ks3Url, finalUrl: url });
+          return { ...att, url };
+        }
+        
+        // 云存储URL为空，尝试使用静态URL
+        if (staticUrls.length > staticUrlIndex) {
+          const staticUrl = staticUrls[staticUrlIndex++];
+          console.log('📎 帖子详情附件(静态URL):', { originalUrl: att.url, staticUrl });
+          return { ...att, url: staticUrl, k3sUrl: staticUrl }; // 同时设置k3sUrl
+        }
+        
+        // 都没有，使用原始URL作为fallback
+        let url = att.cdnUrl || att.url || '';
+        console.log('📎 帖子详情附件(原始URL):', {
+          cdnUrl: att.cdnUrl,
+          url: att.url,
+          finalUrl: url
+        });
+        
+        if (url && url.startsWith('http:')) {
+          url = url.replace('http:', 'https:');
+        }
+        
+        if (url && !url.startsWith('http')) {
+          url = `https://file.mysmth.net/${url}`;
+        } else if (!url && att.id) {
+          // 如果没有 url 但有 id，尝试构建下载链接
+          url = `https://wap.newsmth.net/wap/api/attachment/download/${att.id}`;
+        }
+        
+        return { ...att, url };
+      });
+
       const post: any = {
         id: topic.id,
         articleId: article?.id, // 文章ID，用于删除等操作
-        board: topic.board?.name || _board,
+        board: boardNameForFetch,
         boardName: topic.board?.title || '未知版面',
         title: topic.subject?.trim(),
         content: article?.body || '', // 包含 HTML
@@ -611,36 +1256,7 @@ export const getPostDetail = async (
         city: article?.city || '',
         postTime: new Date(article?.postTime || Date.now()).toISOString(),
         replyCount: Math.max(0, (topic.availables || 0) - 1),
-        attachments: (article?.attachments || [])
-          .filter((att: any) => att != null)
-          .map((att: any) => {
-          // 优先使用 k3sUrl/ks3Url，然后是 cdnUrl，最后是 url
-          let url = att.k3sUrl || att.ks3Url || att.cdnUrl || att.url || '';
-          
-          console.log('📎 帖子详情附件:', {
-            k3sUrl: att.k3sUrl,
-            ks3Url: att.ks3Url,
-            cdnUrl: att.cdnUrl,
-            url: att.url,
-            finalUrl: url
-          });
-          
-          if (url && url.startsWith('http:')) {
-            url = url.replace('http:', 'https:');
-          }
-          
-          if (url && !url.startsWith('http')) {
-            url = `https://file.mysmth.net/${url}`;
-          } else if (!url && att.id) {
-            // 如果没有 url 但有 id，尝试构建下载链接
-            url = `https://wap.newsmth.net/wap/api/attachment/download/${att.id}`;
-          }
-          
-          return {
-            ...att,
-            url: url
-          };
-        }),
+        attachments: finalAttachments,
         likes: (article?.likes || [])
           .filter((like: any) => like != null)
           .map((like: any) => {

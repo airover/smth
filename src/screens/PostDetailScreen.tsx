@@ -33,7 +33,7 @@ import {cacheManager} from '../services/cacheManager';
 import {saveBrowsingHistory} from './BrowsingHistoryScreen';
 import {useSettings} from '../context/SettingsContext';
 import {getTheme, getFontSizes} from '../utils/theme';
-import {normalizeImageUrl, isImageUrl, isVideoUrl} from '../utils/imageUtils';
+import {normalizeImageUrl, isImageAttachment, isVideoAttachment} from '../utils/imageUtils';
 import {
   SPACING,
   FONT_SIZE,
@@ -71,7 +71,7 @@ const LIKE_CAPTCHA_ID = '3a6990c763f90e33fa62a97faad3a05f';
 const PostDetailScreen: React.FC = () => {
   const route = useRoute();
   const navigation = useNavigation<any>();
-  const {board, postId} = route.params as {board: string; postId: string};
+  const {board, postId, mSitePostId} = route.params as {board: string; postId: string; mSitePostId?: string};
   const {settings} = useSettings();
   const theme = getTheme(settings.themeMode);
   const fontSizes = getFontSizes(settings.fontSize);
@@ -294,7 +294,7 @@ const PostDetailScreen: React.FC = () => {
           
           try {
             const [apiDetailData, apiRepliesData] = await Promise.all([
-              detailData ? Promise.resolve(detailData) : getPostDetail(board, postId),
+              detailData ? Promise.resolve(detailData) : getPostDetail(board, postId, 1, mSitePostId),
               repliesData ? Promise.resolve(repliesData) : getTopicReplies(postId, 1)
             ]);
             
@@ -1032,12 +1032,12 @@ const PostDetailScreen: React.FC = () => {
     setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
   };
 
-  const isImage = (url: string, name?: string) => {
-    return isImageUrl(url, name);
+  const isImage = (attachment: any) => {
+    return isImageAttachment(attachment);
   };
 
-  const isVideo = (url: string, name?: string) => {
-    return isVideoUrl(url, name);
+  const isVideo = (attachment: any) => {
+    return isVideoAttachment(attachment);
   };
 
   // 生成 WebView 的 HTML 内容
@@ -1233,9 +1233,8 @@ const PostDetailScreen: React.FC = () => {
         {attachments.map((item, index) => {
           // dataFetcher 已经处理过URL，直接使用
           const url = item.url;
-          const name = item.name;
           
-          if (isImage(url, name)) {
+          if (isImage(item)) {
             const imageSize = imageSizes[url];
             const dynamicHeight = calculateImageHeight(url, imageSize);
             
@@ -1264,7 +1263,7 @@ const PostDetailScreen: React.FC = () => {
                 />
               </TouchableOpacity>
             );
-          } else if (isVideo(url, name)) {
+          } else if (isVideo(item)) {
             return (
               <View key={index} style={styles.videoContainer}>
                 <WebView

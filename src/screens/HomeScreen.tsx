@@ -374,6 +374,7 @@ const HomeScreen: React.FC = () => {
           navigation.navigate('PostDetail', {
             board: item.board,
             postId: item.id,
+            mSitePostId: item.mSitePostId, // 传递M站短ID，用于帖子详情获取静态附件URL
           });
         }}>
         <Text 

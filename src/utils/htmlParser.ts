@@ -285,6 +285,17 @@ export const cleanHtml = (
   cleaned = cleaned.replace(/<[^>]*>/g, '');
   
   // 3. 解码 HTML 实体
+  // 3.1 解码数字实体（如 &#40; -> '('）
+  cleaned = cleaned.replace(/&#(\d+);/g, (_, code) => {
+    const num = parseInt(code, 10);
+    return num > 0 && num < 65536 ? String.fromCharCode(num) : '';
+  });
+  // 3.2 解码十六进制数字实体（如 &#x3C; -> '<'）
+  cleaned = cleaned.replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => {
+    const num = parseInt(hex, 16);
+    return num > 0 && num < 65536 ? String.fromCharCode(num) : '';
+  });
+  // 3.3 解码命名实体
   cleaned = cleaned
     .replace(/&nbsp;/g, ' ')
     .replace(/&lt;/g, '<')

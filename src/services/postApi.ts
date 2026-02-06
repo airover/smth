@@ -7,6 +7,7 @@ import {
   buildGetHeaders,
   buildPostHeaders,
 } from '../utils/requestUtils';
+// 注意: 图片转码已在选择时通过 forceJpg: true 完成（iOS），无需在上传时再次转码
 
 /**
  * 发帖参数接口
@@ -448,6 +449,10 @@ export const uploadImages = async (
       throw new Error('请选择要上传的图片');
     }
 
+    // 注意: 图片转码已在选择时通过 forceJpg: true 完成（iOS），无需在上传时再次转码
+    // Android 不支持 HEIC 格式，所以也不需要转码
+    const processedAssets = imageAssets;
+
     // 构建 multipart/form-data 数据
     const formDataParts: Array<{
       name: string;
@@ -456,8 +461,8 @@ export const uploadImages = async (
       data: string; // rn-fetch-blob 使用 wrap() 包装文件路径
     }> = [];
     
-    for (let i = 0; i < imageAssets.length; i++) {
-      const asset = imageAssets[i];
+    for (let i = 0; i < processedAssets.length; i++) {
+      const asset = processedAssets[i];
       
       // 检查 asset 是否有效
       if (!asset || !asset.uri) {
@@ -474,22 +479,30 @@ export const uploadImages = async (
       filePath = decodeURIComponent(filePath);
       
       // 获取文件名
-      const filename = asset.fileName || filePath.split('/').pop() || `image${i}.jpg`;
+      let filename = asset.fileName || filePath.split('/').pop() || `image${i}.jpg`;
       
-      // 获取 MIME 类型
+      // iOS 上使用了 forceJpg: true，图片已转换为 JPEG，需要统一扩展名
+      // 将非 jpg/jpeg 扩展名统一改为 .jpg
+      const ext = filename.split('.').pop()?.toLowerCase();
+      if (ext && ext !== 'jpg' && ext !== 'jpeg') {
+        // 替换扩展名为 .jpg
+        filename = filename.replace(/\.[^.]+$/, '.jpg');
+      }
+      
+      // 获取 MIME 类型（iOS forceJpg 后统一为 JPEG）
       let mimeType = asset.type || 'image/jpeg';
       if (mimeType === 'image/jpg') {
         mimeType = 'image/jpeg';
       }
-      const ext = filename.split('.').pop()?.toLowerCase();
-      if (ext === 'png') {
+      // 既然扩展名已统一为 jpg，MIME 类型也应统一为 image/jpeg
+      // 但保留对其他格式的支持（Android 可能上传原格式）
+      const finalExt = filename.split('.').pop()?.toLowerCase();
+      if (finalExt === 'png') {
         mimeType = 'image/png';
-      } else if (ext === 'gif') {
+      } else if (finalExt === 'gif') {
         mimeType = 'image/gif';
-      } else if (ext === 'heic' || ext === 'heif') {
-        mimeType = 'image/heic';
-      } else if (ext === 'webp') {
-        mimeType = 'image/webp';
+      } else if (finalExt === 'jpg' || finalExt === 'jpeg') {
+        mimeType = 'image/jpeg';
       }
 
       // 检查文件是否存在
@@ -514,14 +527,14 @@ export const uploadImages = async (
     }
 
     logRequest.start(API_URL, 'POST');
-    logRequest.params({boardId, token, imageCount: imageAssets.length});
+    logRequest.params({boardId, token, imageCount: processedAssets.length});
 
     // 构建请求头（使用封装好的函数）
     // set_identity 已在登录后由 api.ts 自动构造并持久化，无需再手动构造
     // Content-Type 由 rn-fetch-blob 自动设置为 multipart/form-data，所以这里不传 contentType
     const requestHeaders = buildPostHeaders(
       cookies,
-      undefined, // Content-Type 由 rn-fetch-blob 自动设置
+      '', // Content-Type 由 rn-fetch-blob 自动设置，传空字符串避免使用默认的 urlencoded
       `https://wap.newsmth.net/post?boardId=${boardId}`
     );
 
@@ -535,17 +548,16 @@ export const uploadImages = async (
       formDataParts
     )
     .uploadProgress((written, total) => {
-      let progress = Math.round((written / total) * 100);
-      // 限制进度最大为95%，预留5%给服务器处理时间，避免进度条提前100%但实际还在等待响应
+      // 上传进度从0%开始，预留5%给服务器处理
+      let progress = Math.round((written / total) * 95);
+      // 限制进度最大为95%，预留5%给服务器处理时间
       if (progress > 95) {
         progress = 95;
       }
       if (onProgress) {
         onProgress(progress);
       }
-    });
-
-    const responseText = await response.text();
+    });    const responseText = await response.text();
 
     if (response.respInfo.status !== 200) {
       logRequest.error(API_URL, new Error(`HTTP ${response.respInfo.status}: ${responseText}`));

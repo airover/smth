@@ -20,7 +20,7 @@ import {
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {useNavigation, useRoute} from '@react-navigation/native';
 import {getBoards, getFavoriteBoards, getBoardPosts} from '../services/api';
-import {getSubBoards, checkBoardFavorite, addBoardFavorite, removeBoardFavorite} from '../services/dataFetcher';
+import {getSubBoards, checkBoardFavorite, addBoardFavorite, removeBoardFavorite, getMSitePostIdForTopic, getStaticAttachmentUrlsForTopic} from '../services/dataFetcher';
 import {Board, Post} from '../types';
 import {getCache, setCache, getCacheWithTimestamp} from '../services/cacheManager';
 import {formatRelativeTime} from '../utils/timeFormat';
@@ -121,6 +121,7 @@ interface ChannelTopic {
   topicId?: string;
   postTime?: number;
   attachments?: AlbumAttachment[];
+  mSitePostId?: string | null; // M站短ID，用于帖子详情获取静态附件URL
 }
 
 const BoardScreen: React.FC = () => {
@@ -199,16 +200,20 @@ const BoardScreen: React.FC = () => {
     PanResponder.create({
       onMoveShouldSetPanResponder: (evt, gestureState) => {
         // 只有在显示频道列表且没有选中具体版面时才启用
-        // 且必须是水平滑动，且水平距离大于垂直距离
-        // 且水平距离超过一定阈值
         if (!selectedChannelRef.current || selectedBoardRef.current) return false;
         
-        const isHorizontal = Math.abs(gestureState.dx) > Math.abs(gestureState.dy);
-        return isHorizontal && Math.abs(gestureState.dx) > 20;
+        // 更严格的水平滑动判断：
+        // 1. 水平距离必须是垂直距离的2倍以上（确保是明显的水平滑动）
+        // 2. 水平距离超过30px（提高阈值）
+        // 3. 垂直距离不能超过30px（避免斜向滑动被误判）
+        const absX = Math.abs(gestureState.dx);
+        const absY = Math.abs(gestureState.dy);
+        const isHorizontal = absX > absY * 2 && absX > 30 && absY < 30;
+        return isHorizontal;
       },
       onPanResponderTerminationRequest: () => false,
       onPanResponderRelease: (evt, gestureState) => {
-        if (Math.abs(gestureState.dx) > 50) { // 滑动距离超过 50 才触发切换
+        if (Math.abs(gestureState.dx) > 80) { // 滑动距离超过 80 才触发切换（提高阈值）
           const currentChannels = channelsRef.current;
           const currentIndex = currentChannels.findIndex(c => c.id === selectedChannelRef.current?.id);
           if (currentIndex === -1) return;
@@ -804,7 +809,7 @@ const BoardScreen: React.FC = () => {
         }
         
         // 转换图览数据为频道帖子格式
-        const convertedTopics: ChannelTopic[] = (articles || []).map((article: AlbumArticle) => {
+        const convertedTopics: ChannelTopic[] = await Promise.all((articles || []).map(async (article: AlbumArticle) => {
           // 处理附件URL
           const processedAttachments = (article.attachments || []).map((att: any) => {
             // 优先使用 ks3Url，然后是 cdnUrl，最后是 url
@@ -880,15 +885,46 @@ const BoardScreen: React.FC = () => {
           // 添加处理后的图片信息
           attachments: processedAttachments,
         } as any;
-        });
+        }));
+        
+        // 为每个帖子获取静态URL（只在附件缺少云存储URL时才会尝试获取）
+        const topicsWithStaticUrls = await Promise.all(convertedTopics.map(async (topic) => {
+          const staticUrls = await getStaticAttachmentUrlsForTopic({
+            attachments: topic.attachments || [],
+            boardName: topic.board.name,
+            topicTitle: topic.subject,
+            logTag: 'AlbumPosts',
+            topicId: topic.topicId || topic.id,
+          });
+          
+          // 如果获取到静态URL，则填充到附件中
+          let updatedAttachments = topic.attachments || [];
+          if (staticUrls.length > 0 && updatedAttachments.length > 0) {
+            updatedAttachments = updatedAttachments.map((att: any, index: number) => {
+              // 按顺序匹配：第N个附件对应第N个静态URL
+              if (index < staticUrls.length && !att.k3sUrl && !att.ks3Url) {
+                return {
+                  ...att,
+                  cdnUrl: staticUrls[index],
+                };
+              }
+              return att;
+            });
+          }
+          
+          return {
+            ...topic,
+            attachments: updatedAttachments,
+          };
+        }));
         if (pageNum === 1) {
-          setChannelPosts(convertedTopics);
+          setChannelPosts(topicsWithStaticUrls);
           setChannelPage(1);
           
           // Save cache
           try {
             const cacheData = {
-              data: convertedTopics,
+              data: topicsWithStaticUrls,
               pager: pager
             };
             setCache('albumPosts', cacheKey, cacheData);
@@ -898,7 +934,7 @@ const BoardScreen: React.FC = () => {
         } else {
           setChannelPosts(prev => {
             const existingIds = new Set(prev.map(p => p.id));
-            const newPosts = convertedTopics.filter(p => !existingIds.has(p.id));
+            const newPosts = topicsWithStaticUrls.filter(p => !existingIds.has(p.id));
             return [...prev, ...newPosts];
           });
         }
@@ -983,7 +1019,7 @@ const BoardScreen: React.FC = () => {
         const { topics, pager } = result.data;
         
         // 处理频道帖子的头像URL
-        const processedTopics = (topics || []).map((topic: ChannelTopic) => {
+        const processedTopics = await Promise.all((topics || []).map(async (topic: ChannelTopic) => {
           if (topic.article && topic.article.account) {
             const account = topic.article.account;
             let avatarUrl = account.k3sUrl || account.ks3Url || account.avatarUrl || '';
@@ -1010,16 +1046,31 @@ const BoardScreen: React.FC = () => {
             };
           }
           return topic;
-        });
+        }));
+        
+        // 为每个帖子获取mSitePostId（只在附件缺少云存储URL时才会尝试获取）
+        const topicsWithMSiteId = await Promise.all(processedTopics.map(async (topic) => {
+          const mSitePostId = await getMSitePostIdForTopic({
+            attachments: topic.article?.attachments || [],
+            boardName: topic.board.name,
+            topicTitle: topic.subject,
+            logTag: 'ChannelPosts',
+            topicId: topic.topicId || topic.id,
+          });
+          return {
+            ...topic,
+            mSitePostId: mSitePostId,
+          };
+        }));
         
         if (pageNum === 1) {
-          setChannelPosts(processedTopics);
+          setChannelPosts(topicsWithMSiteId);
           setChannelPage(1);
           
           // Save cache
           try {
             const cacheData = {
-              data: processedTopics,
+              data: topicsWithMSiteId,
               pager: pager
             };
             setCache('channelPosts', channelId, cacheData);
@@ -1030,7 +1081,7 @@ const BoardScreen: React.FC = () => {
           // 使用Set来去重，确保不会有重复的id
           setChannelPosts(prev => {
             const existingIds = new Set(prev.map(p => p.id));
-            const newPosts = processedTopics.filter((p: ChannelTopic) => !existingIds.has(p.id));
+            const newPosts = topicsWithMSiteId.filter((p: ChannelTopic) => !existingIds.has(p.id));
             return [...prev, ...newPosts];
           });
         }
@@ -1418,6 +1469,7 @@ const BoardScreen: React.FC = () => {
 
   const renderPostItem = ({item}: {item: any}) => {
     const isRead = readPosts.has(item.id);
+    const hasAttachments = item.attachments && item.attachments.length > 0;
     return (
     <TouchableOpacity
       style={[
@@ -1432,6 +1484,7 @@ const BoardScreen: React.FC = () => {
         navigation.navigate('PostDetail', {
           board: item.board,
           postId: item.id,
+          mSitePostId: item.mSitePostId, // 传递M站短ID，用于帖子详情获取静态附件URL
         });
       }}>
       <View style={styles.postHeader}>
@@ -1445,8 +1498,8 @@ const BoardScreen: React.FC = () => {
           ]} 
           numberOfLines={2}
         >
-        {item.title}
-      </Text>
+          {item.title}{hasAttachments && <Text style={styles.attachmentIcon}> 📎</Text>}
+        </Text>
       </View>
       <View style={styles.postMeta}>
         <View style={styles.postAuthorInfo}>
@@ -1501,6 +1554,7 @@ const BoardScreen: React.FC = () => {
           navigation.navigate('PostDetail', {
             board: item.board.name,
             postId: item.topicId || item.id,
+            mSitePostId: item.mSitePostId, // 传递M站短ID，用于帖子详情获取静态附件URL
           });
         }}>
         {/* 用户信息 */}
@@ -1609,6 +1663,7 @@ const BoardScreen: React.FC = () => {
           navigation.navigate('PostDetail', {
             board: item.board.name,
             postId: item.topicId || item.id, // 图览使用topicId，普通频道使用id
+            mSitePostId: item.mSitePostId, // 传递M站短ID，用于帖子详情获取静态附件URL
           });
         }}>
         {/* 标题 */}
@@ -2048,6 +2103,9 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 10,
     fontWeight: 'bold',
+  },
+  attachmentIcon: {
+    fontSize: 12,
   },
   postTitle: {
     flex: 1,
