@@ -37,6 +37,8 @@ target 'SmthApp' do
         config.build_settings['CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER'] = 'NO'
         config.build_settings['CLANG_WARN_NULLABILITY'] = 'NO'
         config.build_settings['GCC_WARN_INHIBIT_ALL_WARNINGS'] = 'YES'
+        # 确保 Release 配置生成 dSYM 文件（用于崩溃报告符号化）
+        config.build_settings['DEBUG_INFORMATION_FORMAT'] = 'dwarf-with-dsym'
       end
     end
     
