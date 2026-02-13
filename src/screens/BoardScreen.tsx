@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useRef} from 'react';
+import React, {useState, useEffect, useRef, useMemo} from 'react';
 import {
   View,
   Text,
@@ -27,6 +27,7 @@ import {formatRelativeTime} from '../utils/timeFormat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useSettings} from '../context/SettingsContext';
 import {useTheme} from '../components/ThemedComponents';
+import {useReadPosts} from '../context/ReadPostsContext';
 
 const {width: SCREEN_WIDTH} = Dimensions.get('window');
 const DRAWER_WIDTH = SCREEN_WIDTH * 0.8;
@@ -129,6 +130,64 @@ const BoardScreen: React.FC = () => {
   const route = useRoute();
   const {settings} = useSettings();
   const theme = useTheme();
+
+  // 基于主题的动态样式 — 确保真机上主题切换时样式完全重建
+  const themedStyles = useMemo(() => ({
+    searchBarContainer: {
+      backgroundColor: theme.cardBackground,
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    } as const,
+    searchInput: {
+      height: 36,
+      backgroundColor: theme.placeholderBackground,
+      borderRadius: 18,
+      paddingHorizontal: 16,
+      justifyContent: 'center' as const,
+      alignItems: 'center' as const,
+    },
+    searchPlaceholder: {
+      fontSize: 14,
+      color: theme.secondaryText,
+    },
+    channelsContainer: {
+      backgroundColor: theme.cardBackground,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+      paddingVertical: 8,
+    },
+    channelItem: {
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      marginRight: 8,
+      backgroundColor: theme.placeholderBackground,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: theme.border,
+    },
+    channelItemSelected: {
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      marginRight: 8,
+      backgroundColor: theme.primary,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: theme.primary,
+    },
+    channelText: {
+      fontSize: 14,
+      fontWeight: '500' as const,
+      color: theme.text,
+    },
+    channelTextSelected: {
+      fontSize: 14,
+      fontWeight: '600' as const,
+      color: '#fff',
+    },
+  }), [theme]);
+
   const [boards, setBoards] = useState<Board[]>([]);
   // loadFavoriteBoards 用于刷新收藏版面列表
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -140,7 +199,7 @@ const BoardScreen: React.FC = () => {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [readPosts, setReadPosts] = useState<Set<string>>(new Set());
+  const {isRead, markAsRead} = useReadPosts();
 
   const [channels, setChannels] = useState<Channel[]>([]);
   const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
@@ -322,7 +381,6 @@ const BoardScreen: React.FC = () => {
   useEffect(() => {
     loadBoards();
     loadFavoriteBoards();
-    loadReadPosts();
     loadChannels();
   }, []);
 
@@ -514,7 +572,7 @@ const BoardScreen: React.FC = () => {
         if (selectedBoard) {
           return (
             <View style={styles.headerTitleContainer}>
-              <Text style={styles.headerTitleText} numberOfLines={1}>
+          <Text style={[styles.headerTitleText, {color: theme.text}]} numberOfLines={1}>
                 {selectedBoard.chineseName || selectedBoard.name}
               </Text>
             </View>
@@ -523,13 +581,13 @@ const BoardScreen: React.FC = () => {
           // 当选中频道或显示频道列表时，标题显示"频道"
           return (
             <View style={styles.headerTitleContainer}>
-              <Text style={styles.headerTitleText}>频道</Text>
+              <Text style={[styles.headerTitleText, {color: theme.text}]}>频道</Text>
             </View>
           );
         } else {
           return (
             <View style={styles.headerTitleContainer}>
-              <Text style={styles.headerTitleText}>版面</Text>
+              <Text style={[styles.headerTitleText, {color: theme.text}]}>版面</Text>
             </View>
           );
         }
@@ -538,18 +596,18 @@ const BoardScreen: React.FC = () => {
         <TouchableOpacity
           style={{paddingLeft: 16}}
           onPress={() => setShowBoardList(true)}>
-          <Text style={{fontSize: 24}}>☰</Text>
+          <Text style={{fontSize: 24, color: theme.text}}>☰</Text>
         </TouchableOpacity>
       ),
       headerRight: () => (
         <TouchableOpacity
           style={{paddingRight: 16}}
           onPress={() => navigation.navigate('BoardList', {favorites: true})}>
-          <Text style={{fontSize: 24, color: '#007AFF'}}>⭐</Text>
+          <Text style={{fontSize: 24, color: theme.primary}}>⭐</Text>
         </TouchableOpacity>
       ),
     });
-  }, [selectedBoard, selectedChannel, showChannels, navigation]);
+  }, [selectedBoard, selectedChannel, showChannels, navigation, theme]);
 
   const loadBoards = async () => {
     try {
@@ -1102,31 +1160,7 @@ const BoardScreen: React.FC = () => {
     }
   };
 
-  const loadReadPosts = async () => {
-    try {
-      const jsonValue = await AsyncStorage.getItem('read_posts_ids');
-      if (jsonValue != null) {
-        const ids = JSON.parse(jsonValue);
-        setReadPosts(new Set(ids));
-      }
-    } catch (_e) {
-      console.error('Failed to load read posts');
-    }
-  };
 
-  const markAsRead = async (postId: string) => {
-    if (readPosts.has(postId)) return;
-
-    const newReadPosts = new Set(readPosts);
-    newReadPosts.add(postId);
-    setReadPosts(newReadPosts);
-
-    try {
-      await AsyncStorage.setItem('read_posts_ids', JSON.stringify(Array.from(newReadPosts)));
-    } catch (_e) {
-      console.error('Failed to save read post');
-    }
-  };
 
   const loadPosts = async (boardId: string, pageNum: number, orderByFlushTime: number = 0, forceRefresh: boolean = false) => {
     try {
@@ -1262,35 +1296,33 @@ const BoardScreen: React.FC = () => {
     }
   };
 
-  const renderChannelItem = ({item}: {item: Channel}) => (
-    <TouchableOpacity
-      style={[
-        styles.channelItem,
-        selectedChannel?.id === item.id && styles.selectedChannelItem
-      ]}
-      onPress={() => {
-        console.log('点击频道:', item.name);
-        setSelectedChannel(item);
-        // 注意：不需要在这里调用loadAlbumPosts或loadChannelPosts
-        // 因为useEffect会监听selectedChannel的变化并自动加载
-      }}>
-      <Text style={[
-        styles.channelText,
-        selectedChannel?.id === item.id && styles.selectedChannelText
-      ]}>
-        {item.name}
-      </Text>
-    </TouchableOpacity>
-  );
+  const renderChannelItem = ({item}: {item: Channel}) => {
+    const isSelected = selectedChannel?.id === item.id;
+    return (
+      <TouchableOpacity
+        style={isSelected ? themedStyles.channelItemSelected : themedStyles.channelItem}
+        onPress={() => {
+          console.log('点击频道:', item.name);
+          setSelectedChannel(item);
+          // 注意：不需要在这里调用loadAlbumPosts或loadChannelPosts
+          // 因为useEffect会监听selectedChannel的变化并自动加载
+        }}>
+        <Text style={isSelected ? themedStyles.channelTextSelected : themedStyles.channelText}>
+          {item.name}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
 
   const renderChannelsList = () => {
     if (!showChannels || channels.length === 0) return null;
     
     return (
-      <View style={styles.channelsContainer}>
+      <View style={themedStyles.channelsContainer}>
         <FlatList
           ref={channelsListRef}
           data={channels}
+          extraData={themedStyles}
           renderItem={renderChannelItem}
           keyExtractor={item => item.id}
           horizontal
@@ -1311,14 +1343,14 @@ const BoardScreen: React.FC = () => {
   // 渲染搜索框
   const renderSearchBar = () => {
     return (
-      <View style={styles.searchBarContainer}>
+      <View style={themedStyles.searchBarContainer}>
         <TouchableOpacity
-          style={styles.searchInput}
+          style={themedStyles.searchInput}
           onPress={() => {
             navigation.navigate('SearchInput');
           }}
           activeOpacity={0.7}>
-          <Text style={styles.searchPlaceholder}>🔍 搜索文章/版面/用户</Text>
+          <Text style={themedStyles.searchPlaceholder}>🔍 搜索文章/版面/用户</Text>
         </TouchableOpacity>
       </View>
     );
@@ -1409,10 +1441,10 @@ const BoardScreen: React.FC = () => {
       // 根节点渲染为可点击的分类标题
       return (
         <View style={styles.sectionGroup}>
-          <TouchableOpacity style={styles.sectionHeader} onPress={handleToggle}>
+          <TouchableOpacity style={[styles.sectionHeader, {backgroundColor: theme.placeholderBackground, borderBottomColor: theme.border}]} onPress={handleToggle}>
             <View style={styles.sectionHeaderContent}>
-              <Text style={styles.sectionHeaderText}>{item.chineseName || item.name}</Text>
-              <Text style={styles.sectionExpandArrow}>{isExpanded ? '▼' : '▶'}</Text>
+              <Text style={[styles.sectionHeaderText, {color: theme.secondaryText}]}>{item.chineseName || item.name}</Text>
+              <Text style={[styles.sectionExpandArrow, {color: theme.secondaryText}]}>{isExpanded ? '▼' : '▶'}</Text>
             </View>
           </TouchableOpacity>
           {isExpanded && hasChildren && (
@@ -1429,8 +1461,8 @@ const BoardScreen: React.FC = () => {
         <TouchableOpacity
           style={[
             styles.boardItem,
-            {paddingLeft: 16 + (level - 1) * 16},
-            isSelected && styles.selectedBoardItem
+            {paddingLeft: 16 + (level - 1) * 16, borderBottomColor: theme.border},
+            isSelected && [styles.selectedBoardItem, {backgroundColor: theme.primary + '15', borderLeftColor: theme.primary}]
           ]}
           onPress={handleToggle}>
           <View style={styles.boardItemContent}>
@@ -1438,24 +1470,25 @@ const BoardScreen: React.FC = () => {
               {item.isFolder ? (
                 <Text style={styles.folderIcon}>{isExpanded ? '📂' : '📁'}</Text>
               ) : (
-                <Text style={styles.boardIcon}>📄</Text>
+                <Text style={[styles.boardIcon, {opacity: 0.5}]}>📄</Text>
               )}
             </View>
             <Text style={[
               styles.boardName,
-              isSelected && styles.selectedBoardName
+              {color: theme.text},
+              isSelected && [styles.selectedBoardName, {color: theme.primary}]
             ]}>
               {item.chineseName || item.name}
             </Text>
             {item.isFolder && (
-              <Text style={styles.expandArrow}>
+              <Text style={[styles.expandArrow, {color: theme.secondaryText}]}>
                 {isExpanded ? '▼' : '▶'}
               </Text>
             )}
           </View>
         </TouchableOpacity>
         {isExpanded && hasChildren && (
-          <View style={styles.subBoardsContainer}>
+          <View style={[styles.subBoardsContainer, {backgroundColor: theme.cardBackground}]}>
             <BoardItemGroup items={subBoards} level={level + 1} />
           </View>
         )}
@@ -1468,7 +1501,7 @@ const BoardScreen: React.FC = () => {
   );
 
   const renderPostItem = ({item}: {item: any}) => {
-    const isRead = readPosts.has(item.id);
+    const itemIsRead = isRead(item.id);
     const hasAttachments = item.attachments && item.attachments.length > 0;
     return (
     <TouchableOpacity
@@ -1494,7 +1527,7 @@ const BoardScreen: React.FC = () => {
             styles.postTitle,
             {color: theme.text},
             item.isTop && {color: theme.error},
-            isRead && {color: theme.secondaryText, fontWeight: 'normal'}
+            itemIsRead && {color: theme.secondaryText, fontWeight: 'normal'}
           ]} 
           numberOfLines={2}
         >
@@ -1516,7 +1549,7 @@ const BoardScreen: React.FC = () => {
 
   // 图览频道专用渲染函数 - 图片外显效果
   const renderAlbumPostItem = ({item}: {item: ChannelTopic}) => {
-    const isRead = readPosts.has(item.id);
+    const itemIsRead = isRead(item.id);
     const images = item.attachments || [];
     
     // 调试：打印图片信息
@@ -1563,7 +1596,7 @@ const BoardScreen: React.FC = () => {
             {item.article.account.avatarUrl ? (
               <ImageWithPlaceholder
                 uri={item.article.account.avatarUrl}
-                style={styles.albumAvatar}
+                style={[styles.albumAvatar, {backgroundColor: theme.placeholderBackground}]}
                 isAvatar={true}
               />
             ) : (
@@ -1587,7 +1620,7 @@ const BoardScreen: React.FC = () => {
           style={[
             styles.albumPostTitle,
             {color: theme.text},
-            isRead && {color: theme.secondaryText, fontWeight: 'normal'}
+            itemIsRead && {color: theme.secondaryText, fontWeight: 'normal'}
           ]} 
           numberOfLines={3}
         >
@@ -1602,6 +1635,7 @@ const BoardScreen: React.FC = () => {
                 key={index} 
                 style={[
                   styles.albumImageWrapper,
+                  {backgroundColor: theme.placeholderBackground},
                   imageLayout[index] && {
                     width: imageLayout[index].width,
                     height: imageLayout[index].height,
@@ -1626,7 +1660,7 @@ const BoardScreen: React.FC = () => {
         )}
 
         {/* 版面信息 */}
-        <View style={styles.albumPostFooter}>
+        <View style={[styles.albumPostFooter, {borderTopColor: theme.border}]}>
           <TouchableOpacity
             onPress={(e) => {
               e.stopPropagation(); // 阻止事件冒泡，避免触发外层的帖子点击
@@ -1639,7 +1673,7 @@ const BoardScreen: React.FC = () => {
               setSelectedChannel(null); // 清除频道选择
             }}
           >
-            <Text style={styles.albumBoardName}>📋 {item.board.title}</Text>
+            <Text style={[styles.albumBoardName, {color: theme.primary}]}>📋 {item.board.title}</Text>
           </TouchableOpacity>
         </View>
       </TouchableOpacity>
@@ -1648,7 +1682,7 @@ const BoardScreen: React.FC = () => {
 
   // 普通频道渲染函数
   const renderChannelPostItem = ({item}: {item: ChannelTopic}) => {
-    const isRead = readPosts.has(item.id);
+    const itemIsRead = isRead(item.id);
     return (
       <TouchableOpacity
         style={[
@@ -1671,7 +1705,7 @@ const BoardScreen: React.FC = () => {
           style={[
             styles.channelPostTitle,
             {color: theme.text},
-            isRead && {color: theme.secondaryText, fontWeight: 'normal'}
+            itemIsRead && {color: theme.secondaryText, fontWeight: 'normal'}
           ]} 
           numberOfLines={1}
         >
@@ -1728,12 +1762,12 @@ const BoardScreen: React.FC = () => {
     return (
       <View style={styles.footerContainer}>
         {isLoading ? (
-          <ActivityIndicator size="small" color="#007AFF" />
+          <ActivityIndicator size="small" color={theme.primary} />
         ) : (
           <TouchableOpacity 
-            style={styles.loadMoreButton}
+            style={[styles.loadMoreButton, {backgroundColor: theme.cardBackground, borderColor: theme.border}]}
             onPress={loadMore}>
-            <Text style={styles.loadMoreText}>加载更多</Text>
+            <Text style={[styles.loadMoreText, {color: theme.primary}]}>加载更多</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -1833,12 +1867,12 @@ const BoardScreen: React.FC = () => {
                 },
               ]}>
               <TouchableOpacity
-                style={styles.fabMenuButton}
+                style={[styles.fabMenuButton, {backgroundColor: theme.cardBackground, borderColor: theme.border}]}
                 onPress={item.onPress}
                 activeOpacity={0.8}>
-                <Text style={styles.fabMenuIcon}>{item.icon}</Text>
+                <Text style={[styles.fabMenuIcon, {color: theme.primary}]}>{item.icon}</Text>
               </TouchableOpacity>
-              <Text style={styles.fabMenuLabel}>{item.label}</Text>
+              <Text style={[styles.fabMenuLabel, {color: theme.text, backgroundColor: theme.cardBackground, borderColor: theme.border}]}>{item.label}</Text>
             </Animated.View>
           );
         })}
@@ -1848,6 +1882,7 @@ const BoardScreen: React.FC = () => {
           {...panResponder.panHandlers}
           style={[
             styles.fabButton,
+            {backgroundColor: theme.cardBackground, borderColor: theme.primary},
             {
               transform: [
                 {translateX: fabPosition.x},
@@ -1867,6 +1902,7 @@ const BoardScreen: React.FC = () => {
             <Animated.Text
               style={[
                 styles.fabIcon,
+                {color: theme.primary},
                 {
                   transform: [
                     {
@@ -1980,6 +2016,7 @@ const BoardScreen: React.FC = () => {
             style={[
               styles.modalContent, 
               { 
+                backgroundColor: theme.cardBackground,
                 opacity: modalAnim,
                 transform: [
                   { scale: modalAnim.interpolate({
@@ -1995,13 +2032,13 @@ const BoardScreen: React.FC = () => {
                 ] 
               }
             ]}>
-            <View style={styles.modalHeader}>
+            <View style={[styles.modalHeader, {backgroundColor: theme.cardBackground, borderBottomColor: theme.border}]}>
               <View style={styles.drawerTitleContainer}>
                 <Text style={styles.drawerTitleEmoji}>📋</Text>
-                <Text style={styles.modalTitle}>版面目录</Text>
+                <Text style={[styles.modalTitle, {color: theme.text}]}>版面目录</Text>
               </View>
               <TouchableOpacity onPress={closeDrawer} style={styles.drawerCloseButton}>
-                <Text style={{fontSize: 20, color: '#999'}}>✕</Text>
+                <Text style={{fontSize: 20, color: theme.secondaryText}}>✕</Text>
               </TouchableOpacity>
             </View>
             <ScrollView>
@@ -2020,22 +2057,22 @@ const BoardScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: 'transparent',
   },
   headerContainer: {
     flex: 1,
     marginHorizontal: 16,
   },
   searchBarContainer: {
-    backgroundColor: '#fff',
+    backgroundColor: 'transparent',
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    borderBottomColor: 'transparent',
   },
   searchInput: {
     height: 36,
-    backgroundColor: '#f0f0f0',
+    backgroundColor: 'transparent',
     borderRadius: 18,
     paddingHorizontal: 16,
     justifyContent: 'center',
@@ -2043,12 +2080,12 @@ const styles = StyleSheet.create({
   },
   searchPlaceholder: {
     fontSize: 14,
-    color: '#999',
+    // color 由主题动态控制
   },
   channelsContainer: {
-    backgroundColor: '#fff',
+    backgroundColor: 'transparent',
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    borderBottomColor: 'transparent',
     paddingVertical: 8,
   },
   channelsList: {
@@ -2058,18 +2095,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
     marginRight: 8,
-    backgroundColor: '#f8f8f8',
+    backgroundColor: 'transparent',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: 'transparent',
   },
   selectedChannelItem: {
-    backgroundColor: '#007AFF',
-    borderColor: '#007AFF',
+    // 保留用于语义，实际颜色由主题动态控制
   },
   channelText: {
     fontSize: 14,
-    color: '#333',
+    // color 由主题动态控制
     fontWeight: '500',
   },
   selectedChannelText: {
@@ -2081,10 +2117,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   postItem: {
-    // backgroundColor 由主题动态控制
+    backgroundColor: 'transparent',
     padding: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,  // 使用细线
-    // borderBottomColor 由主题动态控制
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'transparent',
   },
   postHeader: {
     flexDirection: 'row',
@@ -2092,7 +2128,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   topBadge: {
-    // backgroundColor 由主题动态控制
+    backgroundColor: 'transparent',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
@@ -2148,12 +2184,12 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 16,
-    color: '#999',
+    color: 'transparent',
     marginBottom: 8,
   },
   hintText: {
     fontSize: 14,
-    color: '#ccc',
+    color: 'transparent',
     textAlign: 'center',
     paddingHorizontal: 32,
     lineHeight: 20,
@@ -2162,7 +2198,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
     paddingTop: 8,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#f0f0f0',
+    borderTopColor: 'transparent',
   },
   boardNameText: {
     fontSize: 12,
@@ -2190,11 +2226,11 @@ const styles = StyleSheet.create({
   },
   // 图览频道专用样式
   albumPostItem: {
-    // backgroundColor 由主题动态控制
+    backgroundColor: 'transparent',
     padding: 16,
     marginBottom: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,  // 使用细线
-    // borderBottomColor 由主题动态控制
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'transparent',
   },
   albumPostHeader: {
     marginBottom: 12,
@@ -2207,13 +2243,13 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#f0f0f0',
+    backgroundColor: 'transparent',
   },
   albumAvatarPlaceholder: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    // backgroundColor 由主题动态控制
+    backgroundColor: 'transparent',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -2252,7 +2288,7 @@ const styles = StyleSheet.create({
     position: 'relative',
     borderRadius: 8,
     overflow: 'hidden',
-    backgroundColor: '#f5f5f5',
+    backgroundColor: 'transparent',
   },
   albumImage: {
     width: '100%',
@@ -2272,11 +2308,11 @@ const styles = StyleSheet.create({
   albumPostFooter: {
     paddingTop: 8,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#f0f0f0',
+    borderTopColor: 'transparent',
   },
   albumBoardName: {
     fontSize: 12,
-    color: '#1890ff', // 改为蓝色，表示可点击
+    color: 'transparent',
   },
   headerTitleContainer: {
     flex: 1,
@@ -2286,7 +2322,7 @@ const styles = StyleSheet.create({
   headerTitleText: {
     fontSize: 17,
     fontWeight: '600',
-    color: '#000',
+    color: 'transparent',
     textAlign: 'center',
   },
   footerContainer: {
@@ -2296,14 +2332,14 @@ const styles = StyleSheet.create({
   loadMoreButton: {
     paddingHorizontal: 24,
     paddingVertical: 10,
-    backgroundColor: '#f9f9f9',
+    backgroundColor: 'transparent',
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: 'transparent',
   },
   loadMoreText: {
     fontSize: 14,
-    color: '#007AFF',
+    color: 'transparent',
     fontWeight: '500',
   },
   modalContainer: {
@@ -2323,7 +2359,7 @@ const styles = StyleSheet.create({
   modalContent: {
     width: DRAWER_WIDTH,
     maxHeight: '80%',
-    backgroundColor: '#fff',
+    backgroundColor: 'transparent',
     borderRadius: 16,
     overflow: 'hidden',
     shadowColor: '#000',
@@ -2339,13 +2375,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#f5f5f5',
-    backgroundColor: '#fff',
+    borderBottomColor: 'transparent',
+    backgroundColor: 'transparent',
   },
   modalTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#333',
+    // color 由主题动态控制
   },
   drawerTitleContainer: {
     flexDirection: 'row',
@@ -2362,11 +2398,11 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   sectionHeader: {
-    backgroundColor: '#f8f8f8',
+    backgroundColor: 'transparent',
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#eee',
+    borderBottomColor: 'transparent',
   },
   sectionHeaderContent: {
     flexDirection: 'row',
@@ -2376,29 +2412,29 @@ const styles = StyleSheet.create({
   sectionHeaderText: {
     fontSize: 12,
     fontWeight: 'bold',
-    color: '#888',
+    // color 由主题动态控制
     textTransform: 'uppercase',
     letterSpacing: 1,
     flex: 1,
   },
   sectionExpandArrow: {
     fontSize: 10,
-    color: '#888',
+    // color 由主题动态控制
     marginLeft: 8,
   },
   boardItem: {
     paddingVertical: 10,
     paddingRight: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#f5f5f5',
+    borderBottomColor: 'transparent',
   },
   rootFolder: {
-    backgroundColor: '#fcfcfc',
+    // backgroundColor 由主题动态控制
   },
   selectedBoardItem: {
-    backgroundColor: '#f0f7ff',
+    // backgroundColor 由主题动态控制
     borderLeftWidth: 3,
-    borderLeftColor: '#007AFF',
+    // borderLeftColor 由主题动态控制
   },
   boardItemContent: {
     flexDirection: 'row',
@@ -2420,23 +2456,23 @@ const styles = StyleSheet.create({
   boardName: {
     flex: 1,
     fontSize: 14,
-    color: '#333',
+    // color 由主题动态控制
   },
   rootBoardName: {
     fontWeight: '600',
-    color: '#222',
+    // color 由主题动态控制
   },
   selectedBoardName: {
-    color: '#007AFF',
+    // color 由主题动态控制
     fontWeight: '600',
   },
   expandArrow: {
     fontSize: 10,
-    color: '#bbb',
+    // color 由主题动态控制
     marginLeft: 4,
   },
   subBoardsContainer: {
-    backgroundColor: '#fff',
+    // backgroundColor 由主题动态控制
   },
   fabButton: {
     position: 'absolute',
@@ -2445,9 +2481,9 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    // backgroundColor 由主题动态控制
     borderWidth: 1,
-    borderColor: 'rgba(0, 122, 255, 0.5)',
+    // borderColor 由主题动态控制
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: '#000',
@@ -2458,7 +2494,7 @@ const styles = StyleSheet.create({
   },
   fabIcon: {
     fontSize: 32,
-    color: '#007AFF',
+    // color 由主题动态控制
     fontWeight: '200',
     lineHeight: 32,
   },
@@ -2472,9 +2508,9 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: 'rgba(255, 255, 255, 0.35)',
+    // backgroundColor 由主题动态控制
     borderWidth: 1,
-    borderColor: 'rgba(0, 122, 255, 0.5)',
+    // borderColor 由主题动态控制
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: '#000',
@@ -2485,16 +2521,16 @@ const styles = StyleSheet.create({
   },
   fabMenuIcon: {
     fontSize: 20,
-    color: '#007AFF',
+    // color 由主题动态控制
   },
   fabMenuLabel: {
     marginTop: 6,
     fontSize: 12,
-    color: '#007AFF',
+    // color 由主题动态控制
     fontWeight: '600',
-    backgroundColor: 'rgba(255, 255, 255, 0.4)',
+    // backgroundColor 由主题动态控制
     borderWidth: 1,
-    borderColor: 'rgba(0, 122, 255, 0.4)',
+    // borderColor 由主题动态控制
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,

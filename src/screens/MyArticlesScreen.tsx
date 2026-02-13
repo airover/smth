@@ -472,8 +472,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: BORDER_RADIUS.lg,
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
   },
   activeTab: {
     borderColor: 'transparent',

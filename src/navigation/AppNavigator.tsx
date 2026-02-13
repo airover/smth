@@ -3,6 +3,7 @@ import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import {Text, TouchableOpacity} from 'react-native';
 import Svg, {Path} from 'react-native-svg';
+import {useTheme} from '../components/ThemedComponents';
 
 // Screens
 import HomeScreen from '../screens/HomeScreen';
@@ -34,18 +35,24 @@ const Stack = createNativeStackNavigator();
 
 // 主Tab导航
 const MainTabs = () => {
+  const theme = useTheme();
   return (
     <Tab.Navigator
       initialRouteName="Home"
       screenOptions={{
-        tabBarActiveTintColor: '#007AFF',
-        tabBarInactiveTintColor: '#999',
-        headerStyle: {
-          backgroundColor: '#fff',
+        tabBarActiveTintColor: theme.primary,
+        tabBarInactiveTintColor: theme.tabBarInactive,
+        tabBarStyle: {
+          backgroundColor: theme.tabBarBackground,
+          borderTopColor: theme.tabBarBorder,
         },
-        headerTintColor: '#000',
+        headerStyle: {
+          backgroundColor: theme.headerBackground,
+        },
+        headerTintColor: theme.text,
         headerTitleStyle: {
           fontWeight: '600',
+          color: theme.text,
         },
       }}>
       <Tab.Screen
@@ -104,16 +111,17 @@ const MainTabs = () => {
 
 // 应用导航器
 const AppNavigator = () => {
+  const theme = useTheme();
   return (
     <Stack.Navigator
       screenOptions={({navigation}) => ({
         headerStyle: {
-          backgroundColor: '#fff',
+          backgroundColor: theme.headerBackground,
         },
-        headerTintColor: '#007AFF', // 统一使用项目蓝色主题（按钮颜色）
+        headerTintColor: theme.primary, // 统一使用主题蓝色（按钮颜色）
         headerTitleStyle: {
           fontWeight: '600',
-          color: '#000', // 标题颜色使用黑色
+          color: theme.text, // 标题颜色跟随主题
         },
         headerBackTitleVisible: false, // 隐藏返回文字
         headerBackTitle: '', // 不显示返回文字
@@ -125,7 +133,7 @@ const AppNavigator = () => {
               <Svg width={28} height={28} viewBox="0 0 24 24" fill="none">
                 <Path
                   d="M15 18L9 12L15 6"
-                  stroke="#007AFF"
+                  stroke={theme.primary}
                   strokeWidth={2.5}
                   strokeLinecap="round"
                   strokeLinejoin="round"

@@ -19,6 +19,7 @@ import {
   FONT_SIZE,
   BORDER_RADIUS,
 } from '../utils/responsive';
+import {useReadPosts} from '../context/ReadPostsContext';
 
 // 缓存配置常量
 const CACHE_CONFIG = {
@@ -112,6 +113,7 @@ const saveCacheData = async <T,>(
 const HomeScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const theme = useTheme();
+  const {readPosts, isRead, markAsRead} = useReadPosts();
   const [topTen, setTopTen] = useState<TopTenItem[]>([]);
   const [hotPosts, setHotPosts] = useState<TopTenItem[]>([]);
   const [hotBoards, setHotBoards] = useState<Board[]>([]);
@@ -120,12 +122,10 @@ const HomeScreen: React.FC = () => {
   const [hotPostsPage, setHotPostsPage] = useState(1);
   const [hasMoreHotPosts, setHasMoreHotPosts] = useState(true);
   const [loadingMoreHotPosts, setLoadingMoreHotPosts] = useState(false);
-  const [readPosts, setReadPosts] = useState<Set<string>>(new Set());
   const [dataLoaded, setDataLoaded] = useState(false);
 
   useEffect(() => {
     loadData();
-    loadReadPosts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -331,34 +331,10 @@ const HomeScreen: React.FC = () => {
     }
   };
 
-  const loadReadPosts = async () => {
-    try {
-      const jsonValue = await AsyncStorage.getItem('read_posts_ids');
-      if (jsonValue != null) {
-        const ids = JSON.parse(jsonValue);
-        setReadPosts(new Set(ids));
-      }
-    } catch (e) {
-      console.error('Failed to load read posts:', e);
-    }
-  };
 
-  const markAsRead = async (postId: string) => {
-    if (readPosts.has(postId)) return;
-
-    const newReadPosts = new Set(readPosts);
-    newReadPosts.add(postId);
-    setReadPosts(newReadPosts);
-
-    try {
-      await AsyncStorage.setItem('read_posts_ids', JSON.stringify(Array.from(newReadPosts)));
-    } catch (e) {
-      console.error('Failed to save read post:', e);
-    }
-  };
 
   const renderTopTenItem = ({item, index, data}: {item: TopTenItem, index?: number, data?: TopTenItem[]}) => {
-    const isRead = readPosts.has(item.id);
+    const itemIsRead = isRead(item.id);
     const isLastItem = data && index !== undefined && index === data.length - 1;
     
     return (
@@ -381,7 +357,7 @@ const HomeScreen: React.FC = () => {
           style={[
             styles.topTenTitle,
             {color: theme.text},
-            isRead && {color: theme.secondaryText, fontWeight: 'normal'}
+            itemIsRead && {color: theme.secondaryText, fontWeight: 'normal'}
           ]} 
           numberOfLines={1}
         >

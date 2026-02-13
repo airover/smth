@@ -1,22 +1,29 @@
-import React, {useState, useEffect} from 'react';
-import {View, StyleSheet} from 'react-native';
-import {NavigationContainer} from '@react-navigation/native';
+import React, {useState, useEffect, useMemo} from 'react';
+import {View, StyleSheet, useColorScheme, NativeModules} from 'react-native';
+import {NavigationContainer, DefaultTheme, DarkTheme} from '@react-navigation/native';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
 
 // Components
 import AppNavigator from './src/navigation/AppNavigator';
 import LoginScreen from './src/screens/LoginScreen';
-import LaunchScreen from './src/components/LaunchScreen';
-import {SettingsProvider} from './src/context/SettingsContext';
+import {SettingsProvider, useSettings} from './src/context/SettingsContext';
 import {AuthProvider, useAuth} from './src/context/AuthContext';
+import {ReadPostsProvider} from './src/context/ReadPostsContext';
+import {getTheme} from './src/utils/theme';
+
+const {SplashScreenManager} = NativeModules;
 
 // 空白占位屏幕，用于登录状态检查期间
-const EmptyScreen = () => <View style={{flex: 1, backgroundColor: '#fff'}} />;
+const EmptyScreen = () => {
+  const isDarkMode = useColorScheme() === 'dark';
+  return <View style={{flex: 1, backgroundColor: isDarkMode ? '#000' : '#fff'}} />;
+};
 
 const RootStack = createNativeStackNavigator();
 
 const AppContent = () => {
   const {isLoggedIn, isLoading: authLoading, login} = useAuth();
+  const {settings} = useSettings();
   const [appReady, setAppReady] = useState(false);
   const [preloadedCredentials, setPreloadedCredentials] = useState<{
     username: string;
@@ -27,6 +34,16 @@ const AppContent = () => {
   useEffect(() => {
     initializeApp();
   }, []);
+
+  // 当 app 初始化完成且认证状态加载完成后，隐藏原生启动屏覆盖层
+  useEffect(() => {
+    if (appReady && !authLoading) {
+      // 使用 requestAnimationFrame 确保 JS 端的真实内容已经渲染到屏幕上
+      requestAnimationFrame(() => {
+        SplashScreenManager?.hide();
+      });
+    }
+  }, [appReady, authLoading]);
 
   const initializeApp = async () => {
     try {
@@ -65,15 +82,31 @@ const AppContent = () => {
     }
   };
 
-  // 只有当 App 初始化完成且 AuthContext 加载完成时，才隐藏 Loading
+  // 只有当 App 初始化完成且 AuthContext 加载完成时，才切换到真实内容
   const showLoading = !appReady || authLoading;
 
+  // 根据用户主题设置和系统主题来决定导航容器的主题
+  const colorScheme = useColorScheme();
+  const isDarkMode = settings.themeMode === 'dark' || (settings.themeMode === 'auto' && colorScheme === 'dark');
+  const appTheme = getTheme(settings.themeMode === 'auto' ? (colorScheme === 'dark' ? 'dark' : 'light') : settings.themeMode);
+  const navTheme = useMemo(() => ({
+    ...(isDarkMode ? DarkTheme : DefaultTheme),
+    colors: {
+      ...(isDarkMode ? DarkTheme.colors : DefaultTheme.colors),
+      background: appTheme.background,
+      card: appTheme.headerBackground,
+      text: appTheme.text,
+      border: appTheme.border,
+      primary: appTheme.primary,
+    },
+  }), [isDarkMode, appTheme]);
+
   return (
-    <View style={styles.container}>
-      <NavigationContainer>
+    <View style={[styles.container, {backgroundColor: appTheme.background}]}>
+      <NavigationContainer theme={navTheme}>
         <RootStack.Navigator screenOptions={{headerShown: false, animation: 'none'}}>
           {showLoading ? (
-            // 登录状态检查中，渲染空白占位（被启动屏覆盖）
+            // 登录状态检查中，渲染空白占位（被原生启动屏覆盖层遮挡）
             <RootStack.Screen name="Loading" component={EmptyScreen} />
           ) : isLoggedIn ? (
             <RootStack.Screen name="App" component={AppNavigator} />
@@ -89,12 +122,6 @@ const AppContent = () => {
           )}
         </RootStack.Navigator>
       </NavigationContainer>
-      {/* LaunchScreen 作为覆盖层，避免导航切换闪烁 */}
-      {showLoading && (
-        <View style={styles.splashOverlay}>
-          <LaunchScreen />
-        </View>
-      )}
     </View>
   );
 };
@@ -103,7 +130,9 @@ const App = () => {
   return (
     <AuthProvider>
       <SettingsProvider>
-        <AppContent />
+        <ReadPostsProvider>
+          <AppContent />
+        </ReadPostsProvider>
       </SettingsProvider>
     </AuthProvider>
   );
@@ -112,10 +141,6 @@ const App = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-  },
-  splashOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 999,
   },
 });
 

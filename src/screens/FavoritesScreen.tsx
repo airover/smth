@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useCallback} from 'react';
+import React, {useState, useEffect, useCallback, useMemo} from 'react';
 import {
   View,
   Text,
@@ -28,6 +28,47 @@ const FavoritesScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const theme = useTheme();
   
+  // 基于主题的动态样式 — 确保真机上主题切换时样式完全重建
+  const themedCardStyles = useMemo(() => ({
+    topicItem: {
+      padding: SPACING.lg,
+      marginHorizontal: SPACING.md,
+      marginBottom: SPACING.md,
+      borderRadius: BORDER_RADIUS.lg,
+      backgroundColor: theme.cardBackground,
+      shadowColor: theme.text,
+      shadowOffset: {width: 0, height: 1},
+      shadowOpacity: 0.1,
+      shadowRadius: 2,
+      elevation: 2,
+    },
+    boardItem: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      justifyContent: 'space-between' as const,
+      padding: SPACING.lg,
+      marginHorizontal: SPACING.md,
+      marginBottom: SPACING.md,
+      borderRadius: BORDER_RADIUS.lg,
+      backgroundColor: theme.cardBackground,
+      shadowColor: theme.text,
+      shadowOffset: {width: 0, height: 1},
+      shadowOpacity: 0.1,
+      shadowRadius: 2,
+      elevation: 2,
+    },
+    rowBack: {
+      alignItems: 'flex-end' as const,
+      backgroundColor: theme.background,
+      flex: 1,
+      flexDirection: 'row' as const,
+      justifyContent: 'flex-end' as const,
+      paddingRight: SPACING.md,
+      marginHorizontal: SPACING.md,
+      marginBottom: SPACING.md,
+    },
+  }), [theme]);
+
   const [activeTab, setActiveTab] = useState<TabType>('topics');
   const [topics, setTopics] = useState<any[]>([]);
   const [boards, setBoards] = useState<Board[]>([]);
@@ -207,7 +248,6 @@ const FavoritesScreen: React.FC = () => {
         style={[
           styles.tab,
           {backgroundColor: activeTab === 'topics' ? theme.primary : theme.background},
-          {borderColor: activeTab === 'topics' ? 'transparent' : '#e0e0e0'},
         ]}
         onPress={() => setActiveTab('topics')}
       >
@@ -222,7 +262,6 @@ const FavoritesScreen: React.FC = () => {
         style={[
           styles.tab,
           {backgroundColor: activeTab === 'boards' ? theme.primary : theme.background},
-          {borderColor: activeTab === 'boards' ? 'transparent' : '#e0e0e0'},
         ]}
         onPress={() => setActiveTab('boards')}
       >
@@ -239,7 +278,7 @@ const FavoritesScreen: React.FC = () => {
   // 渲染文章项 - 卡片样式
   const renderTopicItem = ({item}: {item: any}) => (
     <TouchableOpacity
-      style={[styles.topicItem, {backgroundColor: theme.cardBackground, borderBottomColor: theme.border}]}
+      style={themedCardStyles.topicItem}
       onPress={() => {
         if (item.boardName && item.topicId) {
           // 点击时自动标记已读
@@ -286,7 +325,7 @@ const FavoritesScreen: React.FC = () => {
 
   // 渲染隐藏的删除按钮
   const renderHiddenItem = ({item}: {item: any}) => (
-    <View style={styles.rowBack}>
+    <View style={themedCardStyles.rowBack}>
       <TouchableOpacity
         style={styles.deleteButton}
         onPress={() => handleRemoveFavorite(item)}
@@ -299,7 +338,7 @@ const FavoritesScreen: React.FC = () => {
   // 渲染版面项 - 卡片样式
   const renderBoardItem = ({item}: {item: Board}) => (
     <TouchableOpacity
-      style={[styles.boardItem, {backgroundColor: theme.cardBackground, borderBottomColor: theme.border}]}
+      style={themedCardStyles.boardItem}
       onPress={() => {
         navigation.navigate('MainTabs', {
           screen: 'Board',
@@ -448,7 +487,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: BORDER_RADIUS.lg,
-    borderWidth: 1,
   },
   activeTab: {
     borderColor: 'transparent',
@@ -457,17 +495,7 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZE.md,
     fontWeight: '600',
   },
-  // 滑动删除相关样式
-  rowBack: {
-    alignItems: 'flex-end',
-    backgroundColor: '#f5f5f5',
-    flex: 1,
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    paddingRight: SPACING.md,
-    marginHorizontal: SPACING.md,
-    marginBottom: SPACING.md,
-  },
+  // 滑动删除相关样式（rowBack已移至themedCardStyles）
   deleteButton: {
     backgroundColor: '#FF3B30',
     justifyContent: 'center',
@@ -482,21 +510,7 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZE.sm,
     fontWeight: '600',
   },
-  // 文章项 - 卡片样式
-  topicItem: {
-    padding: SPACING.lg,
-    marginHorizontal: SPACING.md,
-    marginBottom: SPACING.md,
-    borderRadius: BORDER_RADIUS.lg,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
+  // 文章项 - 卡片样式（topicItem已移至themedCardStyles）
   topicHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -539,24 +553,7 @@ const styles = StyleSheet.create({
   topicReply: {
     fontSize: FONT_SIZE.sm,
   },
-  // 版面项 - 卡片样式
-  boardItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: SPACING.lg,
-    marginHorizontal: SPACING.md,
-    marginBottom: SPACING.md,
-    borderRadius: BORDER_RADIUS.lg,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
+  // 版面项 - 卡片样式（boardItem已移至themedCardStyles）
   boardInfo: {
     flex: 1,
   },

@@ -356,9 +356,9 @@ export const saveBrowsingHistory = async (item: Omit<BrowsingHistoryItem, 'times
     
     await AsyncStorage.setItem(BROWSING_HISTORY_KEY, JSON.stringify(history));
     
-    // 2. 同步更新已读帖子ID集合
+    // 2. 使用读-改-写模式同步更新已读帖子ID集合，避免数据丢失
     const idsJsonValue = await AsyncStorage.getItem(READ_POSTS_IDS_KEY);
-    let readPostsIds: string[] = idsJsonValue ? JSON.parse(idsJsonValue) : [];
+    const readPostsIds: string[] = idsJsonValue ? JSON.parse(idsJsonValue) : [];
     
     if (!readPostsIds.includes(item.postId)) {
       readPostsIds.push(item.postId);

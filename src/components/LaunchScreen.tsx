@@ -15,7 +15,7 @@ const LaunchScreen = () => {
         <Image 
           source={{uri: 'hacker'}} 
           style={styles.image}
-          resizeMode="cover"
+          resizeMode="contain"
         />
       </View>
     </View>
@@ -26,16 +26,22 @@ const styles = StyleSheet.create({
   splashContainer: {
     flex: 1,
     backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   splashContainerDark: {
     backgroundColor: '#000',
   },
   imageContainer: {
-    flex: 1,
+    // 移除 flex: 1，允许容器根据内容调整大小，或者直接约束大小
+    width: 1024,
+    height: 1024,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   image: {
-    width: '100%',
-    height: '100%',
+    width: 1024,
+    height: 1024,
   },
 });
 

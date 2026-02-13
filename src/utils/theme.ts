@@ -14,6 +14,10 @@ export interface ThemeColors {
   placeholderBackground: string;
   quoteBackground: string;
   quoteBorder: string;
+  headerBackground: string;  // 顶部导航栏背景
+  tabBarBackground: string;  // 底部标签栏背景
+  tabBarBorder: string;  // 底部标签栏上边线
+  tabBarInactive: string;  // 底部标签栏未选中颜色
 }
 
 // 日间主题
@@ -29,6 +33,10 @@ export const lightTheme: ThemeColors = {
   placeholderBackground: '#f0f0f0',
   quoteBackground: '#f8f9fa',
   quoteBorder: '#dee2e6',
+  headerBackground: '#fff',
+  tabBarBackground: '#fff',
+  tabBarBorder: '#e0e0e0',
+  tabBarInactive: '#999',
 };
 
 // 夜间主题
@@ -36,7 +44,7 @@ export const darkTheme: ThemeColors = {
   background: '#1a1a1a',
   cardBackground: '#2a2a2a',
   text: '#e0e0e0',
-  secondaryText: '#999',
+  secondaryText: '#8e8e93',  // 优化：稍微柔和，减少与主文字的对比刺眼感
   border: '#333333',  // 轻量分隔线（用于卡片内部，较柔和）
   divider: '#3a3a3a',  // 主要分隔线（用于不同帖子之间，更明显）
   primary: '#0a84ff',
@@ -44,6 +52,10 @@ export const darkTheme: ThemeColors = {
   placeholderBackground: '#3a3a3a',
   quoteBackground: '#2a2a2a',
   quoteBorder: '#3a3a3a',
+  headerBackground: '#1c1c1e',  // iOS 深色模式标准导航栏色
+  tabBarBackground: '#1c1c1e',  // iOS 深色模式标准标签栏色
+  tabBarBorder: '#38383a',  // 标签栏上边线
+  tabBarInactive: '#636366',  // 未选中标签稍暗，降低干扰
 };
 
 // 根据设置获取主题

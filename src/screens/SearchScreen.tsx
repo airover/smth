@@ -21,6 +21,7 @@ import {
   BORDER_RADIUS,
   scaleModerate,
 } from '../utils/responsive';
+import {useReadPosts} from '../context/ReadPostsContext';
 
 // 搜索相关常量
 const DEFAULT_PAGE = 1; // 默认页码
@@ -127,11 +128,10 @@ const SearchScreen: React.FC = () => {
   
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [readPosts, setReadPosts] = useState<Set<string>>(new Set());
+  const {isRead, markAsRead} = useReadPosts();
   const [searched, setSearched] = useState(false); // 是否已执行过搜索
 
   useEffect(() => {
-    loadReadPosts();
     // 如果有初始关键词，自动搜索
     if (params?.keyword) {
       handleSearch();
@@ -158,17 +158,7 @@ const SearchScreen: React.FC = () => {
     });
   }, [keyword, navigation, theme]);
 
-  const loadReadPosts = async () => {
-    try {
-      const jsonValue = await AsyncStorage.getItem('read_posts_ids');
-      if (jsonValue != null) {
-        const ids = JSON.parse(jsonValue);
-        setReadPosts(new Set(ids));
-      }
-    } catch (e) {
-      console.error('Failed to load read posts:', e);
-    }
-  };
+
 
   // 保存搜索历史
   const saveSearchHistory = async (searchKeyword: string) => {
@@ -188,19 +178,7 @@ const SearchScreen: React.FC = () => {
     }
   };
 
-  const markAsRead = async (postId: string) => {
-    if (readPosts.has(postId)) return;
 
-    const newReadPosts = new Set(readPosts);
-    newReadPosts.add(postId);
-    setReadPosts(newReadPosts);
-
-    try {
-      await AsyncStorage.setItem('read_posts_ids', JSON.stringify(Array.from(newReadPosts)));
-    } catch (e) {
-      console.error('Failed to save read post:', e);
-    }
-  };
 
   const handleSearch = async () => {
     if (!keyword.trim()) {
@@ -330,7 +308,7 @@ const SearchScreen: React.FC = () => {
   };
 
   const renderArticleItem = ({item}: {item: SearchArticle}) => {
-    const isRead = readPosts.has(item.topicId);
+    const itemIsRead = isRead(item.topicId);
     
     // 处理高亮的标题（移除HTML标签）
     const cleanSubject = item.subject.replace(/<[^>]*>/g, '');
@@ -349,8 +327,8 @@ const SearchScreen: React.FC = () => {
           <Text 
             style={[
               styles.articleTitle,
-              {color: isRead ? theme.secondaryText : theme.text},
-              isRead && styles.readArticleTitle
+              {color: itemIsRead ? theme.secondaryText : theme.text},
+              itemIsRead && styles.readArticleTitle
             ]} 
             numberOfLines={2}
           >

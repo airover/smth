@@ -27,11 +27,17 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     // 创建窗口
     window = UIWindow(frame: UIScreen.main.bounds)
     
+    // 设置窗口背景色与 LaunchScreen.storyboard 一致，避免原生启动屏消失时闪白/闪黑
+    window?.backgroundColor = UIColor.systemBackground
+    
     // 启动 React Native
     factory.startReactNative(withModuleName: "SmthApp", in: window, launchOptions: launchOptions)
     
     // 显示窗口
     window?.makeKeyAndVisible()
+    
+    // 在窗口上覆盖 LaunchScreen.storyboard 视图，等待 JS 端就绪后再移除
+    SplashScreenManager.show()
 
     return true
   }
