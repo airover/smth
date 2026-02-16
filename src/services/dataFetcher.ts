@@ -15,10 +15,25 @@ import {
 } from '../utils/requestUtils';
 import {setCache, getCacheWithTimestamp} from './cacheManager';
 import {extractStaticAttachmentUrls, isImageAttachment} from '../utils/imageUtils';
-import {getCookies} from './auth';
+import {getCookies, getMSiteCookies, isMSiteResponseLoggedIn, handleMSiteCookieExpired} from './auth';
 import {cleanHtml} from '../utils/htmlParser';
 
 const WAP_BASE_URL = 'https://wap.newsmth.net';
+
+/**
+ * 获取 M 站请求使用的 Cookie
+ * 优先使用 M 站独立的 session cookie（来自 AsyncStorage），
+ * 如果都没有，降级使用 wap 站 cookie
+ */
+const getMSiteRequestCookies = async (): Promise<string | null> => {
+  // getMSiteCookies 内部只查 AsyncStorage
+  const mSiteCookies = await getMSiteCookies();
+  if (mSiteCookies) {
+    return mSiteCookies;
+  }
+  // 降级使用 wap 站 cookie（对非限制版面仍然有效）
+  return await getCookies();
+};
 
 // 通用请求函数（带 Cookie）
 const requestWithCookies = async (
@@ -54,7 +69,7 @@ const fetchStaticAttachmentUrls = async (
 
   try {
     const url = `https://m.newsmth.net/article/${boardName}/${mSitePostId}`;
-    const cookies = await getCookies();
+    const cookies = await getMSiteRequestCookies();
     const referer = `https://m.newsmth.net/board/${boardName}`;
 
     const headers = buildHeaders({
@@ -82,6 +97,14 @@ const fetchStaticAttachmentUrls = async (
     });
 
     const html = await response.text();
+
+    // 被动探测：检查响应中是否处于登录状态
+    if (!isMSiteResponseLoggedIn(html)) {
+      console.log('[PostDetail] M站Cookie已过期（响应中无注销链接），清除本地缓存');
+      await handleMSiteCookieExpired();
+      return [];
+    }
+
     const urls = extractStaticAttachmentUrls(html);
     if (urls.length > 0) {
       console.log('[PostDetail] Fallback static attachments:', urls);
@@ -154,7 +177,7 @@ export const findMSitePostId = async (
   if (!boardName || !targetTitle) return null;
   
   try {
-    const cookies = await getCookies();
+    const cookies = await getMSiteRequestCookies();
     
     // 1. 计算理论全局索引及M站基准页
     // WAP 站每页20条，M 站每页30条
@@ -196,6 +219,13 @@ export const findMSitePostId = async (
         }
         
         const pageHtml = await response.text();
+        
+        // 被动探测：检查响应中是否处于登录状态
+        if (!isMSiteResponseLoggedIn(pageHtml)) {
+          console.log('[MMapper] M站Cookie已过期（响应中无注销链接），清除本地缓存');
+          await handleMSiteCookieExpired();
+          return null;
+        }
         
         // 3. 提取该页所有帖子链接和标题
         // 匹配格式: <a href="/article/BoardName/123456">标题内容</a>
@@ -275,7 +305,7 @@ export const findMSitePostIdByTitle = async (
   if (!boardName || !targetTitle) return null;
   
   try {
-    const cookies = await getCookies();
+    const cookies = await getMSiteRequestCookies();
     const targetClean = cleanHtml(targetTitle, {collapseWhitespace: true});
     
     console.log(`[MMapper] 按标题搜索: ${boardName}`);
@@ -305,6 +335,13 @@ export const findMSitePostIdByTitle = async (
         if (!response.ok) continue;
         
         const pageHtml = await response.text();
+        
+        // 被动探测：检查响应中是否处于登录状态
+        if (!isMSiteResponseLoggedIn(pageHtml)) {
+          console.log('[MMapper] M站Cookie已过期（响应中无注销链接），清除本地缓存');
+          await handleMSiteCookieExpired();
+          return null;
+        }
         
         const pattern = new RegExp(
           `<a href="/article/${boardName}/(\\d+)"[^>]*>([\\s\\S]*?)</a>`,
@@ -369,16 +406,59 @@ export const findMSitePostIdByTitle = async (
 export const hasImageAttachmentWithoutCloudUrl = (attachments: any[]): boolean => {
   if (!attachments || attachments.length === 0) return false;
   
-  return attachments.some((att: any) => {
+  const result = attachments.some((att: any) => {
     const isImage = isImageAttachment(att);
     const hasCloudUrl = att.k3sUrl || att.ks3Url;
+    console.log(`[hasImageAttachmentWithoutCloudUrl] 附件判断: type=${att.type}, name=${att.name}, isImage=${isImage}, k3sUrl=${att.k3sUrl}, ks3Url=${att.ks3Url}, hasCloudUrl=${!!hasCloudUrl}, cdnUrl=${att.cdnUrl}`);
     return isImage && !hasCloudUrl;
   });
+  console.log(`[hasImageAttachmentWithoutCloudUrl] 最终结果: ${result}, 附件数量: ${attachments.length}`);
+  return result;
+};
+
+// ===== M站帖子短ID 持久缓存 (AsyncStorage) =====
+const MSITE_POST_ID_CACHE_KEY = '@msite_post_id_cache';
+const MSITE_POST_ID_CACHE_MAX_SIZE = 10000; // 缓存最大条目数
+
+/**
+ * 从持久缓存中获取 topicId 对应的 mSitePostId
+ */
+const getMSitePostIdFromCache = async (topicId: string): Promise<string | null> => {
+  try {
+    const raw = await AsyncStorage.getItem(MSITE_POST_ID_CACHE_KEY);
+    if (!raw) return null;
+    const cache: Record<string, string> = JSON.parse(raw);
+    return cache[topicId] || null;
+  } catch {
+    return null;
+  }
 };
 
 /**
- * 为帖子获取M站短ID（用于后续获取静态附件URL）
+ * 将 topicId → mSitePostId 写入持久缓存
+ */
+const saveMSitePostIdToCache = async (topicId: string, mSitePostId: string): Promise<void> => {
+  try {
+    const raw = await AsyncStorage.getItem(MSITE_POST_ID_CACHE_KEY);
+    let cache: Record<string, string> = raw ? JSON.parse(raw) : {};
+    // 限制缓存条目数量，超过上限时删除最早的100条
+    const keys = Object.keys(cache);
+    if (keys.length > MSITE_POST_ID_CACHE_MAX_SIZE) {
+      const toRemove = keys.slice(0, 100);
+      toRemove.forEach(k => delete cache[k]);
+    }
+    cache[topicId] = mSitePostId;
+    await AsyncStorage.setItem(MSITE_POST_ID_CACHE_KEY, JSON.stringify(cache));
+  } catch (err: any) {
+    console.log('[MSiteIdCache] 写入缓存失败:', err.message || err);
+  }
+};
+
+/**
+ * 为帖子获取M站短ID
+ * 通过精确偏移或标题搜索在M站找到对应帖子的短ID
  * 只在附件缺少云存储URL时才会尝试获取
+ * 获取成功后自动写入持久缓存
  * 
  * @param params 参数对象
  * @param params.attachments 附件数组
@@ -391,8 +471,7 @@ export const hasImageAttachmentWithoutCloudUrl = (attachments: any[]): boolean =
  * @param params.isTop 是否置顶帖（可选）
  * @param params.maxSearchPages 最大搜索页数（默认2）
  * @returns M站短ID，如果未找到则返回null
- */
-export const getMSitePostIdForTopic = async (params: {
+ */export const getMSitePostIdForTopic = async (params: {
   attachments: any[];
   boardName: string;
   topicTitle: string;
@@ -424,6 +503,15 @@ export const getMSitePostIdForTopic = async (params: {
     return null;
   }
   
+  // 优先从持久缓存获取M站短ID
+  if (topicId) {
+    const cachedId = await getMSitePostIdFromCache(topicId);
+    if (cachedId) {
+      console.log(`[${logTag}] 帖子 ${topicId} 使用M站短ID: ${cachedId} (从缓存获取)`);
+      return cachedId;
+    }
+  }
+  
   console.log(`[${logTag}] 帖子 ${topicId} 检测到图片附件缺少云存储URL，尝试获取M站短ID...`);
   
   try {
@@ -441,6 +529,10 @@ export const getMSitePostIdForTopic = async (params: {
     
     if (mSitePostId) {
       console.log(`[${logTag}] 帖子 ${topicId} 找到M站短ID: ${mSitePostId}`);
+      // 写入持久缓存
+      if (topicId) {
+        saveMSitePostIdToCache(topicId, mSitePostId);
+      }
     } else {
       console.log(`[${logTag}] 帖子 ${topicId} 未找到M站短ID`);
     }
@@ -484,19 +576,35 @@ export const getStaticAttachmentUrlsForTopic = async (params: {
   } = params;
   
   // 检查是否需要获取静态URL
+  console.log(`[${logTag}] getStaticAttachmentUrlsForTopic 进入, topicId=${topicId}, boardName=${boardName}, topicTitle=${topicTitle}, attachments数量=${attachments.length}`);
   if (!hasImageAttachmentWithoutCloudUrl(attachments)) {
+    console.log(`[${logTag}] 帖子 ${topicId} hasImageAttachmentWithoutCloudUrl返回false，跳过获取静态URL`);
     return [];
   }
   
   if (!boardName || !topicTitle) {
+    console.log(`[${logTag}] 帖子 ${topicId} boardName或topicTitle为空，跳过获取静态URL`);
     return [];
   }
   
   console.log(`[${logTag}] 帖子 ${topicId} 检测到图片附件缺少云存储URL，尝试获取M站静态URL...`);
   
   try {
-    // 先获取M站短ID
-    const mSitePostId = await findMSitePostIdByTitle(boardName, topicTitle, maxSearchPages);
+    // 优先从持久缓存获取M站短ID，缓存没有则通过标题搜索
+    let mSitePostId: string | null = null;
+    if (topicId) {
+      mSitePostId = await getMSitePostIdFromCache(topicId);
+      if (mSitePostId) {
+        console.log(`[${logTag}] 帖子 ${topicId} 使用M站短ID: ${mSitePostId} (从缓存获取)`);
+      }
+    }
+    if (!mSitePostId) {
+      mSitePostId = await findMSitePostIdByTitle(boardName, topicTitle, maxSearchPages);
+      // 写入持久缓存
+      if (mSitePostId && topicId) {
+        saveMSitePostIdToCache(topicId, mSitePostId);
+      }
+    }
     
     if (!mSitePostId) {
       console.log(`[${logTag}] 帖子 ${topicId} 未找到M站短ID，无法获取静态URL`);
@@ -1128,7 +1236,6 @@ export const getPostDetail = async (
   _board: string,
   topicId: string, // 现在传入的是 topicId
   _page: number = 1,
-  existingMSitePostId?: string | null, // 可选的M站短ID，如果传入则直接使用，避免重复查找
 ): Promise<any> => {
   try {
     const cookies = await getCookies();
@@ -1176,21 +1283,26 @@ export const getPostDetail = async (
       if (hasEmptyCloudUrl && rawAttachments.length > 0) {
         const topicTitle = topic.subject?.trim() || '';
         
-        // 优先使用传入的M站短ID，避免重复查找
-        let mSitePostId = existingMSitePostId || null;
-        if (!mSitePostId && boardNameForFetch && topicTitle) {
-          // 没有传入则使用公共函数查找
+        // 优先从持久缓存获取M站短ID
+        let mSitePostId = await getMSitePostIdFromCache(topicId);
+        if (mSitePostId) {
+          console.log('[PostDetail] 使用M站短ID:', mSitePostId, '(从缓存获取)');
+        } else if (boardNameForFetch && topicTitle) {
+          // 缓存没有则通过网络查找
           mSitePostId = await getMSitePostIdForTopic({
             attachments: rawAttachments,
             boardName: boardNameForFetch,
             topicTitle: topicTitle,
             logTag: 'PostDetail',
+            topicId: topicId,
             maxSearchPages: 3,
           });
         }
         
         if (mSitePostId) {
-          console.log('[PostDetail] 使用M站短ID:', mSitePostId, existingMSitePostId ? '(从列表传入)' : '(新查找)');
+          if (!await getMSitePostIdFromCache(topicId)) {
+            console.log('[PostDetail] 使用M站短ID:', mSitePostId, '(新查找)');
+          }
           try {
             staticUrls = await fetchStaticAttachmentUrls(boardNameForFetch, mSitePostId);
             console.log('[PostDetail] 获取到静态URL数量:', staticUrls.length);

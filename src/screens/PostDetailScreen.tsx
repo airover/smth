@@ -71,7 +71,7 @@ const LIKE_CAPTCHA_ID = '3a6990c763f90e33fa62a97faad3a05f';
 const PostDetailScreen: React.FC = () => {
   const route = useRoute();
   const navigation = useNavigation<any>();
-  const {board, postId, mSitePostId} = route.params as {board: string; postId: string; mSitePostId?: string};
+  const {board, postId} = route.params as {board: string; postId: string};
   const {settings} = useSettings();
   const theme = getTheme(settings.themeMode);
   const fontSizes = getFontSizes(settings.fontSize);
@@ -294,7 +294,7 @@ const PostDetailScreen: React.FC = () => {
           
           try {
             const [apiDetailData, apiRepliesData] = await Promise.all([
-              detailData ? Promise.resolve(detailData) : getPostDetail(board, postId, 1, mSitePostId),
+              detailData ? Promise.resolve(detailData) : getPostDetail(board, postId, 1),
               repliesData ? Promise.resolve(repliesData) : getTopicReplies(postId, 1)
             ]);
             

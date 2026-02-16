@@ -37,6 +37,7 @@ import {
 } from 'react-native';
 import {getCacheStats, clearCache} from '../services/cacheManager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {useAuth} from '../context/AuthContext';
 import {
   SPACING,
   FONT_SIZE,
@@ -45,6 +46,7 @@ import {
 } from '../utils/responsive';
 
 const CacheManagementScreen: React.FC = () => {
+  const {logout} = useAuth();
   const [cacheStats, setCacheStats] = useState<{
     categories: {name: string; count: number; size: string}[];
     total: number;
@@ -173,6 +175,8 @@ const CacheManagementScreen: React.FC = () => {
               clearCache();
               // 2. 清除所有持久化数据（包括登录信息）
               await AsyncStorage.clear();
+              // 3. 同步更新 AuthContext 登录状态，使依赖 isLoggedIn 的界面正确响应
+              await logout();
               loadStats();
               Alert.alert('成功', '所有数据已清除，请重新登录');
             } catch {

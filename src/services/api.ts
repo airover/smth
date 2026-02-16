@@ -14,11 +14,13 @@ import {
   buildDeleteHeaders,
   buildLoginHeaders,
 } from '../utils/requestUtils';
-import {getCookies, storeCookies} from './auth';
+import {getCookies, storeCookies, storeMSiteCookies, getMSiteCookies, extractAndStoreMSiteCookiesFromJar, clearMSiteCookieJar} from './auth';
+import {buildHeaders} from '../utils/requestUtils';
 import {setCache, getCacheWithTimestamp, clearCache as clearCacheManager} from './cacheManager';
 
 const BASE_URL = 'https://wap.newsmth.net';
 const WAP_BASE_URL = 'https://wap.newsmth.net';
+const M_SITE_BASE_URL = 'https://m.newsmth.net';
 
 // 搜索相关常量
 const DEFAULT_PAGE = 1; // 默认页码
@@ -235,7 +237,257 @@ export const login = async (
   }
 };
 
+/**
+ * 登录 M 站 (m.newsmth.net)
+ * M 站使用 KBS 原生认证系统，cookie 为 main[UTMPUSERID]、main[UTMPKEY]、main[UTMPNUM]
+ */
+export const loginMSite = async (
+  username: string,
+  password: string,
+  captchaParams?: {
+    captcha_id?: string;
+    lot_number?: string;
+    captcha_output?: string;
+    pass_token?: string;
+    gen_time?: string;
+  }
+): Promise<{success: boolean; message?: string}> => {
+  try {
+    console.log('[M站登录] 开始登录 M 站...');
 
+    // 构造 M 站登录请求的 body
+    // 严格按照浏览器抓包的参数顺序构造：
+    // ticket=&randstr=&lot_number=...&captcha_output=...&pass_token=...&gen_time=...&captcha_id=...&id=...&passwd=...&save=on
+    const formData = new URLSearchParams();
+    
+    // 1. ticket 和 randstr（M 站表单必需的空字段）
+    formData.append('ticket', '');
+    formData.append('randstr', '');
+    
+    // 2. 极验验证码参数
+    if (captchaParams) {
+      if (captchaParams.lot_number) formData.append('lot_number', captchaParams.lot_number);
+      if (captchaParams.captcha_output) formData.append('captcha_output', captchaParams.captcha_output);
+      if (captchaParams.pass_token) formData.append('pass_token', captchaParams.pass_token);
+      if (captchaParams.gen_time) formData.append('gen_time', captchaParams.gen_time);
+      formData.append('captcha_id', captchaParams.captcha_id || 'b01299f3ff24047dc399e650eec51a81');
+      console.log('[M站登录] 已附加极验验证码参数');
+    }
+    
+    // 3. 用户名和密码（M 站参数名：id/passwd）
+    formData.append('id', username);
+    formData.append('passwd', password);
+    formData.append('save', 'on'); // 记住登录状态
+
+    // 构造请求头 - 完全模拟浏览器，不使用 wap 站的 buildHeaders
+    const headers: Record<string, string> = {
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+      'Cache-Control': 'no-cache',
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Pragma': 'no-cache',
+      'Referer': `${M_SITE_BASE_URL}/index`,
+      'Origin': M_SITE_BASE_URL,
+      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1',
+    };
+
+    console.log('[M站登录] 请求体:', formData.toString().replace(/passwd=[^&]+/, 'passwd=***'));
+
+    // M 站登录接口 /user/login
+    // 成功时返回 302 + Set-Cookie，RN 的 fetch 会自动跟随重定向
+    // 
+    // 关键问题：React Native 的 fetch 底层（iOS: NSURLSession, Android: OkHttp）
+    // 会自动处理 Set-Cookie 但不会将其暴露给 JS 层的 response.headers
+    // 所以我们需要两种策略：
+    // 策略1：尝试用 redirect: 'manual' 拦截 302 拿 Set-Cookie（部分 RN 版本支持）
+    // 策略2：让 fetch 自动跟随重定向，通过响应内容判断登录是否成功，
+    //         然后再发一个 GET 请求获取页面来检查是否已登录
+    
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), LOGIN_TIMEOUT);
+
+    // 策略1：先尝试 redirect: manual
+    let response: Response;
+    let usedManualRedirect = false;
+    try {
+      response = await fetch(`${M_SITE_BASE_URL}/user/login`, {
+        method: 'POST',
+        headers,
+        body: formData.toString(),
+        credentials: 'include',
+        redirect: 'manual',
+        signal: controller.signal,
+      } as any);
+      usedManualRedirect = true;
+    } catch (_e) {
+      // 如果 redirect: manual 不被支持，回退到默认行为
+      console.log('[M站登录] redirect:manual 不支持，使用默认重定向');
+      response = await fetch(`${M_SITE_BASE_URL}/user/login`, {
+        method: 'POST',
+        headers,
+        body: formData.toString(),
+        credentials: 'include',
+        signal: controller.signal,
+      } as any);
+    }
+
+    clearTimeout(timeoutId);
+
+    console.log('[M站登录] 响应状态:', response.status);
+    console.log('[M站登录] 响应URL:', response.url);
+
+    // 尝试从响应头获取 Set-Cookie
+    const setCookie = response.headers.get('set-cookie');
+    
+    // 打印所有响应头用于调试
+    const allHeaderEntries: string[] = [];
+    response.headers.forEach((value: string, key: string) => {
+      allHeaderEntries.push(`${key}: ${value.substring(0, 100)}`);
+    });
+    console.log('[M站登录] 响应头:', allHeaderEntries.join(' | '));
+
+    if (setCookie) {
+      console.log('[M站登录] 从响应头获取到 Set-Cookie:', setCookie.substring(0, 200));
+      await storeMSiteCookies(setCookie);
+      return { success: true, message: '登录成功' };
+    }
+
+    // 如果是 302/301 重定向（redirect: manual 生效了），跟随重定向
+    if (usedManualRedirect && (response.status === 302 || response.status === 301)) {
+      const location = response.headers.get('location');
+      console.log('[M站登录] 302 重定向到:', location);
+      // 302 说明登录请求本身可能成功了（服务器接受了凭据），
+      // 但 RN 的 fetch 可能没有暴露 Set-Cookie
+      // 尝试跟随重定向，看 cookie 是否已被系统 cookie jar 保存
+      if (location) {
+        const redirectUrl = location.startsWith('http') ? location : `${M_SITE_BASE_URL}${location}`;
+        const redirectResponse = await fetch(redirectUrl, {
+          method: 'GET',
+          headers: {
+            'User-Agent': headers['User-Agent'],
+            'Referer': `${M_SITE_BASE_URL}/user/login`,
+          },
+          credentials: 'include',
+        } as any);
+        const redirectSetCookie = redirectResponse.headers.get('set-cookie');
+        if (redirectSetCookie) {
+          console.log('[M站登录] 从重定向响应获取到 Set-Cookie');
+          await storeMSiteCookies(redirectSetCookie);
+          return { success: true, message: '登录成功' };
+        }
+        // 检查重定向后的页面内容来判断是否登录成功
+        const redirectText = await redirectResponse.text();
+        if (redirectText.includes('/user/logout') || redirectText.includes('注销')) {
+          console.log('[M站登录] 302重定向后页面包含注销链接，通过 CookieManager 提取 cookie...');
+          // 使用 CookieManager 从系统 cookie jar 中提取 cookie 并持久化
+          const extracted302 = await extractAndStoreMSiteCookiesFromJar();
+          if (extracted302) {
+            return { success: true, message: '登录成功' };
+          }
+          return { success: false, message: '登录成功但无法从 cookie jar 提取 Cookie' };
+        }
+      }
+      return { success: false, message: '登录失败，服务器重定向但未返回 Cookie' };
+    }
+    
+    // 如果是 200（自动跟随重定向后的最终页面，或登录失败返回的登录页）
+    if (response.status === 200) {
+      const text = await response.text();
+      console.log('[M站登录] 响应体预览:', text.substring(0, 500));
+      
+      // 检查是否有错误提示
+      if (text.includes('验证码错误') || text.includes('密码错误') || text.includes('用户不存在')) {
+        console.log('[M站登录] 检测到错误提示');
+        return { success: false, message: '登录失败：验证码或密码错误' };
+      }
+      
+      // 检查是否在登录页面（说明登录失败）
+      if (text.includes('/user/login') && text.includes('id="loginForm"')) {
+        console.log('[M站登录] 仍在登录页面，登录失败');
+        return { success: false, message: '登录失败，请检查验证码是否有效' };
+      }
+      
+      // 如果页面包含注销链接，说明登录成功（自动重定向后到了主页）
+      if (text.includes('/user/logout') || text.includes('注销')) {
+        console.log('[M站登录] 检测到登录成功（页面含注销链接），通过 CookieManager 提取 cookie...');
+        
+        // 使用 CookieManager 从系统 cookie jar 中提取 cookie 并持久化
+        const extracted = await extractAndStoreMSiteCookiesFromJar();
+        if (extracted) {
+          console.log('[M站登录] ✅ 通过 CookieManager 成功提取并存储 M 站 cookie');
+          return { success: true, message: '登录成功' };
+        } else {
+          // CookieManager 无法提取到 cookie，但登录确实成功了
+          // 乐观处理：标记登录成功，后续通过 credentials: include 自动附带
+          console.log('[M站登录] ⚠️ CookieManager 未提取到 cookie，使用系统 cookie jar 模式');
+          return { success: true, message: '登录成功' };
+        }
+      }
+      
+      return { success: false, message: '登录失败，请重试' };
+    }
+    
+    // 处理其他状态码（包括 500 等服务器错误）
+    console.log('[M站登录] 未预期的响应状态:', response.status);
+    try {
+      const errorText = await response.text();
+      console.log('[M站登录] 错误响应体预览:', errorText.substring(0, 500));
+      
+      // 某些情况下服务器返回 500 但验证码实际已过期
+      if (errorText.includes('验证码') || errorText.includes('captcha')) {
+        return { success: false, message: '验证码已过期或无效，请重新验证' };
+      }
+    } catch (_e) {
+      // 忽略读取响应体的错误
+    }
+    return { success: false, message: `登录失败（服务器错误 ${response.status}），请重新验证后重试` };
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      console.error('[M站登录] 请求超时');
+      return { success: false, message: '请求超时' };
+    } else {
+      console.error('[M站登录] 登录失败:', error.message || error);
+      return { success: false, message: error.message || '登录失败' };
+    }
+  }
+};
+
+/**
+ * 登出 M 站
+ */
+export const logoutMSite = async (): Promise<void> => {
+  try {
+    await AsyncStorage.removeItem('mSiteCookies');
+    // 兼容清除旧版本 key
+    await AsyncStorage.removeItem('mSiteCookiesExpiry');
+    await AsyncStorage.removeItem('mSiteCookiesTimestamp');
+    await AsyncStorage.removeItem('mSiteLoggedIn');
+    // 清除系统 cookie jar 中的 M 站 cookie
+    await clearMSiteCookieJar();
+    console.log('[M站登出] 已清除 M 站 Cookie、登录标记和系统 cookie jar');
+  } catch (error) {
+    console.error('[M站登出] 失败:', error);
+  }
+};
+
+/**
+ * 检查 M 站登录状态
+ * 统一以 cookie 为准：只有真正有可用的 M 站 cookie 时才认为已登录
+ * Cookie 有效性通过被动探测（请求 M 站时检查响应）来判断
+ */
+export const checkMSiteLoginStatus = async (): Promise<boolean> => {
+  try {
+    const cookies = await getMSiteCookies();
+    const isLoggedIn = !!cookies;
+    if (!isLoggedIn) {
+      console.log('[M站状态] 未登录（无本地Cookie）');
+    }
+    return isLoggedIn;
+  } catch (error) {
+    console.error('[M站状态] 检查失败:', error);
+    return false;
+  }
+};
 
 // 重新导出数据获取函数（使用新的实现）
 export {getTopTen, getHotPosts, getHotBoards, getBoards, getSubBoards, getBoardPosts, getPostDetail, getTopicReplies, getFavoriteBoards, getMessages, getConversationMessages, markMessageAsRead, sendMessage, addFriend, removeFriend, checkIsHerBlack, addBlack, removeBlack, getFriendsList, getFansList, getBlackList, fetchUserInfo} from './dataFetcher';
@@ -736,6 +988,11 @@ export const logout = async () => {
   await AsyncStorage.removeItem('cookies');
   await AsyncStorage.removeItem('username');
   await AsyncStorage.removeItem('isLoggedIn');
+  
+  // 清除 M 站相关数据
+  await AsyncStorage.removeItem('mSiteCookies');
+  await AsyncStorage.removeItem('mSiteLoggedIn');
+  await clearMSiteCookieJar();
   
   // 清除所有内存缓存（使用已导入的 clearCacheManager）
   clearCacheManager();
@@ -1455,4 +1712,3 @@ export const changePassword = async (
     };
   }
 };
-

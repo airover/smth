@@ -18,6 +18,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // import {logout} from '../services/api'; // 移除直接导入
 import {useSettings} from '../context/SettingsContext';
 import {useAuth} from '../context/AuthContext'; // 导入 useAuth
+import {loginMSite, logoutMSite, checkMSiteLoginStatus} from '../services/api';
+import {getSavedCredentials} from '../utils/storage';
+import CaptchaScreen from './CaptchaScreen';
 import {useTheme} from '../components/ThemedComponents';
 import {
   SPACING,
@@ -35,10 +38,19 @@ const SettingsDetailScreen: React.FC = () => {
   const {settings, updateSettings} = useSettings();
   const [showFontSizeModal, setShowFontSizeModal] = useState(false);
   const [showThemeModal, setShowThemeModal] = useState(false);
+  const [isMSiteLoggedIn, setIsMSiteLoggedIn] = useState(false);
+  const [showCaptcha, setShowCaptcha] = useState(false);
+  const [savedPassword, setSavedPassword] = useState('');
 
   useEffect(() => {
     loadUserStatus();
-  }, []);
+    checkMSiteStatus();
+  }, [isLoggedIn]);
+
+  const checkMSiteStatus = async () => {
+    const status = await checkMSiteLoginStatus();
+    setIsMSiteLoggedIn(status);
+  };
 
   const loadUserStatus = async () => {
     try {
@@ -64,14 +76,75 @@ const SettingsDetailScreen: React.FC = () => {
         text: '确定',
         style: 'destructive',
         onPress: async () => {
+          await logoutMSite(); // 同时清除 M 站登录状态
           await logout(); // 使用 AuthContext 的 logout
           setUsername('');
-          // setIsLoggedIn(false); // 不需要手动设置
+          setIsMSiteLoggedIn(false); // 重置 M 站登录开关状态
           // 不需要手动导航，App.tsx 会自动切换到登录界面
           // 这样重新登录后会回到首页而不是当前页面
         },
       },
     ]);
+  };
+
+  const handleMSiteToggle = async (value: boolean) => {
+    if (value) {
+      // 开启 M 站登录
+      const credentials = await getSavedCredentials();
+      if (credentials.password) {
+        setSavedPassword(credentials.password);
+        setShowCaptcha(true);
+      } else {
+        Alert.alert('提示', '未找到保存的密码，请重新登录主站并勾选"记住密码"');
+      }
+    } else {
+      // 关闭 M 站登录
+      await logoutMSite();
+      setIsMSiteLoggedIn(false);
+      Alert.alert('提示', '已断开 M 站连接');
+    }
+  };
+
+  const handleCaptchaSuccess = async (ticket: string, randstr: string) => {
+    setShowCaptcha(false);
+    
+    // 构造极验参数
+    // ticket 格式: lot_number|captcha_output|pass_token|gen_time
+    const parts = ticket.split('|');
+    let captchaParams;
+    
+    if (parts.length >= 4) {
+      captchaParams = {
+        captcha_id: 'b01299f3ff24047dc399e650eec51a81',
+        lot_number: parts[0],
+        captcha_output: parts[1],
+        pass_token: parts[2],
+        gen_time: parts[3],
+      };
+    } else {
+      // 兼容处理
+      captchaParams = {
+        captcha_id: 'b01299f3ff24047dc399e650eec51a81',
+        lot_number: ticket,
+        captcha_output: randstr,
+        pass_token: ticket,
+        gen_time: Math.floor(Date.now() / 1000).toString(),
+      };
+    }
+
+    try {
+      const result = await loginMSite(username, savedPassword, captchaParams);
+      if (result.success) {
+        setIsMSiteLoggedIn(true);
+        // 登录成功，只更新开关状态，不弹窗不跳转
+        console.log('[M站登录] 登录成功，开关已开启');
+      } else {
+        Alert.alert('失败', result.message || 'M 站登录失败');
+      }
+    } catch (error) {
+      console.error('M 站登录异常:', error);
+      Alert.alert('错误', 'M 站登录发生异常');
+    }
   };
 
   const handleFeedback = async () => {
@@ -324,6 +397,27 @@ const SettingsDetailScreen: React.FC = () => {
             <View style={styles.section}>
               <Text style={[styles.sectionTitle, {color: theme.secondaryText}]}>账号管理</Text>
               <View style={[styles.card, {backgroundColor: theme.cardBackground}]}>
+                <View style={styles.menuItem}>
+                  <View style={styles.menuItemLeft}>
+                    <Text style={styles.menuIcon}>🔗</Text>
+                    <View style={styles.switchItemContent}>
+                  <Text style={[styles.menuItemText, {color: theme.text}]}>登录 M 站</Text>
+                      <Text style={[styles.switchItemDescription, {color: theme.secondaryText}]}>
+                        {isMSiteLoggedIn 
+                          ? '已登录，可改善帖子图片加载' 
+                          : '开启后可改善部分帖子图片加载失败的情况'}
+                      </Text>
+                    </View>
+                  </View>
+                  <Switch
+                    value={isMSiteLoggedIn}
+                    onValueChange={handleMSiteToggle}
+                    trackColor={{false: theme.border, true: '#34C759'}}
+                    thumbColor="#fff"
+                    ios_backgroundColor={theme.border}
+                  />
+                </View>
+                <View style={[styles.divider, {backgroundColor: theme.border}]} />
                 <TouchableOpacity 
                   style={styles.menuItem}
                   onPress={() => navigation.navigate('ChangePassword')}>
@@ -392,6 +486,25 @@ const SettingsDetailScreen: React.FC = () => {
           await updateSettings({themeMode: value});
         },
       )}
+
+      {/* 验证码模态框 */}
+      <Modal
+        visible={showCaptcha}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowCaptcha(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { height: '80%', width: '90%', maxWidth: '90%' }]}>
+            <CaptchaScreen
+              username={username}
+              password={savedPassword}
+              onCaptchaSuccess={handleCaptchaSuccess}
+              onCancel={() => setShowCaptcha(false)}
+            />
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -501,7 +614,7 @@ const styles = StyleSheet.create({
   // 模态框样式
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'transparent', // 去掉背景浮层
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -511,6 +624,15 @@ const styles = StyleSheet.create({
     width: '80%',
     maxWidth: scaleModerate(320),
     overflow: 'hidden',
+    // 添加阴影以区分背景
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
   },
   modalHeader: {
     paddingVertical: SPACING.lg,

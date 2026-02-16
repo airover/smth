@@ -869,7 +869,8 @@ const BoardScreen: React.FC = () => {
         // 转换图览数据为频道帖子格式
         const convertedTopics: ChannelTopic[] = await Promise.all((articles || []).map(async (article: AlbumArticle) => {
           // 处理附件URL
-          const processedAttachments = (article.attachments || []).map((att: any) => {
+          const processedAttachments = (article.attachments || []).map((att: any, attIdx: number) => {
+            console.log(`[AlbumPosts] 帖子 ${article.subject} 附件${attIdx} 原始字段:`, JSON.stringify({type: att.type, k3sUrl: att.k3sUrl, ks3Url: att.ks3Url, cdnUrl: att.cdnUrl, url: att.url, name: att.name}));
             // 优先使用 ks3Url，然后是 cdnUrl，最后是 url
             let url = att.ks3Url || att.cdnUrl || att.url || '';
             
@@ -884,10 +885,12 @@ const BoardScreen: React.FC = () => {
               url = `https://wap.newsmth.net/wap/api/attachment/download/${att.id}`;
             }
             
-            return {
+            const processed = {
               ...att,
               cdnUrl: url, // 统一使用cdnUrl字段
             };
+            console.log(`[AlbumPosts] 帖子 ${article.subject} 附件${attIdx} 处理后:`, JSON.stringify({type: processed.type, k3sUrl: processed.k3sUrl, ks3Url: processed.ks3Url, cdnUrl: processed.cdnUrl, name: processed.name}));
+            return processed;
           });
           
           // 处理头像URL：优先使用 k3sUrl/ks3Url，然后 avatarUrl，最后是 avatar
@@ -956,6 +959,7 @@ const BoardScreen: React.FC = () => {
           });
           
           // 如果获取到静态URL，则填充到附件中
+          console.log(`[AlbumPosts] 帖子 ${topic.subject} getStaticAttachmentUrlsForTopic返回: staticUrls数量=${staticUrls.length}, urls=${JSON.stringify(staticUrls)}`);
           let updatedAttachments = topic.attachments || [];
           if (staticUrls.length > 0 && updatedAttachments.length > 0) {
             updatedAttachments = updatedAttachments.map((att: any, index: number) => {
@@ -975,6 +979,10 @@ const BoardScreen: React.FC = () => {
             attachments: updatedAttachments,
           };
         }));
+        // 调试日志：打印第一个帖子最终使用的图片URL
+        if (topicsWithStaticUrls.length > 0 && topicsWithStaticUrls[0].attachments?.length > 0) {
+          console.log(`[AlbumPosts] 第一个帖子最终图片URL:`, topicsWithStaticUrls[0].attachments[0]?.cdnUrl);
+        }
         if (pageNum === 1) {
           setChannelPosts(topicsWithStaticUrls);
           setChannelPage(1);
@@ -1517,7 +1525,6 @@ const BoardScreen: React.FC = () => {
         navigation.navigate('PostDetail', {
           board: item.board,
           postId: item.id,
-          mSitePostId: item.mSitePostId, // 传递M站短ID，用于帖子详情获取静态附件URL
         });
       }}>
       <View style={styles.postHeader}>
@@ -1587,7 +1594,6 @@ const BoardScreen: React.FC = () => {
           navigation.navigate('PostDetail', {
             board: item.board.name,
             postId: item.topicId || item.id,
-            mSitePostId: item.mSitePostId, // 传递M站短ID，用于帖子详情获取静态附件URL
           });
         }}>
         {/* 用户信息 */}

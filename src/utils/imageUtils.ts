@@ -161,7 +161,10 @@ export const extractImagesFromHtml = (html: string): string[] => {
 };
 
 /**
- * 从文章 HTML 中提取静态附件地址（//static.mysmth.net/nForum/att/...）
+ * 从文章 HTML 中提取静态附件地址
+ * 支持两种格式：
+ * 1. static.mysmth.net 格式: //static.mysmth.net/nForum/att/BoardName/PostId/AttId
+ * 2. M 站相对路径格式: /att/BoardName/PostId/AttId（需补全为 https://m.newsmth.net/att/...）
  * @param html HTML 内容
  * @returns 去重后的静态附件地址列表
  */
@@ -169,12 +172,36 @@ export const extractStaticAttachmentUrls = (html: string): string[] => {
   if (!html) return [];
 
   const urls: string[] = [];
-  const linkRegex = /<a[^>]+href="(\/\/static\.mysmth\.net\/nForum\/att\/[^\"#?]+)"/gi;
-  let match;
 
-  while ((match = linkRegex.exec(html)) !== null) {
+  // 格式1: <a> 标签中 href="//static.mysmth.net/nForum/att/..."
+  const staticLinkRegex = /<a[^>]+href="(\/\/static\.mysmth\.net\/nForum\/att\/[^\"#?]+)"/gi;
+  let match;
+  while ((match = staticLinkRegex.exec(html)) !== null) {
     if (match[1]) {
       urls.push(normalizeImageUrl(match[1]));
+    }
+  }
+
+  // 格式2: <a> 标签中 href="/att/BoardName/PostId/AttId"（M 站相对路径）
+  // 提取原图链接（不带 /middle 后缀的）
+  const mSiteLinkRegex = /<a[^>]+href="(\/att\/[^\"#?]+)"/gi;
+  while ((match = mSiteLinkRegex.exec(html)) !== null) {
+    if (match[1]) {
+      // M 站相对路径补全为完整 URL
+      urls.push(`https://m.newsmth.net${match[1]}`);
+    }
+  }
+
+  // 格式3: <img> 标签中 src="/att/BoardName/PostId/AttId/middle"（M 站缩略图）
+  // 如果上面的 <a> 链接没有匹配到，再从 <img> 标签中提取
+  if (urls.length === 0) {
+    const mSiteImgRegex = /<img[^>]+src="(\/att\/[^\"#?]+)"/gi;
+    while ((match = mSiteImgRegex.exec(html)) !== null) {
+      if (match[1]) {
+        // 去掉 /middle 后缀以获取原图 URL
+        const imgPath = match[1].replace(/\/middle$/, '');
+        urls.push(`https://m.newsmth.net${imgPath}`);
+      }
     }
   }
 
