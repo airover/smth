@@ -27,6 +27,7 @@ import {
   scaleModerate,
   responsiveSize,
 } from '../utils/responsive';
+import {ThemedHeaderButton, useFloatingHeader} from '../components/ThemeHeader';
 
 interface RouteParams {
   boardId: string; // 版面ID (hash格式)
@@ -66,20 +67,20 @@ const CreatePostScreen: React.FC = () => {
   const inputAccessoryViewID = useRef(`createPostKeyboardAccessory_${Date.now()}`).current;
 
   // 设置导航栏
+  const setHeaderOptions = useFloatingHeader();
   useEffect(() => {
-    navigation.setOptions({
+    setHeaderOptions({
       title: isEditMode ? '编辑' : (isReplyMode ? '回复' : '发帖'),
       headerRight: () => (
-        <TouchableOpacity
+        <ThemedHeaderButton
           onPress={handleSubmit}
-          disabled={submitting}
-          style={styles.headerButton}>
+          style={submitting ? {opacity: 0.5} : undefined}>
           {submitting ? (
             <ActivityIndicator size="small" color="#007AFF" />
           ) : (
             <Text style={styles.submitText}>{isEditMode ? '保存' : '发布'}</Text>
           )}
-        </TouchableOpacity>
+        </ThemedHeaderButton>
       ),
     });
   }, [navigation, isReplyMode, submitting, title, content, captchaVerified, captchaTicket, captchaRandstr, selectedImages, uploadToken, uploading]);

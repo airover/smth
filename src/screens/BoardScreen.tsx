@@ -14,6 +14,7 @@ import {
   TouchableWithoutFeedback,
   RefreshControl,
   PanResponder,
+  ImageBackground,
   // Image - 预留用于将来图片功能
   Alert,
 } from 'react-native';
@@ -27,7 +28,9 @@ import {formatRelativeTime} from '../utils/timeFormat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useSettings} from '../context/SettingsContext';
 import {useTheme} from '../components/ThemedComponents';
+import {ThemedHeaderButton, useFloatingHeader} from '../components/ThemeHeader';
 import {useReadPosts} from '../context/ReadPostsContext';
+
 
 const {width: SCREEN_WIDTH} = Dimensions.get('window');
 const DRAWER_WIDTH = SCREEN_WIDTH * 0.8;
@@ -134,11 +137,11 @@ const BoardScreen: React.FC = () => {
   // 基于主题的动态样式 — 确保真机上主题切换时样式完全重建
   const themedStyles = useMemo(() => ({
     searchBarContainer: {
-      backgroundColor: theme.cardBackground,
+      backgroundColor: 'transparent',
       paddingHorizontal: 16,
       paddingVertical: 8,
       borderBottomWidth: 1,
-      borderBottomColor: theme.border,
+      borderBottomColor: 'transparent',
     } as const,
     searchInput: {
       height: 36,
@@ -153,9 +156,9 @@ const BoardScreen: React.FC = () => {
       color: theme.secondaryText,
     },
     channelsContainer: {
-      backgroundColor: theme.cardBackground,
+      backgroundColor: 'transparent',
       borderBottomWidth: 1,
-      borderBottomColor: theme.border,
+      borderBottomColor: 'transparent',
       paddingVertical: 8,
     },
     channelItem: {
@@ -566,13 +569,14 @@ const BoardScreen: React.FC = () => {
   ).current;
 
   // 动态更新导航栏
+  const setHeaderOptions = useFloatingHeader();
   useEffect(() => {
-    navigation.setOptions({
+    setHeaderOptions({
       headerTitle: () => {
         if (selectedBoard) {
           return (
             <View style={styles.headerTitleContainer}>
-          <Text style={[styles.headerTitleText, {color: theme.text}]} numberOfLines={1}>
+          <Text style={[styles.headerTitleText, {color: theme.headerText}]} numberOfLines={1}>
                 {selectedBoard.chineseName || selectedBoard.name}
               </Text>
             </View>
@@ -581,30 +585,28 @@ const BoardScreen: React.FC = () => {
           // 当选中频道或显示频道列表时，标题显示"频道"
           return (
             <View style={styles.headerTitleContainer}>
-              <Text style={[styles.headerTitleText, {color: theme.text}]}>频道</Text>
+              <Text style={[styles.headerTitleText, {color: theme.headerText}]}>频道</Text>
             </View>
           );
         } else {
           return (
             <View style={styles.headerTitleContainer}>
-              <Text style={[styles.headerTitleText, {color: theme.text}]}>版面</Text>
+              <Text style={[styles.headerTitleText, {color: theme.headerText}]}>版面</Text>
             </View>
           );
         }
       },
       headerLeft: () => (
-        <TouchableOpacity
-          style={{paddingLeft: 16}}
+        <ThemedHeaderButton
           onPress={() => setShowBoardList(true)}>
-          <Text style={{fontSize: 24, color: theme.text}}>☰</Text>
-        </TouchableOpacity>
+          <Text style={{fontSize: 24, color: theme.headerBackgroundImage ? '#333' : theme.headerTint}}>☰</Text>
+        </ThemedHeaderButton>
       ),
       headerRight: () => (
-        <TouchableOpacity
-          style={{paddingRight: 16}}
+        <ThemedHeaderButton
           onPress={() => navigation.navigate('BoardList', {favorites: true})}>
-          <Text style={{fontSize: 24, color: theme.primary}}>⭐</Text>
-        </TouchableOpacity>
+          <Text style={{fontSize: 24, color: theme.headerBackgroundImage ? '#333' : theme.headerTint}}>⭐</Text>
+        </ThemedHeaderButton>
       ),
     });
   }, [selectedBoard, selectedChannel, showChannels, navigation, theme]);

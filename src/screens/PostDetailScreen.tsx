@@ -34,6 +34,7 @@ import {cacheManager} from '../services/cacheManager';
 import {saveBrowsingHistory} from './BrowsingHistoryScreen';
 import {useSettings} from '../context/SettingsContext';
 import {getTheme, getFontSizes} from '../utils/theme';
+import {ThemedHeaderButton, useFloatingHeader} from '../components/ThemeHeader';
 import {normalizeImageUrl, isImageAttachment, isVideoAttachment} from '../utils/imageUtils';
 import {
   SPACING,
@@ -173,11 +174,11 @@ const PostDetailScreen: React.FC = () => {
   }, []);
 
   // 设置导航栏右侧按钮
+  const setHeaderOptions = useFloatingHeader();
   useEffect(() => {
-    navigation.setOptions({
+    setHeaderOptions({
       headerRight: () => (
-        <TouchableOpacity
-          style={styles.headerMenuButton}
+        <ThemedHeaderButton
           onPress={() => {
             // 构建菜单选项
             const options: string[] = [];
@@ -247,10 +248,9 @@ const PostDetailScreen: React.FC = () => {
               Alert.alert('更多操作', '', buttons);
             }
           }}
-          activeOpacity={0.7}
         >
-          <Text style={styles.headerMenuButtonText}>⋮</Text>
-        </TouchableOpacity>
+          <Text style={[styles.headerMenuButtonText, theme.headerBackgroundImage ? {color: '#333'} : null]}>⋮</Text>
+        </ThemedHeaderButton>
       ),
     });
   }, [navigation, currentUsername, post]);

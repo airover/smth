@@ -88,18 +88,20 @@ const AppContent = () => {
   // 根据用户主题设置和系统主题来决定导航容器的主题
   const colorScheme = useColorScheme();
   const isDarkMode = settings.themeMode === 'dark' || (settings.themeMode === 'auto' && colorScheme === 'dark');
+  const isSpringMode = settings.themeMode === 'spring';
   const appTheme = getTheme(settings.themeMode === 'auto' ? (colorScheme === 'dark' ? 'dark' : 'light') : settings.themeMode);
   const navTheme = useMemo(() => ({
-    ...(isDarkMode ? DarkTheme : DefaultTheme),
+    ...(isDarkMode || isSpringMode ? DarkTheme : DefaultTheme),
     colors: {
-      ...(isDarkMode ? DarkTheme.colors : DefaultTheme.colors),
-      background: appTheme.background,
+      ...(isDarkMode || isSpringMode ? DarkTheme.colors : DefaultTheme.colors),
+      // 春节主题时，让 Screen 的 Background 也使用红色，避免导航栏和内容区之间露出暖白色间隙
+      background: isSpringMode ? appTheme.headerBackground : appTheme.background,
       card: appTheme.headerBackground,
-      text: appTheme.text,
+      text: appTheme.headerText,
       border: appTheme.border,
-      primary: appTheme.primary,
+      primary: appTheme.headerTint,
     },
-  }), [isDarkMode, appTheme]);
+  }), [isDarkMode, isSpringMode, appTheme]);
 
   return (
     <View style={[styles.container, {backgroundColor: appTheme.background}]}>

@@ -202,6 +202,8 @@ const SettingsDetailScreen: React.FC = () => {
         return '夜间模式';
       case 'auto':
         return '跟随系统';
+      case 'spring':
+        return '🐴 马年新春';
       default:
         return '日间模式';
     }
@@ -481,6 +483,7 @@ const SettingsDetailScreen: React.FC = () => {
           {label: '日间模式', value: 'light', current: settings.themeMode === 'light'},
           {label: '夜间模式', value: 'dark', current: settings.themeMode === 'dark'},
           {label: '跟随系统', value: 'auto', current: settings.themeMode === 'auto'},
+          {label: '🐴 马年新春', value: 'spring', current: settings.themeMode === 'spring'},
         ],
         async (value) => {
           await updateSettings({themeMode: value});

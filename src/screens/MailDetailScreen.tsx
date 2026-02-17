@@ -19,6 +19,7 @@ import {formatRelativeTime} from '../utils/timeFormat';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {getConversationMessages, markMessageAsRead, sendMessage} from '../services/api';
 import {useTheme} from '../components/ThemedComponents';
+import {useFloatingHeader} from '../components/ThemeHeader';
 import {
   SPACING,
   FONT_SIZE,
@@ -277,9 +278,10 @@ const MailDetailScreen: React.FC = () => {
   }, [loadMessages, speakerId, mail.unread]);
 
   // 设置导航标题
+  const setHeaderOptions = useFloatingHeader();
   useEffect(() => {
     if (speaker?.nick || speaker?.name || mail.fromNickname || mail.from) {
-      navigation.setOptions({
+      setHeaderOptions({
         title: speaker?.nick || speaker?.name || mail.fromNickname || mail.from,
       });
     }
