@@ -34,7 +34,6 @@ export const ReadPostsProvider: React.FC<{children: React.ReactNode}> = ({childr
       if (jsonValue != null) {
         const ids: string[] = JSON.parse(jsonValue);
         setReadPosts(new Set(ids));
-        console.log('[ReadPosts] Loaded', ids.length, 'read posts');
       }
     } catch (e) {
       console.error('[ReadPosts] Failed to load read posts:', e);
@@ -70,7 +69,6 @@ export const ReadPostsProvider: React.FC<{children: React.ReactNode}> = ({childr
       if (!ids.includes(postId)) {
         ids.push(postId);
         await AsyncStorage.setItem(READ_POSTS_IDS_KEY, JSON.stringify(ids));
-        console.log('[ReadPosts] Marked as read:', postId);
       }
     } catch (e) {
       console.error('[ReadPosts] Failed to save read post:', e);

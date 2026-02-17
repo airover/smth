@@ -38,6 +38,7 @@ const SettingsDetailScreen: React.FC = () => {
   const {settings, updateSettings} = useSettings();
   const [showFontSizeModal, setShowFontSizeModal] = useState(false);
   const [showThemeModal, setShowThemeModal] = useState(false);
+  const [showDisclaimerModal, setShowDisclaimerModal] = useState(false);
   const [isMSiteLoggedIn, setIsMSiteLoggedIn] = useState(false);
   const [showCaptcha, setShowCaptcha] = useState(false);
   const [savedPassword, setSavedPassword] = useState('');
@@ -202,6 +203,8 @@ const SettingsDetailScreen: React.FC = () => {
         return '夜间模式';
       case 'auto':
         return '跟随系统';
+      case 'spring':
+        return '🐴 马年新春';
       default:
         return '日间模式';
     }
@@ -376,11 +379,7 @@ const SettingsDetailScreen: React.FC = () => {
             <View style={[styles.divider, {backgroundColor: theme.border}]} />
             <TouchableOpacity 
               style={styles.menuItem}
-              onPress={() => Alert.alert(
-                '免责声明',
-                '一、应用性质\n\n本应用（水母）是基于水木社区（newsmth.net）开发的非官方第三方移动客户端，与水木社区官方无任何直属关系。\n\n二、隐私保护\n\n1. 本应用不收集、不存储、不上传任何用户个人信息或隐私数据\n2. 用户登录凭证（Cookie）仅加密存储于用户本地设备，不会上传至任何第三方服务器\n3. 所有数据请求均直接与水木社区官方服务器通信\n4. 本应用不包含任何用户行为追踪或数据统计功能\n\n三、服务免责\n\n1. 本应用按"现状"提供，不对服务的稳定性、可靠性、准确性作任何明示或暗示的保证\n2. 因使用本应用产生的任何直接或间接损失，开发者不承担责任\n3. 本应用可能因维护、升级或其他原因暂停服务，恕不另行通知\n4. 用户在使用本应用时应遵守水木社区的各项管理规定和中国法律法规\n\n四、内容免责\n\n1. 本应用展示的所有内容均来自水木社区，开发者不对内容的真实性、合法性负责\n2. 如发现违法违规内容，请直接联系水木社区官方处理\n\n五、其他\n\n1. 本应用为开源项目，代码托管于公开平台，接受社区监督\n2. 使用本应用即表示您已阅读并同意本免责声明\n3. 开发者保留随时修改或更新本声明的权利\n\n如有疑问，请通过用户反馈渠道联系开发者。',
-                [{text: '我已知晓', style: 'default'}]
-              )}>
+              onPress={() => setShowDisclaimerModal(true)}>
               <View style={styles.menuItemLeft}>
                 <Text style={styles.menuIcon}>📄</Text>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>免责声明</Text>
@@ -481,11 +480,47 @@ const SettingsDetailScreen: React.FC = () => {
           {label: '日间模式', value: 'light', current: settings.themeMode === 'light'},
           {label: '夜间模式', value: 'dark', current: settings.themeMode === 'dark'},
           {label: '跟随系统', value: 'auto', current: settings.themeMode === 'auto'},
+          {label: '🐴 马年新春', value: 'spring', current: settings.themeMode === 'spring'},
         ],
         async (value) => {
           await updateSettings({themeMode: value});
         },
       )}
+
+      {/* 免责声明模态框 */}
+      <Modal
+        visible={showDisclaimerModal}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setShowDisclaimerModal(false)}>
+        <View style={styles.disclaimerOverlay}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFillObject}
+            activeOpacity={1}
+            onPress={() => setShowDisclaimerModal(false)}
+          />
+          <View
+            style={[styles.disclaimerModalContent, {backgroundColor: theme.cardBackground}]}>
+            <View style={[styles.modalHeader, {borderBottomColor: theme.border}]}>
+              <Text style={[styles.modalTitle, {color: theme.text}]}>免责声明</Text>
+            </View>
+            <ScrollView
+              style={styles.disclaimerScrollView}
+              showsVerticalScrollIndicator={true}
+              bounces={true}
+              nestedScrollEnabled={true}>
+              <Text style={[styles.disclaimerText, {color: theme.text}]}>
+{'一、应用性质\n\n本应用（水母）是基于水木社区（newsmth.net）开发的非官方第三方移动客户端，与水木社区官方无任何隶属或合作关系。\n\n二、隐私保护\n\n1. 本应用仅在用户本地设备上加密存储登录所需的账号凭证（用户名、Cookie），用于维持登录状态，不会上传至任何第三方服务器\n2. 所有数据请求均直接与水木社区官方服务器通信，不经过任何中间服务器\n3. 本应用不包含任何用户行为追踪、数据采集或广告分析功能\n4. 用户可随时在设置中清除本地缓存和登录信息\n\n三、服务免责\n\n1. 本应用按"现状"提供，不对服务的稳定性、可靠性、准确性作任何明示或暗示的保证\n2. 因使用本应用产生的任何直接或间接损失，开发者不承担责任\n3. 本应用可能因维护、升级或其他原因暂停服务，恕不另行通知\n4. 用户在使用本应用时应遵守水木社区的各项管理规定和中国法律法规\n\n四、内容免责\n\n1. 本应用展示的所有内容均来自水木社区，版权归原作者及水木社区所有，开发者不对内容的真实性、合法性负责\n2. 如发现违法违规内容，请直接联系水木社区官方处理\n\n五、知识产权\n\n1. 本应用的程序代码为开源项目，代码托管于公开平台，接受社区监督\n2. "水木社区"相关名称及标识的知识产权归水木社区所有\n\n六、其他\n\n1. 使用本应用即表示您已阅读并同意本免责声明\n2. 开发者保留随时修改或更新本声明的权利，更新后的声明将随应用版本发布\n\n如有疑问，请通过用户反馈渠道联系开发者。'}
+              </Text>
+            </ScrollView>
+            <TouchableOpacity
+              style={[styles.disclaimerButton, {borderTopColor: theme.border}]}
+              onPress={() => setShowDisclaimerModal(false)}>
+              <Text style={[styles.disclaimerButtonText, {color: theme.primary}]}>我已知晓</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* 验证码模态框 */}
       <Modal
@@ -666,6 +701,42 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZE.xxl,
     // color 由主题动态控制
     fontWeight: 'bold',
+  },
+  disclaimerModalContent: {
+    borderRadius: BORDER_RADIUS.lg,
+    width: '80%',
+    maxHeight: '70%',
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  disclaimerOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  disclaimerScrollView: {
+    paddingHorizontal: SPACING.xl,
+    paddingVertical: SPACING.md,
+  },
+  disclaimerText: {
+    fontSize: FONT_SIZE.md,
+    lineHeight: FONT_SIZE.md * 1.6,
+  },
+  disclaimerButton: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingVertical: SPACING.lg,
+    alignItems: 'center',
+  },
+  disclaimerButtonText: {
+    fontSize: FONT_SIZE.xl,
+    fontWeight: '600',
   },
 });
 

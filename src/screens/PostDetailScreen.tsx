@@ -34,6 +34,7 @@ import {cacheManager} from '../services/cacheManager';
 import {saveBrowsingHistory} from './BrowsingHistoryScreen';
 import {useSettings} from '../context/SettingsContext';
 import {getTheme, getFontSizes} from '../utils/theme';
+import {ThemedHeaderButton, useFloatingHeader} from '../components/ThemeHeader';
 import {normalizeImageUrl, isImageAttachment, isVideoAttachment} from '../utils/imageUtils';
 import {
   SPACING,
@@ -173,11 +174,11 @@ const PostDetailScreen: React.FC = () => {
   }, []);
 
   // 设置导航栏右侧按钮
+  const setHeaderOptions = useFloatingHeader();
   useEffect(() => {
-    navigation.setOptions({
+    setHeaderOptions({
       headerRight: () => (
-        <TouchableOpacity
-          style={styles.headerMenuButton}
+        <ThemedHeaderButton
           onPress={() => {
             // 构建菜单选项
             const options: string[] = [];
@@ -247,10 +248,9 @@ const PostDetailScreen: React.FC = () => {
               Alert.alert('更多操作', '', buttons);
             }
           }}
-          activeOpacity={0.7}
         >
-          <Text style={styles.headerMenuButtonText}>⋮</Text>
-        </TouchableOpacity>
+          <Text style={[styles.headerMenuButtonText, theme.headerBackgroundImage ? {color: '#FFFFFF'} : null]}>⋮</Text>
+        </ThemedHeaderButton>
       ),
     });
   }, [navigation, currentUsername, post]);
@@ -1248,7 +1248,8 @@ const PostDetailScreen: React.FC = () => {
       return 200; // 默认最小高度
     }
 
-    const containerWidth = SCREEN_WIDTH;
+    // 图片实际可用宽度 = 屏幕宽度 - 外层content的padding(SPACING.lg*2)
+    const containerWidth = SCREEN_WIDTH - SPACING.lg * 2;
     const aspectRatio = imageSize.width / imageSize.height;
     const calculatedHeight = containerWidth / aspectRatio;
 
@@ -1559,7 +1560,22 @@ const PostDetailScreen: React.FC = () => {
           <View style={[styles.postContainer, {backgroundColor: theme.cardBackground}]}>
             <Text style={[styles.postTitle, {color: theme.text}]}>{post.title}</Text>
             <View style={styles.postMeta}>
-              <Text style={[styles.metaText, {color: theme.secondaryText}]}>{post.boardName || post.board}</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  navigation.navigate('MainTabs', {
+                    screen: 'Board',
+                    params: {
+                      board: post.boardId || post.board || board,
+                      boardName: post.boardName || post.board || board,
+                      source: 'link',
+                    },
+                  });
+                }}
+                hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.metaText, {color: theme.secondaryText}]}>{post.boardName || post.board}</Text>
+              </TouchableOpacity>
               <Text style={[styles.metaText, {color: theme.secondaryText}]}>回复: {post.replyCount}</Text>
               <Text style={[styles.metaText, {color: theme.secondaryText}]}>{formatDateTime(post.postTime)}</Text>
             </View>
@@ -1953,6 +1969,7 @@ const styles = StyleSheet.create({
     color: '#666',
     marginRight: SPACING.md,
   },
+
   divider: {
     height: 1,
     backgroundColor: '#e0e0e0',
@@ -2056,7 +2073,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   attachmentImage: {
-    width: SCREEN_WIDTH,
+    width: SCREEN_WIDTH - SPACING.lg * 2,
     minHeight: responsiveSize(180, 200, 220, 250),
     backgroundColor: '#eee',
   },

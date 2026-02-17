@@ -14,6 +14,7 @@ import {
   TouchableWithoutFeedback,
   RefreshControl,
   PanResponder,
+  ImageBackground,
   // Image - 预留用于将来图片功能
   Alert,
 } from 'react-native';
@@ -27,7 +28,9 @@ import {formatRelativeTime} from '../utils/timeFormat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useSettings} from '../context/SettingsContext';
 import {useTheme} from '../components/ThemedComponents';
+import {ThemedHeaderButton, useFloatingHeader} from '../components/ThemeHeader';
 import {useReadPosts} from '../context/ReadPostsContext';
+
 
 const {width: SCREEN_WIDTH} = Dimensions.get('window');
 const DRAWER_WIDTH = SCREEN_WIDTH * 0.8;
@@ -134,11 +137,11 @@ const BoardScreen: React.FC = () => {
   // 基于主题的动态样式 — 确保真机上主题切换时样式完全重建
   const themedStyles = useMemo(() => ({
     searchBarContainer: {
-      backgroundColor: theme.cardBackground,
+      backgroundColor: 'transparent',
       paddingHorizontal: 16,
       paddingVertical: 8,
       borderBottomWidth: 1,
-      borderBottomColor: theme.border,
+      borderBottomColor: 'transparent',
     } as const,
     searchInput: {
       height: 36,
@@ -153,9 +156,9 @@ const BoardScreen: React.FC = () => {
       color: theme.secondaryText,
     },
     channelsContainer: {
-      backgroundColor: theme.cardBackground,
+      backgroundColor: 'transparent',
       borderBottomWidth: 1,
-      borderBottomColor: theme.border,
+      borderBottomColor: 'transparent',
       paddingVertical: 8,
     },
     channelItem: {
@@ -453,8 +456,6 @@ const BoardScreen: React.FC = () => {
 
   useEffect(() => {
     if (selectedBoard) {
-      console.log('版面切换 useEffect 触发:', selectedBoard.chineseName || selectedBoard.name, 'ID:', selectedBoard.id);
-      
       // 验证版面ID是否有效
       if (!selectedBoard.id) {
         console.error('错误：版面ID为空', selectedBoard);
@@ -472,7 +473,6 @@ const BoardScreen: React.FC = () => {
       const defaultSort = settings.defaultBoardSort === 'reply';
       setSortByReplyTime(defaultSort);
       
-      console.log('开始加载版面帖子，ID:', selectedBoard.id, '排序:', defaultSort ? '按回复' : '按发布');
       loadPosts(selectedBoard.id, 1, defaultSort ? 1 : 0);
       
       setShowChannels(false); // 选择版面后隐藏频道列表
@@ -566,13 +566,14 @@ const BoardScreen: React.FC = () => {
   ).current;
 
   // 动态更新导航栏
+  const setHeaderOptions = useFloatingHeader();
   useEffect(() => {
-    navigation.setOptions({
+    setHeaderOptions({
       headerTitle: () => {
         if (selectedBoard) {
           return (
             <View style={styles.headerTitleContainer}>
-          <Text style={[styles.headerTitleText, {color: theme.text}]} numberOfLines={1}>
+          <Text style={[styles.headerTitleText, {color: theme.headerText}]} numberOfLines={1}>
                 {selectedBoard.chineseName || selectedBoard.name}
               </Text>
             </View>
@@ -581,30 +582,28 @@ const BoardScreen: React.FC = () => {
           // 当选中频道或显示频道列表时，标题显示"频道"
           return (
             <View style={styles.headerTitleContainer}>
-              <Text style={[styles.headerTitleText, {color: theme.text}]}>频道</Text>
+              <Text style={[styles.headerTitleText, {color: theme.headerText}]}>频道</Text>
             </View>
           );
         } else {
           return (
             <View style={styles.headerTitleContainer}>
-              <Text style={[styles.headerTitleText, {color: theme.text}]}>版面</Text>
+              <Text style={[styles.headerTitleText, {color: theme.headerText}]}>版面</Text>
             </View>
           );
         }
       },
       headerLeft: () => (
-        <TouchableOpacity
-          style={{paddingLeft: 16}}
+        <ThemedHeaderButton
           onPress={() => setShowBoardList(true)}>
-          <Text style={{fontSize: 24, color: theme.text}}>☰</Text>
-        </TouchableOpacity>
+          <Text style={{fontSize: 24, color: theme.headerBackgroundImage ? '#FFFFFF' : theme.headerTint}}>☰</Text>
+        </ThemedHeaderButton>
       ),
       headerRight: () => (
-        <TouchableOpacity
-          style={{paddingRight: 16}}
+        <ThemedHeaderButton
           onPress={() => navigation.navigate('BoardList', {favorites: true})}>
-          <Text style={{fontSize: 24, color: theme.primary}}>⭐</Text>
-        </TouchableOpacity>
+          <Text style={{fontSize: 24, color: theme.headerBackgroundImage ? '#FFFFFF' : theme.headerTint}}>⭐</Text>
+        </ThemedHeaderButton>
       ),
     });
   }, [selectedBoard, selectedChannel, showChannels, navigation, theme]);
@@ -689,7 +688,6 @@ const BoardScreen: React.FC = () => {
         const result = await removeBoardFavorite(selectedBoard.id);
         if (result.success) {
           setIsBoardFavorited(false);
-          console.log('取消收藏成功');
         } else {
           console.error('取消收藏失败:', result.message);
         }
@@ -698,7 +696,6 @@ const BoardScreen: React.FC = () => {
         const result = await addBoardFavorite(selectedBoard.id);
         if (result.success) {
           setIsBoardFavorited(true);
-          console.log('收藏成功');
         } else {
           console.error('收藏失败:', result.message);
         }
@@ -862,15 +859,12 @@ const BoardScreen: React.FC = () => {
         
         // 调试：打印第一篇文章的数据结构
         if (articles && articles.length > 0) {
-          console.log('图览第一篇文章数据:', JSON.stringify(articles[0], null, 2));
-          console.log('图览第一篇文章的attachments:', articles[0].attachments);
         }
         
         // 转换图览数据为频道帖子格式
         const convertedTopics: ChannelTopic[] = await Promise.all((articles || []).map(async (article: AlbumArticle) => {
           // 处理附件URL
           const processedAttachments = (article.attachments || []).map((att: any, attIdx: number) => {
-            console.log(`[AlbumPosts] 帖子 ${article.subject} 附件${attIdx} 原始字段:`, JSON.stringify({type: att.type, k3sUrl: att.k3sUrl, ks3Url: att.ks3Url, cdnUrl: att.cdnUrl, url: att.url, name: att.name}));
             // 优先使用 ks3Url，然后是 cdnUrl，最后是 url
             let url = att.ks3Url || att.cdnUrl || att.url || '';
             
@@ -889,7 +883,6 @@ const BoardScreen: React.FC = () => {
               ...att,
               cdnUrl: url, // 统一使用cdnUrl字段
             };
-            console.log(`[AlbumPosts] 帖子 ${article.subject} 附件${attIdx} 处理后:`, JSON.stringify({type: processed.type, k3sUrl: processed.k3sUrl, ks3Url: processed.ks3Url, cdnUrl: processed.cdnUrl, name: processed.name}));
             return processed;
           });
           
@@ -959,7 +952,6 @@ const BoardScreen: React.FC = () => {
           });
           
           // 如果获取到静态URL，则填充到附件中
-          console.log(`[AlbumPosts] 帖子 ${topic.subject} getStaticAttachmentUrlsForTopic返回: staticUrls数量=${staticUrls.length}, urls=${JSON.stringify(staticUrls)}`);
           let updatedAttachments = topic.attachments || [];
           if (staticUrls.length > 0 && updatedAttachments.length > 0) {
             updatedAttachments = updatedAttachments.map((att: any, index: number) => {
@@ -979,10 +971,6 @@ const BoardScreen: React.FC = () => {
             attachments: updatedAttachments,
           };
         }));
-        // 调试日志：打印第一个帖子最终使用的图片URL
-        if (topicsWithStaticUrls.length > 0 && topicsWithStaticUrls[0].attachments?.length > 0) {
-          console.log(`[AlbumPosts] 第一个帖子最终图片URL:`, topicsWithStaticUrls[0].attachments[0]?.cdnUrl);
-        }
         if (pageNum === 1) {
           setChannelPosts(topicsWithStaticUrls);
           setChannelPage(1);
@@ -1310,7 +1298,6 @@ const BoardScreen: React.FC = () => {
       <TouchableOpacity
         style={isSelected ? themedStyles.channelItemSelected : themedStyles.channelItem}
         onPress={() => {
-          console.log('点击频道:', item.name);
           setSelectedChannel(item);
           // 注意：不需要在这里调用loadAlbumPosts或loadChannelPosts
           // 因为useEffect会监听selectedChannel的变化并自动加载
@@ -1418,7 +1405,6 @@ const BoardScreen: React.FC = () => {
 
       // 如果是版面（非文件夹），选中并关闭抽屉
       if (!item.isFolder && !hasChildren) {
-        console.log('选中版面:', item.chineseName || item.name, 'ID:', item.id);
         // 确保版面对象有必要的字段
         const boardToSelect = {
           ...item,
@@ -1558,12 +1544,6 @@ const BoardScreen: React.FC = () => {
   const renderAlbumPostItem = ({item}: {item: ChannelTopic}) => {
     const itemIsRead = isRead(item.id);
     const images = item.attachments || [];
-    
-    // 调试：打印图片信息
-    if (images.length > 0) {
-      console.log(`帖子 ${item.subject} 的图片数量:`, images.length);
-      console.log(`第一张图片URL:`, images[0]?.cdnUrl);
-    }
     
     // 计算图片网格布局
     const getImageLayout = (count: number) => {

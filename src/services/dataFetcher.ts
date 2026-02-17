@@ -88,12 +88,8 @@ const fetchStaticAttachmentUrls = async (
     const response = await fetchWithRetry(url, {
       method: 'GET',
       headers,
-      cache: 'default',
       credentials: 'include',
       mode: 'cors',
-      redirect: 'follow',
-      referrer: referer,
-      referrerPolicy: 'strict-origin-when-cross-origin',
     });
 
     const html = await response.text();
@@ -1358,6 +1354,7 @@ export const getPostDetail = async (
         id: topic.id,
         articleId: article?.id, // 文章ID，用于删除等操作
         board: boardNameForFetch,
+        boardId: topic.boardId, // 版面hash ID，用于API请求
         boardName: topic.board?.title || '未知版面',
         title: topic.subject?.trim(),
         content: article?.body || '', // 包含 HTML

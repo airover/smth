@@ -22,6 +22,7 @@ import {
   scaleModerate,
 } from '../utils/responsive';
 
+
 const SettingsScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const theme = useTheme();
@@ -168,7 +169,7 @@ const SettingsScreen: React.FC = () => {
 
   return (
     <View style={[styles.container, {backgroundColor: theme.background}]}>
-      <ScrollView 
+      <ScrollView
         style={styles.content}
         refreshControl={
           <RefreshControl

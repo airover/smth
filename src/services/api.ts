@@ -1527,7 +1527,6 @@ export const removeLike = async (
     
     const headers = buildDeleteHeaders(
       cookies,
-      'application/json',
       `https://wap.newsmth.net/article/${topicId}?title=${encodeURIComponent(boardName)}&from=board`
     );
     

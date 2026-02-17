@@ -1,9 +1,11 @@
 import React from 'react';
 import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
-import {Text, TouchableOpacity} from 'react-native';
+import {Text, TouchableOpacity, ImageBackground, StyleSheet} from 'react-native';
 import Svg, {Path} from 'react-native-svg';
+
 import {useTheme} from '../components/ThemedComponents';
+import {FloatingHeaderProvider} from '../components/ThemeHeader';
 
 // Screens
 import HomeScreen from '../screens/HomeScreen';
@@ -33,43 +35,64 @@ import BlacklistScreen from '../screens/BlacklistScreen';
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
+
+
 // 主Tab导航
 const MainTabs = () => {
   const theme = useTheme();
+  const hasBackgroundImage = !!theme.headerBackgroundImage;
+
   return (
     <Tab.Navigator
       initialRouteName="Home"
       screenOptions={{
-        tabBarActiveTintColor: theme.primary,
-        tabBarInactiveTintColor: theme.tabBarInactive,
-        tabBarStyle: {
-          backgroundColor: theme.tabBarBackground,
-          borderTopColor: theme.tabBarBorder,
-        },
+        // 有背景图时隐藏 React Navigation 的 header，由 FloatingHeaderProvider 渲染 ThemeHeader
+        headerShown: !hasBackgroundImage,
         headerStyle: {
           backgroundColor: theme.headerBackground,
         },
-        headerTintColor: theme.text,
+        headerTintColor: theme.headerText,
         headerTitleStyle: {
-          fontWeight: '600',
-          color: theme.text,
+          fontWeight: '600' as const,
+          color: theme.headerText,
         },
+        tabBarActiveTintColor: theme.tabBarActive,
+        tabBarInactiveTintColor: theme.tabBarInactive,
+        tabBarStyle: {
+          backgroundColor: theme.tabBarBackgroundImage ? 'transparent' : theme.tabBarBackground,
+          borderTopColor: theme.tabBarBorder,
+        },
+        ...(theme.tabBarBackgroundImage ? {
+          tabBarBackground: () => (
+            <ImageBackground
+              source={theme.tabBarBackgroundImage!}
+              style={StyleSheet.absoluteFill}
+              resizeMode="cover"
+            />
+          ),
+        } : {}),
       }}>
       <Tab.Screen
         name="Home"
-        component={HomeScreen}
         options={{
           title: '首页',
+          headerShown: !hasBackgroundImage,
           tabBarIcon: ({color}) => (
             <Text style={{color, fontSize: 24}}>🏠</Text>
           ),
         }}
-      />
+      >
+        {(props: any) => hasBackgroundImage ? (
+          <FloatingHeaderProvider defaultTitle="首页">
+            <HomeScreen {...props} />
+          </FloatingHeaderProvider>
+        ) : <HomeScreen {...props} />}
+      </Tab.Screen>
       <Tab.Screen
         name="Board"
-        component={BoardScreen}
         options={{
           title: '版面',
+          headerShown: !hasBackgroundImage,
           tabBarIcon: ({color}) => (
             <Text style={{color, fontSize: 24}}>📋</Text>
           ),
@@ -94,38 +117,79 @@ const MainTabs = () => {
             }
           },
         })}
-      />
+      >
+        {(props: any) => hasBackgroundImage ? (
+          <FloatingHeaderProvider defaultTitle="版面">
+            <BoardScreen {...props} />
+          </FloatingHeaderProvider>
+        ) : <BoardScreen {...props} />}
+      </Tab.Screen>
       <Tab.Screen
         name="Settings"
-        component={SettingsScreen}
         options={{
           title: '我',
+          headerShown: !hasBackgroundImage,
           tabBarIcon: ({color}) => (
             <Text style={{color, fontSize: 24}}>⚙️</Text>
           ),
         }}
-      />
+      >
+        {(props: any) => hasBackgroundImage ? (
+          <FloatingHeaderProvider defaultTitle="我">
+            <SettingsScreen {...props} />
+          </FloatingHeaderProvider>
+        ) : <SettingsScreen {...props} />}
+      </Tab.Screen>
     </Tab.Navigator>
   );
+};
+
+/**
+ * 创建有背景图时的包裹组件
+ * Stack 页面需要 canGoBack 和从 route options 获取标题
+ */
+const createFloatingHeaderScreen = (
+  ScreenComponent: React.ComponentType<any>,
+  defaultTitle: string,
+  extraOptions?: {canGoBack?: boolean},
+) => {
+  return (props: any) => {
+    const theme = useTheme();
+    const hasBackgroundImage = !!theme.headerBackgroundImage;
+    if (!hasBackgroundImage) {
+      return <ScreenComponent {...props} />;
+    }
+    return (
+      <FloatingHeaderProvider
+        defaultTitle={defaultTitle}
+        canGoBack={extraOptions?.canGoBack ?? true}
+      >
+        <ScreenComponent {...props} />
+      </FloatingHeaderProvider>
+    );
+  };
 };
 
 // 应用导航器
 const AppNavigator = () => {
   const theme = useTheme();
+  const hasBackgroundImage = !!theme.headerBackgroundImage;
   return (
     <Stack.Navigator
       screenOptions={({navigation}) => ({
+        // 有背景图时隐藏 React Navigation 的 header，由 FloatingHeaderProvider 渲染 ThemeHeader
+        headerShown: !hasBackgroundImage,
         headerStyle: {
           backgroundColor: theme.headerBackground,
         },
-        headerTintColor: theme.primary, // 统一使用主题蓝色（按钮颜色）
+        headerTintColor: theme.headerTint,
         headerTitleStyle: {
-          fontWeight: '600',
-          color: theme.text, // 标题颜色跟随主题
+          fontWeight: '600' as const,
+          color: theme.headerText,
         },
-        headerBackTitleVisible: false, // 隐藏返回文字
-        headerBackTitle: '', // 不显示返回文字
-        headerLeft: ({canGoBack}) =>
+        headerBackTitleVisible: false,
+        headerBackTitle: '',
+        headerLeft: ({canGoBack}: {canGoBack?: boolean}) =>
           canGoBack ? (
             <TouchableOpacity
               onPress={() => navigation.goBack()}
@@ -133,7 +197,7 @@ const AppNavigator = () => {
               <Svg width={28} height={28} viewBox="0 0 24 24" fill="none">
                 <Path
                   d="M15 18L9 12L15 6"
-                  stroke={theme.primary}
+                  stroke={theme.headerTint}
                   strokeWidth={2.5}
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -147,66 +211,54 @@ const AppNavigator = () => {
         component={MainTabs}
         options={{
           headerShown: false,
-          title: '', // 设置空标题，避免返回时显示 "MainTabs"
-          headerBackTitleVisible: false,
-          headerBackTitle: '',
-          headerBackTitleStyle: {
-            display: 'none',
-            opacity: 0,
-          },
+          title: '',
         }}
       />
       <Stack.Screen
         name="PostDetail"
-        component={PostDetailScreen}
+        component={createFloatingHeaderScreen(PostDetailScreen, '')}
         options={{
           title: '',
-          headerBackTitleVisible: false,
-          headerBackTitle: '',
-          headerBackTitleStyle: {
-            display: 'none',
-            opacity: 0,
-          },
         }}
       />
       <Stack.Screen
         name="BoardList"
-        component={BoardListScreen}
+        component={createFloatingHeaderScreen(BoardListScreen, '收藏版面')}
         options={{
           title: '收藏版面',
         }}
       />
       <Stack.Screen
         name="Mail"
-        component={MailScreen}
+        component={createFloatingHeaderScreen(MailScreen, '站内邮箱')}
         options={{
           title: '站内邮箱',
         }}
       />
       <Stack.Screen
         name="SettingsDetail"
-        component={SettingsDetailScreen}
+        component={createFloatingHeaderScreen(SettingsDetailScreen, '设置')}
         options={{
           title: '设置',
         }}
       />
       <Stack.Screen
         name="AccountSwitch"
-        component={AccountSwitchScreen}
+        component={createFloatingHeaderScreen(AccountSwitchScreen, '切换帐号')}
         options={{
           title: '切换帐号',
         }}
       />
       <Stack.Screen
         name="ChangePassword"
-        component={ChangePasswordScreen}
+        component={createFloatingHeaderScreen(ChangePasswordScreen, '修改密码')}
         options={{
           title: '修改密码',
         }}
       />
       <Stack.Screen
         name="CacheManagement"
-        component={CacheManagementScreen}
+        component={createFloatingHeaderScreen(CacheManagementScreen, '缓存管理')}
         options={{
           title: '缓存管理',
         }}
@@ -220,21 +272,21 @@ const AppNavigator = () => {
       />
       <Stack.Screen
         name="MailDetail"
-        component={MailDetailScreen}
+        component={createFloatingHeaderScreen(MailDetailScreen, '私信详情')}
         options={({route}) => ({
           title: (route.params as any)?.mail?.fromNickname || '私信详情',
         })}
       />
       <Stack.Screen
         name="BrowsingHistory"
-        component={BrowsingHistoryScreen}
+        component={createFloatingHeaderScreen(BrowsingHistoryScreen, '浏览历史')}
         options={{
           title: '浏览历史',
         }}
       />
       <Stack.Screen
         name="Search"
-        component={SearchScreen}
+        component={createFloatingHeaderScreen(SearchScreen, '搜索')}
         options={{
           title: '搜索',
         }}
@@ -248,7 +300,7 @@ const AppNavigator = () => {
       />
       <Stack.Screen
         name="Login"
-        component={LoginScreen}
+        component={createFloatingHeaderScreen(LoginScreen, '登录')}
         options={{
           title: '登录',
           presentation: 'modal',
@@ -256,42 +308,42 @@ const AppNavigator = () => {
       />
       <Stack.Screen
         name="CreatePost"
-        component={CreatePostScreen}
+        component={createFloatingHeaderScreen(CreatePostScreen, '')}
         options={{
           title: '',
         }}
       />
       <Stack.Screen
         name="MyArticles"
-        component={MyArticlesScreen}
+        component={createFloatingHeaderScreen(MyArticlesScreen, '我的文章')}
         options={{
           title: '我的文章',
         }}
       />
       <Stack.Screen
         name="Favorites"
-        component={FavoritesScreen}
+        component={createFloatingHeaderScreen(FavoritesScreen, '我的收藏')}
         options={{
           title: '我的收藏',
         }}
       />
       <Stack.Screen
         name="MyFollowing"
-        component={MyFollowingScreen}
+        component={createFloatingHeaderScreen(MyFollowingScreen, '我的关注')}
         options={{
           title: '我的关注',
         }}
       />
       <Stack.Screen
         name="MyFans"
-        component={MyFansScreen}
+        component={createFloatingHeaderScreen(MyFansScreen, '我的粉丝')}
         options={{
           title: '我的粉丝',
         }}
       />
       <Stack.Screen
         name="Blacklist"
-        component={BlacklistScreen}
+        component={createFloatingHeaderScreen(BlacklistScreen, '黑名单')}
         options={{
           title: '黑名单',
         }}

@@ -60,6 +60,7 @@ export interface Post {
   city?: string;
   levelTitle?: string;
   board: string;
+  boardId?: string; // 版面hash ID，用于API请求
   boardName?: string;
   replyCount: number;
   postTime: string;
@@ -156,5 +157,5 @@ export interface LoginCredentials {
 export interface AppSettings {
   fontSize: 'small' | 'medium' | 'large'; // 帖子内容字体大小
   defaultBoardSort: 'post' | 'reply'; // 版面帖子默认排序方式: post-按发布时间, reply-按回复时间
-  themeMode: 'light' | 'dark' | 'auto'; // 主题模式: light-日间, dark-夜间, auto-跟随系统
+  themeMode: 'light' | 'dark' | 'auto' | 'spring'; // 主题模式: light-日间, dark-夜间, auto-跟随系统, spring-新春主题
 }

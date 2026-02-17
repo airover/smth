@@ -90,8 +90,6 @@ const MyFollowingScreen: React.FC = () => {
         
         // 直接使用API返回的hasMore字段
         setHasMore(result.hasMore);
-        
-        console.log('Loaded following:', users.length, 'total:', result.total, 'page:', result.page, 'hasMore:', result.hasMore);
       } else {
         if (!append) {
           Alert.alert('提示', result.message || '获取关注列表失败');

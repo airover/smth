@@ -118,7 +118,6 @@ const MyArticlesScreen: React.FC = () => {
       if (page === 1 && !isRefresh) {
         const cached = await loadCachedData(type);
         if (cached) {
-          console.log(`使用缓存数据 type=${type}`);
           if (type === 0) {
             setArticles(cached.articles);
             setArticlesPage(cached.page);

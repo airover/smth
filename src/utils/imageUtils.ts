@@ -342,7 +342,6 @@ export const convertImagesToJpeg = async (
     // 判断是否需要转码
     if (needsJpegConversion(asset.type, asset.fileName)) {
       try {
-        console.log(`正在转码图片 ${i + 1}/${imageAssets.length}: ${asset.fileName || asset.uri}`);
         const converted = await convertToJpeg(asset.uri, quality);
         
         // 生成新的文件名（替换扩展名为 .jpg）
@@ -363,7 +362,6 @@ export const convertImagesToJpeg = async (
           height: converted.height,
           originalPath: converted.path,
         });
-        console.log(`图片 ${i + 1} 转码完成: ${newFileName}`);
       } catch (error: any) {
         // 转码失败时保留原图
         console.error(`图片 ${i + 1} 转码失败，使用原图:`, error.message);

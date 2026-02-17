@@ -15,7 +15,7 @@ export const SettingsProvider: React.FC<{children: ReactNode}> = ({children}) =>
   const [settings, setSettings] = useState<AppSettings>({
     fontSize: 'medium',
     defaultBoardSort: 'post',
-    themeMode: 'light',
+    themeMode: 'spring',
   });
   const [isLoading, setIsLoading] = useState(true);
 

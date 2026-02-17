@@ -14,12 +14,14 @@ import {TopTenItem, Board} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useTheme} from '../components/ThemedComponents';
+import {useThemeHeaderHeight} from '../components/ThemeHeader';
 import {
   SPACING,
   FONT_SIZE,
   BORDER_RADIUS,
 } from '../utils/responsive';
 import {useReadPosts} from '../context/ReadPostsContext';
+
 
 // 缓存配置常量
 const CACHE_CONFIG = {
@@ -113,6 +115,7 @@ const saveCacheData = async <T,>(
 const HomeScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const theme = useTheme();
+  const headerHeight = useThemeHeaderHeight();
   const {readPosts, isRead, markAsRead} = useReadPosts();
   const [topTen, setTopTen] = useState<TopTenItem[]>([]);
   const [hotPosts, setHotPosts] = useState<TopTenItem[]>([]);
@@ -430,6 +433,7 @@ const HomeScreen: React.FC = () => {
     <View style={[styles.container, {backgroundColor: theme.background}]}>
       <FlatList
         data={[{type: 'content'}]} // 使用单个项目来包装所有内容
+        contentContainerStyle={[styles.content, headerHeight > 0 && {paddingTop: headerHeight}]}
         renderItem={() => (
           <View>
             <View style={[styles.section, {backgroundColor: theme.cardBackground}]}>
@@ -497,7 +501,6 @@ const HomeScreen: React.FC = () => {
             colors={[theme.primary]}
           />
         }
-        contentContainerStyle={styles.content}
       />
     </View>
   );

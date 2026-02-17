@@ -35,11 +35,9 @@ export const decodeQRCodeFromImage = async (imagePath: string): Promise<string |
     });
     
     if (code && code.data) {
-      console.log('成功识别二维码:', code.data);
       return code.data;
     }
     
-    console.log('未在图片中识别到二维码');
     return null;
   } catch (error) {
     console.error('解码二维码失败:', error);
@@ -80,7 +78,28 @@ export const decodeQRCodeFromBase64 = (
   try {
     // 将 base64 转换为 Uint8ClampedArray
     // 注意：这里假设 base64Data 是 RGBA 格式的原始像素数据
-    const binaryString = atob(base64Data);
+    // React Native 环境没有全局 atob，使用手动解码
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const lookup = new Uint8Array(256);
+    for (let i = 0; i < chars.length; i++) {
+      lookup[chars.charCodeAt(i)] = i;
+    }
+    let bufferLength = base64Data.length * 0.75;
+    if (base64Data[base64Data.length - 1] === '=') bufferLength--;
+    if (base64Data[base64Data.length - 2] === '=') bufferLength--;
+    const arrayBuffer = new ArrayBuffer(bufferLength);
+    const binaryBytes = new Uint8Array(arrayBuffer);
+    let p = 0;
+    for (let i = 0; i < base64Data.length; i += 4) {
+      const encoded1 = lookup[base64Data.charCodeAt(i)];
+      const encoded2 = lookup[base64Data.charCodeAt(i + 1)];
+      const encoded3 = lookup[base64Data.charCodeAt(i + 2)];
+      const encoded4 = lookup[base64Data.charCodeAt(i + 3)];
+      binaryBytes[p++] = (encoded1 << 2) | (encoded2 >> 4);
+      binaryBytes[p++] = ((encoded2 & 15) << 4) | (encoded3 >> 2);
+      binaryBytes[p++] = ((encoded3 & 3) << 6) | (encoded4 & 63);
+    }
+    const binaryString = String.fromCharCode(...binaryBytes);
     const len = binaryString.length;
     const bytes = new Uint8ClampedArray(len);
     
@@ -94,11 +113,9 @@ export const decodeQRCodeFromBase64 = (
     });
     
     if (code && code.data) {
-      console.log('成功识别二维码:', code.data);
       return code.data;
     }
     
-    console.log('未在图片中识别到二维码');
     return null;
   } catch (error) {
     console.error('解码二维码失败:', error);

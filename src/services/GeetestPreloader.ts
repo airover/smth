@@ -40,7 +40,6 @@ export const preloadGeetestSdk = async (): Promise<boolean> => {
       const response = await fetch(GEETEST_SDK_URL, {
         method: 'GET',
         signal: controller.signal,
-        cache: 'default',
       });
       
       clearTimeout(timeoutId);

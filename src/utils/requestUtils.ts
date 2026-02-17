@@ -46,10 +46,7 @@ export const fetchWithRetry = async (
       
       const isRetry = attempt > 0;
       if (isRetry) {
-        console.log(`🔄 重试请求 (${attempt}/${retryCount}):`, url);
         await delay(retryDelay);
-      } else {
-        console.log('📤 发起请求:', url);
       }
       
       const response = await fetch(url, {
@@ -64,7 +61,6 @@ export const fetchWithRetry = async (
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       
-      console.log('✅ 请求成功:', url, '状态:', response.status);
       return response;
       
     } catch (error: any) {
@@ -112,7 +108,6 @@ export const fetchWithRetry = async (
 export const safeJsonParse = async (response: Response): Promise<any> => {
   try {
     const text = await response.text();
-    console.log('📥 响应内容:', text.substring(0, 200) + (text.length > 200 ? '...' : ''));
     
     if (!text || text.trim() === '') {
       throw new Error('响应内容为空');
@@ -183,20 +178,16 @@ export const extractErrorMessage = (json: any): string => {
  * 日志工具
  */
 export const logRequest = {
-  start: (url: string, method: string = 'GET') => {
-    console.log(`\n🚀 [${method}] ${url}`);
+  start: (_url: string, _method: string = 'GET') => {
+    // 日志已禁用
   },
   
-  params: (params: any) => {
-    console.log('📋 请求参数:', JSON.stringify(params, null, 2));
+  params: (_params: any) => {
+    // 日志已禁用
   },
   
-  success: (url: string, data: any) => {
-    const dataStr = typeof data === 'string' 
-      ? data.substring(0, 200) 
-      : JSON.stringify(data).substring(0, 200);
-    console.log(`✅ 请求成功: ${url}`);
-    console.log(`📦 响应数据: ${dataStr}${dataStr.length >= 200 ? '...' : ''}`);
+  success: (_url: string, _data: any) => {
+    // 日志已禁用
   },
   
   error: (url: string, error: any) => {
@@ -204,12 +195,8 @@ export const logRequest = {
     console.error(`💥 错误信息:`, error.message || error);
   },
   
-  cache: (url: string, hit: boolean) => {
-    if (hit) {
-      console.log(`💾 缓存命中: ${url}`);
-    } else {
-      console.log(`🔍 缓存未命中: ${url}`);
-    }
+  cache: (_url: string, _hit: boolean) => {
+    // 日志已禁用
   },
 };
 

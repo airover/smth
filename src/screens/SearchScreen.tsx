@@ -22,6 +22,7 @@ import {
   scaleModerate,
 } from '../utils/responsive';
 import {useReadPosts} from '../context/ReadPostsContext';
+import {useFloatingHeader} from '../components/ThemeHeader';
 
 // 搜索相关常量
 const DEFAULT_PAGE = 1; // 默认页码
@@ -139,8 +140,9 @@ const SearchScreen: React.FC = () => {
   }, []);
 
   // 动态更新导航栏
+  const setHeaderOptions = useFloatingHeader();
   useEffect(() => {
-    navigation.setOptions({
+    setHeaderOptions({
       headerTitle: () => (
         <View style={styles.headerContainer}>
           <TextInput

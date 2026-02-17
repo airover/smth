@@ -150,12 +150,9 @@ const CaptchaScreen: React.FC<CaptchaScreenProps> = ({
     try {
       const message = JSON.parse(event.nativeEvent.data);
       if (message.type === 'log') {
-        console.log('[WebView Log]:', message.data.message);
         return;
       }
       
-      console.log('CaptchaScreen received:', message.type, message.data);
-
       switch (message.type) {
         case 'sdkReady':
           if (!sdkReadyRef.current) {

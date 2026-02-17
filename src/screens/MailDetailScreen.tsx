@@ -19,6 +19,7 @@ import {formatRelativeTime} from '../utils/timeFormat';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {getConversationMessages, markMessageAsRead, sendMessage} from '../services/api';
 import {useTheme} from '../components/ThemedComponents';
+import {useFloatingHeader} from '../components/ThemeHeader';
 import {
   SPACING,
   FONT_SIZE,
@@ -64,14 +65,6 @@ const MailDetailScreen: React.FC = () => {
   
   // WebView 内容高度状态
   const [contentHeights, setContentHeights] = useState<{[key: string]: number}>({});
-
-  // 监控messages状态变化
-  useEffect(() => {
-    console.log(`[MailDetail] 消息状态更新 - 当前消息数: ${messages.length}`);
-    if (messages.length > 0) {
-      console.log(`[MailDetail] 消息时间范围 - 最新: ${new Date(messages[0].sendTime).toLocaleString()}, 最旧: ${new Date(messages[messages.length - 1].sendTime).toLocaleString()}`);
-    }
-  }, [messages]);
 
   // 清理消息正文中的ANSI转义序列和HTML标签
   const cleanBody = (body: string) => {
@@ -202,31 +195,27 @@ const MailDetailScreen: React.FC = () => {
   // 加载消息
   const loadMessages = useCallback(async (pageNum: number = 1, isRefresh: boolean = false) => {
     if (isLoadingRef.current && !isRefresh) {
-      console.log('[MailDetail] 正在加载中，跳过重复请求');
       return;
     }
     
     isLoadingRef.current = true;
-    console.log(`[MailDetail] 开始加载消息 - 页码: ${pageNum}, 刷新: ${isRefresh}, speakerId: ${speakerId}`);
     
     try {
       const result = await getConversationMessages(speakerId, pageNum);
-      console.log(`[MailDetail] 接口返回 - 消息数: ${result.messages.length}, hasMore: ${result.hasMore}, total: ${result.total || 'N/A'}`);
+      
+      // 按时间降序排序
       
       // 按时间降序排序：新消息在前，旧消息在后
       // 因为使用了inverted，所以数组中新消息在前，显示时会自动反转，新消息显示在底部
       const sortedMessages = [...result.messages].sort((a, b) => b.sendTime - a.sendTime);
-      console.log(`[MailDetail] 排序后消息数: ${sortedMessages.length}`);
       
       if (pageNum === 1) {
         setMessages(sortedMessages);
         setSpeaker(result.speaker);
-        console.log(`[MailDetail] 第一页 - 设置消息数: ${sortedMessages.length}`);
       } else {
         // 加载更多旧消息，追加到数组后面（因为是降序，旧消息在后面）
         setMessages(prev => {
           const newMessages = [...prev, ...sortedMessages];
-          console.log(`[MailDetail] 加载更多 - 原有: ${prev.length}, 新增: ${sortedMessages.length}, 合并后: ${newMessages.length}`);
           return newMessages;
         });
       }
@@ -258,18 +247,15 @@ const MailDetailScreen: React.FC = () => {
       setRefreshing(false);
       setLoadingMore(false);
       isLoadingRef.current = false;
-      console.log(`[MailDetail] 加载完成 - loading: false, refreshing: false, loadingMore: false`);
     }
   }, [speakerId, navigation]);
 
   // 初始加载
   useEffect(() => {
-    console.log(`[MailDetail] 初始化 - speakerId: ${speakerId}, unread: ${mail.unread}`);
     loadMessages(1);
     
     // 只在有未读消息时才标记已读
     if (mail.unread > 0) {
-      console.log(`[MailDetail] 标记消息已读 - speakerId: ${speakerId}`);
       markMessageAsRead(speakerId).catch(error => {
         console.error('[MailDetail] 标记已读失败:', error);
       });
@@ -277,9 +263,10 @@ const MailDetailScreen: React.FC = () => {
   }, [loadMessages, speakerId, mail.unread]);
 
   // 设置导航标题
+  const setHeaderOptions = useFloatingHeader();
   useEffect(() => {
     if (speaker?.nick || speaker?.name || mail.fromNickname || mail.from) {
-      navigation.setOptions({
+      setHeaderOptions({
         title: speaker?.nick || speaker?.name || mail.fromNickname || mail.from,
       });
     }
