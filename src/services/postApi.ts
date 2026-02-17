@@ -260,6 +260,94 @@ export const replyPost = async (params: PostParams): Promise<PostResponse> => {
 };
 
 /**
+ * 编辑帖子参数接口
+ */
+export interface UpdateArticleParams {
+  articleId: string; // 帖子ID
+  subject: string; // 帖子标题
+  body: string; // 帖子内容
+  uploadToken?: string; // 上传图片的token（可选）
+}
+
+/**
+ * 编辑帖子API
+ * 
+ * - URL: https://wap.newsmth.net/wap/api/topic/updateArticle
+ * - Content-Type: application/x-www-form-urlencoded
+ * - 参数: articleId, body, subject, t, uploadToken(可选)
+ * 
+ * @param params 编辑帖子参数
+ * @returns 编辑响应
+ */
+export const updateArticle = async (params: UpdateArticleParams): Promise<PostResponse> => {
+  try {
+    const API_URL = 'https://wap.newsmth.net/wap/api/topic/updateArticle';
+
+    // 获取登录凭证
+    const cookies = await AsyncStorage.getItem('cookies');
+    if (!cookies) {
+      throw new Error('未登录，请先登录');
+    }
+
+    // 构建请求头
+    const headers = buildPostHeaders(
+      cookies,
+      'application/x-www-form-urlencoded',
+      `https://wap.newsmth.net/post?id=${params.articleId}`
+    );
+
+    // 构建Form Data
+    const timestamp = Date.now();
+    const formData = new URLSearchParams();
+    formData.append('articleId', params.articleId);
+    formData.append('subject', params.subject);
+    formData.append('body', params.body);
+    formData.append('t', String(timestamp));
+
+    // 添加图片上传token（如果有）
+    if (params.uploadToken) {
+      formData.append('uploadToken', params.uploadToken);
+    }
+
+    logRequest.start(API_URL, 'POST');
+    logRequest.params({
+      articleId: params.articleId,
+      subject: params.subject,
+      body: params.body.substring(0, 50) + '...',
+    });
+
+    const response = await fetchWithRetry(API_URL, {
+      method: 'POST',
+      headers,
+      body: formData.toString(),
+    }, 20000);
+
+    // 处理HTTP错误
+    if (!response.ok) {
+      const errorText = await response.text();
+      logRequest.error(API_URL, new Error(`HTTP ${response.status}: ${errorText || '编辑失败'}`));
+      throw new Error(`HTTP ${response.status}: ${errorText || '编辑失败'}`);
+    }
+
+    const result = await response.json();
+    logRequest.success(API_URL, result);
+
+    if ((result.code === 0 || result.code === 1) && (result.kbsCode === 0 || result.kbsCode === undefined)) {
+      return {
+        code: 1,
+        message: result.message || '编辑成功',
+        data: result.data || result,
+      };
+    } else {
+      throw new Error(result.message || result.error || '编辑失败');
+    }
+  } catch (error: any) {
+    console.error('编辑帖子错误:', error);
+    throw error;
+  }
+};
+
+/**
  * 获取草稿
  */
 export const getDraft = async (boardId: string): Promise<PostParams | null> => {
@@ -609,4 +697,64 @@ export const uploadImage = async (
     ? { uri: imageAsset } 
     : imageAsset;
   return uploadImages(boardId, token, [asset]);
+};
+
+/**
+ * 删除帖子/回复API
+ * 
+ * - URL: https://wap.newsmth.net/wap/api/topic/delete/article/{articleId}
+ * - Method: DELETE
+ * - Content-Type: application/x-www-form-urlencoded
+ * 
+ * @param articleId 要删除的帖子/回复ID
+ * @returns 删除响应
+ */
+export const deleteArticle = async (articleId: string): Promise<PostResponse> => {
+  try {
+    const API_URL = `https://wap.newsmth.net/wap/api/topic/delete/article/${articleId}`;
+
+    // 获取登录凭证
+    const cookies = await AsyncStorage.getItem('cookies');
+    if (!cookies) {
+      throw new Error('未登录，请先登录');
+    }
+
+    // 构建请求头
+    const headers = buildPostHeaders(
+      cookies,
+      'application/x-www-form-urlencoded',
+      'https://wap.newsmth.net/'
+    );
+
+    logRequest.start(API_URL, 'DELETE');
+
+    const response = await fetchWithRetry(API_URL, {
+      method: 'DELETE',
+      headers,
+      body: '',
+    }, 20000);
+
+    // 处理HTTP错误
+    if (!response.ok) {
+      const errorText = await response.text();
+      logRequest.error(API_URL, new Error(`HTTP ${response.status}: ${errorText || '删除失败'}`));
+      throw new Error(`HTTP ${response.status}: ${errorText || '删除失败'}`);
+    }
+
+    const result = await response.json();
+    logRequest.success(API_URL, result);
+
+    if ((result.code === 0 || result.code === 1) && (result.kbsCode === 0 || result.kbsCode === undefined)) {
+      return {
+        code: 1,
+        message: result.message || '删除成功',
+        data: result.data || result,
+      };
+    } else {
+      throw new Error(result.message || result.error || '删除失败');
+    }
+  } catch (error: any) {
+    console.error('删除帖子/回复错误:', error);
+    throw error;
+  }
 };

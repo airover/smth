@@ -1488,6 +1488,7 @@ export const getTopicReplies = async (
           content: contentText,
           postTime: new Date(article.postTime || Date.now()).toISOString(),
           floor: article.topicOrder,
+          status: article.status, // 回复状态，0为正常
           attachments: (article.attachments || [])
             .filter((att: any) => att != null) // 过滤掉 null 和 undefined
             .map((att: any) => {

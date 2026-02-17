@@ -25,6 +25,7 @@ import {useRoute, useNavigation} from '@react-navigation/native';
 import {WebView} from 'react-native-webview';
 import {getPostDetail, getTopicReplies, deletePost, getUserInfo, addFavoriteTopic, addLike, removeLike, getPostPermissions, PostPermissions} from '../services/api';
 import PostCaptchaScreen from './PostCaptchaScreen';
+import {deleteArticle} from '../services/postApi';
 import {Post, Reply, Attachment, Like} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
@@ -179,11 +180,12 @@ const PostDetailScreen: React.FC = () => {
           style={styles.headerMenuButton}
           onPress={() => {
             // 构建菜单选项
-            const options = [];
+            const options: string[] = [];
             let deleteIndex = -1;
             
-            // 只有当前用户是发帖人时才显示删除选项
+            // 只有当前用户是发帖人时才显示编辑和删除选项
             if (currentUsername && post && currentUsername === post.author) {
+              options.push('编辑');
               options.push('删除');
               deleteIndex = options.length - 1;
             }
@@ -206,7 +208,9 @@ const PostDetailScreen: React.FC = () => {
                   
                   // 根据选项执行对应操作
                   const selectedOption = options[buttonIndex];
-                  if (selectedOption === '删除') {
+                  if (selectedOption === '编辑') {
+                    handleEditPost();
+                  } else if (selectedOption === '删除') {
                     handleDeletePost();
                   } else if (selectedOption === '回复') {
                     handleReply();
@@ -222,6 +226,10 @@ const PostDetailScreen: React.FC = () => {
               const buttons = [];
               
               if (currentUsername && post && currentUsername === post.author) {
+                buttons.push({
+                  text: '编辑',
+                  onPress: handleEditPost,
+                });
                 buttons.push({
                   text: '删除',
                   style: 'destructive' as const,
@@ -346,8 +354,8 @@ const PostDetailScreen: React.FC = () => {
         }
 
         if (repliesData) {
-          // 过滤掉第一层（主贴），因为已经在 ListHeaderComponent 中显示了
-          const filteredReplies = (repliesData as {replies: any[], totalItems: number}).replies.filter((r: any) => r.floor !== 1);
+          // 过滤掉第一层（主贴）和status非0的回复（status=0为正常，status=1为已删除等异常状态，status不存在时视为正常）
+          const filteredReplies = (repliesData as {replies: any[], totalItems: number}).replies.filter((r: any) => r.floor !== 1 && (r.status == null || r.status === 0));
           setReplies(filteredReplies);
           setPage(1);
           setHasMore((repliesData as {replies: any[], totalItems: number}).replies.length >= 20); // 假设 pageSize 为 20
@@ -381,7 +389,7 @@ const PostDetailScreen: React.FC = () => {
           // 使用Set来去重，确保不会有重复的id
           setReplies(prev => {
             const existingIds = new Set(prev.map(r => r.id));
-            const newReplies = (repliesData as {replies: any[], totalItems: number}).replies.filter((r: any) => !existingIds.has(r.id));
+            const newReplies = (repliesData as {replies: any[], totalItems: number}).replies.filter((r: any) => !existingIds.has(r.id) && (r.status == null || r.status === 0));
             return [...prev, ...newReplies];
           });
           setPage(pageNum);
@@ -495,7 +503,43 @@ const PostDetailScreen: React.FC = () => {
     });
   };
 
+  // 编辑帖子
+  const handleEditPost = () => {
+    if (!post) return;
+
+    navigation.navigate('CreatePost', {
+      boardId: board,
+      boardName: post.boardName || board,
+      articleId: post.articleId || post.id,
+      editTitle: post.title,
+      editContent: post.contentText || post.content || '',
+      mode: 'edit',
+    });
+  };
+
   // 处理引用回复
+  // 处理删除回复
+  const handleDeleteReply = (reply: Reply) => {
+    Alert.alert('确认删除', '确定要删除这条回复吗？', [
+      {text: '取消', style: 'cancel'},
+      {
+        text: '删除',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await deleteArticle(reply.id);
+            // 删除成功后从列表中移除
+            setReplies(prev => prev.filter(r => r.id !== reply.id));
+            Alert.alert('成功', '回复已删除');
+          } catch (error: any) {
+            console.error('删除回复失败:', error);
+            Alert.alert('失败', error.message || '删除回复失败');
+          }
+        },
+      },
+    ]);
+  };
+
   const handleQuoteReply = (reply: Reply) => {
     if (!post) return;
 
@@ -1442,13 +1486,24 @@ const PostDetailScreen: React.FC = () => {
       {renderAttachments(item.attachments || [])}
       <View style={styles.replyFooter}>
         <Text style={[styles.replyTime, {color: theme.secondaryText}]}>{formatRelativeTime(item.postTime)}</Text>
-        <TouchableOpacity
-          style={[styles.quoteReplyButton, {borderColor: theme.border}]}
-          onPress={() => handleQuoteReply(item)}
-          activeOpacity={0.7}
-        >
-          <Text style={[styles.quoteReplyButtonText, {color: theme.primary}]}>💬</Text>
-        </TouchableOpacity>
+        <View style={styles.replyActions}>
+          {currentUsername && item.author === currentUsername && (
+            <TouchableOpacity
+              style={[styles.deleteReplyButton, {borderColor: theme.border}]}
+              onPress={() => handleDeleteReply(item)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.deleteReplyButtonText}>删除</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            style={[styles.quoteReplyButton, {borderColor: theme.border}]}
+            onPress={() => handleQuoteReply(item)}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.quoteReplyButtonText, {color: theme.primary}]}>💬</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </View>
   );
@@ -2251,9 +2306,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 8,
   },
-  quoteReplyButton: {
+  deleteReplyButton: {
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    height: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  deleteReplyButtonText: {
+    fontSize: 12,
+    color: '#FF3B30',
+    fontWeight: '500',
+  },
+  quoteReplyButton: {
+    paddingHorizontal: 16,
+    height: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
     borderRadius: 4,
     borderWidth: 1,
     borderColor: '#e0e0e0',

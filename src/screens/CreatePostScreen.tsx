@@ -18,7 +18,7 @@ import {
 } from 'react-native';
 import ImageCropPicker from 'react-native-image-crop-picker';
 import {useNavigation, useRoute} from '@react-navigation/native';
-import {createPost, replyPost, getDraft, saveDraft, clearDraft, checkPublish, getUploadToken, uploadImages} from '../services/postApi';
+import {createPost, replyPost, updateArticle, getDraft, saveDraft, clearDraft, checkPublish, getUploadToken, uploadImages} from '../services/postApi';
 import PostCaptchaScreen from './PostCaptchaScreen';
 import {
   SPACING,
@@ -33,8 +33,11 @@ interface RouteParams {
   boardName?: string; // 版面名称（显示用）
   reId?: string; // 如果是回复，传入被回复的帖子ID
   reTitle?: string; // 被回复的帖子标题
-  mode?: 'create' | 'reply'; // 发帖模式
+  mode?: 'create' | 'reply' | 'edit'; // 发帖模式
   quotedContent?: string; // 引用的内容
+  articleId?: string; // 编辑模式下的帖子ID
+  editTitle?: string; // 编辑模式下的原始标题
+  editContent?: string; // 编辑模式下的原始内容
 }
 
 const CreatePostScreen: React.FC = () => {
@@ -43,6 +46,7 @@ const CreatePostScreen: React.FC = () => {
   const params = (route.params as RouteParams) || {};
 
   const isReplyMode = params.mode === 'reply' || !!params.reId;
+  const isEditMode = params.mode === 'edit' && !!params.articleId;
 
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
@@ -64,7 +68,7 @@ const CreatePostScreen: React.FC = () => {
   // 设置导航栏
   useEffect(() => {
     navigation.setOptions({
-      title: isReplyMode ? '回复' : '发帖',
+      title: isEditMode ? '编辑' : (isReplyMode ? '回复' : '发帖'),
       headerRight: () => (
         <TouchableOpacity
           onPress={handleSubmit}
@@ -73,16 +77,27 @@ const CreatePostScreen: React.FC = () => {
           {submitting ? (
             <ActivityIndicator size="small" color="#007AFF" />
           ) : (
-            <Text style={styles.submitText}>发布</Text>
+            <Text style={styles.submitText}>{isEditMode ? '保存' : '发布'}</Text>
           )}
         </TouchableOpacity>
       ),
     });
   }, [navigation, isReplyMode, submitting, title, content, captchaVerified, captchaTicket, captchaRandstr, selectedImages, uploadToken, uploading]);
 
-  // 加载草稿
+  // 加载草稿 / 编辑模式填充原始内容
   useEffect(() => {
     const loadDraft = async () => {
+      // 编辑模式：填充原始标题和内容
+      if (isEditMode) {
+        if (params.editTitle) {
+          setTitle(params.editTitle);
+        }
+        if (params.editContent) {
+          setContent(params.editContent);
+        }
+        setLoadingDraft(false);
+        return;
+      }
       if (!isReplyMode && params.boardId) {
         const draft = await getDraft(params.boardId);
         if (draft) {
@@ -118,11 +133,11 @@ const CreatePostScreen: React.FC = () => {
       setLoadingDraft(false);
     };
     loadDraft();
-  }, [params.boardId, isReplyMode, params.reTitle, params.quotedContent]);
+  }, [params.boardId, isReplyMode, isEditMode, params.reTitle, params.quotedContent, params.editTitle, params.editContent]);
 
-  // 自动保存草稿
+  // 自动保存草稿（编辑模式下不保存草稿）
   useEffect(() => {
-    if (!isReplyMode && !loadingDraft && (title || content)) {
+    if (!isReplyMode && !isEditMode && !loadingDraft && (title || content)) {
       const timer = setTimeout(() => {
         saveDraft({
           boardId: params.boardId,
@@ -146,8 +161,8 @@ const CreatePostScreen: React.FC = () => {
       return;
     }
 
-    // 检查验证码是否已验证
-    if (!captchaVerified || !captchaTicket || !captchaRandstr) {
+    // 编辑模式不需要验证码
+    if (!isEditMode && (!captchaVerified || !captchaTicket || !captchaRandstr)) {
       Alert.alert('提示', '请先完成人机验证');
       return;
     }
@@ -158,41 +173,54 @@ const CreatePostScreen: React.FC = () => {
       return;
     }
 
-    // 解析验证码参数
+    // 解析验证码参数（编辑模式不需要）
     let captchaParams;
-    const parts = captchaTicket.split('|');
-    if (parts.length >= 4) {
-      captchaParams = {
-        captcha_id: 'ade4a85345062fda4657d64aa3206cba', // 发帖专用的captcha_id
-        lot_number: parts[0],
-        captcha_output: parts[1],
-        pass_token: parts[2],
-        gen_time: parts[3],
-      };
+    if (!isEditMode && captchaTicket) {
+      const parts = captchaTicket.split('|');
+      if (parts.length >= 4) {
+        captchaParams = {
+          captcha_id: 'ade4a85345062fda4657d64aa3206cba', // 发帖专用的captcha_id
+          lot_number: parts[0],
+          captcha_output: parts[1],
+          pass_token: parts[2],
+          gen_time: parts[3],
+        };
+      }
     }
 
     setSubmitting(true);
     try {
-      const postParams = {
-        boardId: params.boardId,
-        boardName: params.boardName,
-        subject: title.trim(),
-        body: content.trim(),
-        reId: params.reId,
-        captchaParams, // 传递验证码参数
-        uploadToken: uploadToken || undefined, // 传递图片上传token
-      };
+      if (isEditMode) {
+        // 编辑模式：调用 updateArticle 接口
+        await updateArticle({
+          articleId: params.articleId!,
+          subject: title.trim(),
+          body: content.trim(),
+          uploadToken: uploadToken || undefined,
+        });
+      } else {
+        const postParams = {
+          boardId: params.boardId,
+          boardName: params.boardName,
+          subject: title.trim(),
+          body: content.trim(),
+          reId: params.reId,
+          captchaParams, // 传递验证码参数
+          uploadToken: uploadToken || undefined, // 传递图片上传token
+        };
 
-      await (isReplyMode
-        ? replyPost(postParams)
-        : createPost(postParams));
+        await (isReplyMode
+          ? replyPost(postParams)
+          : createPost(postParams));
 
-      // 发帖成功后清除草稿
-      if (!isReplyMode) {
-        await clearDraft(params.boardId);
+        // 发帖成功后清除草稿
+        if (!isReplyMode) {
+          await clearDraft(params.boardId);
+        }
       }
 
-      Alert.alert('成功', isReplyMode ? '回复成功' : '发帖成功', [
+      const successMsg = isEditMode ? '保存成功' : (isReplyMode ? '回复成功' : '发帖成功');
+      Alert.alert('成功', successMsg, [
         {
           text: '确定',
           onPress: () => {
@@ -202,11 +230,14 @@ const CreatePostScreen: React.FC = () => {
       ]);
     } catch (error: any) {
       console.error('提交失败:', error);
-      Alert.alert('失败', error.message || (isReplyMode ? '回复失败' : '发帖失败'));
-      // 验证码失败后清除，需要重新验证
-      setCaptchaTicket(null);
-      setCaptchaRandstr(null);
-      setCaptchaVerified(false);
+      const failMsg = isEditMode ? '保存失败' : (isReplyMode ? '回复失败' : '发帖失败');
+      Alert.alert('失败', error.message || failMsg);
+      if (!isEditMode) {
+        // 验证码失败后清除，需要重新验证
+        setCaptchaTicket(null);
+        setCaptchaRandstr(null);
+        setCaptchaVerified(false);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -494,7 +525,7 @@ const CreatePostScreen: React.FC = () => {
         style={styles.container}>
 
         <ScrollView style={styles.content} keyboardShouldPersistTaps="handled">
-          {/* 键盘工具栏 - 移到ScrollView内部，确保与TextInput在同一渲染上下文中，提高稳定性 */}
+          {/* 键盘工具栏 - 移到ScrollView内部，确保与TextInput在同一渲染上下文中，提高稳定性（编辑模式下不显示） */}
           {Platform.OS === 'ios' && (
             <InputAccessoryView nativeID={inputAccessoryViewID}>
               <View style={styles.keyboardAccessory}>
@@ -510,7 +541,7 @@ const CreatePostScreen: React.FC = () => {
           {/* 版面信息 */}
           <View style={styles.boardInfo}>
             <Text style={styles.boardLabel}>
-              {isReplyMode ? '回复到：' : '发帖到：'}
+              {isEditMode ? '编辑帖子：' : (isReplyMode ? '回复到：' : '发帖到：')}
             </Text>
             <Text style={styles.boardName}>
               {params.boardName || params.boardId}
@@ -536,7 +567,7 @@ const CreatePostScreen: React.FC = () => {
           <View style={styles.inputGroup}>
             <View style={styles.contentInputContainer}>
               <TextInput
-                style={styles.contentInput}
+                style={[styles.contentInput, isEditMode && {paddingBottom: SPACING.md}]}
                 value={content}
                 onChangeText={setContent}
                 placeholder="请输入内容"
@@ -547,20 +578,22 @@ const CreatePostScreen: React.FC = () => {
                 editable={!submitting}
                 inputAccessoryViewID={inputAccessoryViewID}
               />
-              {/* 图片选择按钮（左下角） */}
-              <TouchableOpacity
-                style={styles.imagePickerButton}
-                onPress={handleShowImageSourcePicker}
-                disabled={submitting || uploading || selectedImages.length >= 9}
-                activeOpacity={0.6}>
-                <Text style={styles.imagePickerButtonText}>🖼️</Text>
-              </TouchableOpacity>
+              {/* 图片选择按钮（左下角），编辑模式下不显示 */}
+              {!isEditMode && (
+                <TouchableOpacity
+                  style={styles.imagePickerButton}
+                  onPress={handleShowImageSourcePicker}
+                  disabled={submitting || uploading || selectedImages.length >= 9}
+                  activeOpacity={0.6}>
+                  <Text style={styles.imagePickerButtonText}>🖼️</Text>
+                </TouchableOpacity>
+              )}
             </View>
             <Text style={styles.counter}>{content.length}/10000</Text>
           </View>
 
-          {/* 已选择的图片列表 */}
-          {selectedImages.length > 0 && (
+          {/* 已选择的图片列表（编辑模式下不显示） */}
+          {!isEditMode && selectedImages.length > 0 && (
             <View style={styles.inputGroup}>
               <View style={styles.imageListHeader}>
                 <Text style={styles.sectionTitle}>已选择 {selectedImages.length}/9 张图片</Text>
@@ -605,8 +638,8 @@ const CreatePostScreen: React.FC = () => {
             </View>
           )}
 
-          {/* 人机验证 */}
-          <View style={styles.inputGroup}>
+          {/* 人机验证（编辑模式下不显示） */}
+          {!isEditMode && <View style={styles.inputGroup}>
             <TouchableOpacity
               style={[
                 styles.captchaButton,
@@ -628,15 +661,23 @@ const CreatePostScreen: React.FC = () => {
                 <Text style={{fontSize: 14, color: '#007AFF'}}>去验证</Text>
               )}
             </TouchableOpacity>
-          </View>
+          </View>}
 
           {/* 提示信息 */}
           <View style={styles.tipContainer}>
             <Text style={styles.tipText}>💡 提示：</Text>
-            <Text style={styles.tipText}>• 点击发布前先完成人机验证</Text>
-            <Text style={styles.tipText}>• 点击内容框左下角图标可添加图片（最多9张）</Text>
-            <Text style={styles.tipText}>• 图片上传完成后才能发布</Text>
-            <Text style={styles.tipText}>• 草稿会自动保存（不含图片）</Text>
+            {isEditMode ? (
+              <>
+                <Text style={styles.tipText}>• 修改标题和内容后点击右上角保存</Text>
+              </>
+            ) : (
+              <>
+                <Text style={styles.tipText}>• 点击发布前先完成人机验证</Text>
+                <Text style={styles.tipText}>• 点击内容框左下角图标可添加图片（最多9张）</Text>
+                <Text style={styles.tipText}>• 图片上传完成后才能发布</Text>
+                <Text style={styles.tipText}>• 草稿会自动保存（不含图片）</Text>
+              </>
+            )}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
