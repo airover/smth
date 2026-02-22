@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# 图标生成脚本 - 为 Aurelia (水母) 应用生成所有平台所需的图标
+# 图标生成脚本 - 为 Aurelia (海月水母) 应用生成所有平台所需的图标
 # 使用方法: ./generate-icons.sh <source-icon-1024.png>
 # 
 # 依赖: ImageMagick
@@ -55,7 +55,7 @@ if [ "$SIZE" != "1024x1024" ]; then
 fi
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}  Aurelia (水母) 图标生成工具${NC}"
+echo -e "${BLUE}  Aurelia (海月水母) 图标生成工具${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 echo -e "源图标: ${GREEN}$SOURCE_ICON${NC}"
