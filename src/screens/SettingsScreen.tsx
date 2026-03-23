@@ -12,6 +12,7 @@ import {
 import {useNavigation, useFocusEffect} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {getUserInfo, logout} from '../services/api';
+import {getMessages} from '../services/dataFetcher';
 import {User} from '../types';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {useTheme} from '../components/ThemedComponents';
@@ -31,6 +32,7 @@ const SettingsScreen: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [username, setUsername] = useState<string>('');
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [unreadMailCount, setUnreadMailCount] = useState<number>(0);
 
   useEffect(() => {
     loadUserInfo(false);
@@ -40,8 +42,26 @@ const SettingsScreen: React.FC = () => {
   useFocusEffect(
     useCallback(() => {
       loadUserInfo(false);
+      loadUnreadMailCount();
     }, [])
   );
+
+  // 获取未读邮件数量
+  const loadUnreadMailCount = async () => {
+    try {
+      const loginStatus = await AsyncStorage.getItem('isLoggedIn');
+      if (loginStatus !== 'true') {
+        setUnreadMailCount(0);
+        return;
+      }
+      const messages = await getMessages(0);
+      const count = messages.reduce((sum, mail) => sum + (mail.unread || 0), 0);
+      setUnreadMailCount(count);
+    } catch (error) {
+      console.log('loadUnreadMailCount error:', error);
+      // 静默失败，不影响页面显示
+    }
+  };
 
   const loadUserInfo = async (forceRefresh: boolean = false) => {
     try {
@@ -300,6 +320,13 @@ const SettingsScreen: React.FC = () => {
               <View style={styles.menuItemLeft}>
                 <Text style={styles.menuIcon}>✉️</Text>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>站内邮箱</Text>
+                {unreadMailCount > 0 && (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>
+                      {unreadMailCount > 99 ? '99+' : unreadMailCount}
+                    </Text>
+                  </View>
+                )}
               </View>
               <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
             </TouchableOpacity>
@@ -422,6 +449,21 @@ const styles = StyleSheet.create({
   menuItemText: {
     fontSize: FONT_SIZE.xl,
     // color 由主题动态控制
+  },
+  badge: {
+    backgroundColor: '#FF3B30',
+    borderRadius: scaleModerate(10),
+    minWidth: scaleModerate(20),
+    height: scaleModerate(20),
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: scaleModerate(6),
+    marginLeft: SPACING.sm,
+  },
+  badgeText: {
+    color: '#FFFFFF',
+    fontSize: FONT_SIZE.xs,
+    fontWeight: 'bold',
   },
   chevron: {
     fontSize: FONT_SIZE.xl,
