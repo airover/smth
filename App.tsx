@@ -1,5 +1,5 @@
-import React, {useState, useEffect, useMemo} from 'react';
-import {View, StyleSheet, useColorScheme, NativeModules} from 'react-native';
+import React, {useState, useEffect, useMemo, useRef} from 'react';
+import {View, StyleSheet, useColorScheme, NativeModules, AppState} from 'react-native';
 import {NavigationContainer, DefaultTheme, DarkTheme} from '@react-navigation/native';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
 
@@ -10,6 +10,7 @@ import {SettingsProvider, useSettings} from './src/context/SettingsContext';
 import {AuthProvider, useAuth} from './src/context/AuthContext';
 import {ReadPostsProvider} from './src/context/ReadPostsContext';
 import {getTheme} from './src/utils/theme';
+import {startMSiteKeepAlive, stopMSiteKeepAlive} from './src/services/auth';
 
 const {SplashScreenManager} = NativeModules;
 
@@ -34,6 +35,18 @@ const AppContent = () => {
   useEffect(() => {
     initializeApp();
   }, []);
+
+  // M 站心跳保活：用户已登录时启动，登出时停止
+  useEffect(() => {
+    if (isLoggedIn && !authLoading) {
+      startMSiteKeepAlive();
+    } else {
+      stopMSiteKeepAlive();
+    }
+    return () => {
+      stopMSiteKeepAlive();
+    };
+  }, [isLoggedIn, authLoading]);
 
   // 当 app 初始化完成且认证状态加载完成后，隐藏原生启动屏覆盖层
   useEffect(() => {

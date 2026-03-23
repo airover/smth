@@ -336,3 +336,74 @@ export const storeMSiteCookies = async (setCookieHeader: string): Promise<void> 
     console.error('Store M site cookies error:', error);
   }
 };
+
+// ==================== M 站心跳保活 ====================
+
+const M_SITE_KEEPALIVE_INTERVAL = 60 * 1000; // 1分钟
+let mSiteKeepAliveTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * M 站心跳保活 - 定期请求 M 站页面以防止 session 过期
+ * 仅在前台运行时有效，App 退到后台后定时器会被系统挂起
+ */
+const doMSiteKeepAlive = async (): Promise<void> => {
+  try {
+    const cookies = await getMSiteCookies();
+    if (!cookies) {
+      // 没有 M 站 cookie，停止心跳
+      console.log('[M站心跳] 无 M 站 Cookie，跳过心跳');
+      return;
+    }
+
+    const response = await fetch('https://m.newsmth.net/favor', {
+      method: 'GET',
+      headers: {
+        'Cookie': cookies,
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9',
+        'Referer': 'https://m.newsmth.net/favor',
+      },
+      credentials: 'include',
+    } as any);
+
+    const html = await response.text();
+    
+    if (isMSiteResponseLoggedIn(html)) {
+      console.log('[M站心跳] ✅ session 仍然有效');
+    } else {
+      console.log('[M站心跳] ⚠️ session 已过期，清除本地 Cookie');
+      await handleMSiteCookieExpired();
+    }
+  } catch (error) {
+    // 网络错误不处理，下次心跳再试
+    console.log('[M站心跳] 请求失败（可能网络问题），跳过:', (error as any)?.message || error);
+  }
+};
+
+/**
+ * 启动 M 站心跳保活定时器
+ * 应在用户登录后调用，会自动检查是否有 M 站 Cookie
+ */
+export const startMSiteKeepAlive = (): void => {
+  // 避免重复启动
+  if (mSiteKeepAliveTimer) {
+    console.log('[M站心跳] 定时器已存在，跳过重复启动');
+    return;
+  }
+
+  console.log('[M站心跳] 启动心跳保活，间隔:', M_SITE_KEEPALIVE_INTERVAL / 1000, '秒');
+  mSiteKeepAliveTimer = setInterval(doMSiteKeepAlive, M_SITE_KEEPALIVE_INTERVAL);
+};
+
+/**
+ * 停止 M 站心跳保活定时器
+ * 应在用户登出或 App 销毁时调用
+ */
+export const stopMSiteKeepAlive = (): void => {
+  if (mSiteKeepAliveTimer) {
+    clearInterval(mSiteKeepAliveTimer);
+    mSiteKeepAliveTimer = null;
+    console.log('[M站心跳] 已停止心跳保活');
+  }
+};

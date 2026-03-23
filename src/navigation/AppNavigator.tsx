@@ -3,6 +3,7 @@ import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import {Text, TouchableOpacity, ImageBackground, StyleSheet} from 'react-native';
 import Svg, {Path} from 'react-native-svg';
+import {HomeIcon, BoardIcon, UserIcon} from '../components/SvgIcons';
 
 import {useTheme} from '../components/ThemedComponents';
 import {FloatingHeaderProvider} from '../components/ThemeHeader';
@@ -78,7 +79,7 @@ const MainTabs = () => {
           title: '首页',
           headerShown: !hasBackgroundImage,
           tabBarIcon: ({color}) => (
-            <Text style={{color, fontSize: 24}}>🏠</Text>
+            <HomeIcon size={24} color={color} />
           ),
         }}
       >
@@ -94,7 +95,7 @@ const MainTabs = () => {
           title: '版面',
           headerShown: !hasBackgroundImage,
           tabBarIcon: ({color}) => (
-            <Text style={{color, fontSize: 24}}>📋</Text>
+            <BoardIcon size={24} color={color} />
           ),
         }}
         listeners={({navigation}) => ({
@@ -130,7 +131,7 @@ const MainTabs = () => {
           title: '我',
           headerShown: !hasBackgroundImage,
           tabBarIcon: ({color}) => (
-            <Text style={{color, fontSize: 24}}>⚙️</Text>
+            <UserIcon size={24} color={color} />
           ),
         }}
       >

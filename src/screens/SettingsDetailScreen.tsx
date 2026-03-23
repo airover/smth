@@ -274,7 +274,6 @@ const subject = encodeURIComponent('海月水母用户反馈');
                 style={styles.menuItem}
                 onPress={() => navigation.navigate('UserProfile', { username })}>
                 <View style={styles.menuItemLeft}>
-                  <Text style={styles.menuIcon}>👤</Text>
                   <Text style={[styles.menuItemText, {color: theme.text}]}>个人资料</Text>
                 </View>
                 <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
@@ -291,7 +290,6 @@ const subject = encodeURIComponent('海月水母用户反馈');
               style={styles.menuItem}
               onPress={() => setShowFontSizeModal(true)}>
               <View style={styles.menuItemLeft}>
-                <Text style={styles.menuIcon}>🔤</Text>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>帖子字体大小</Text>
               </View>
               <View style={styles.menuItemRight}>
@@ -304,7 +302,6 @@ const subject = encodeURIComponent('海月水母用户反馈');
               style={styles.menuItem}
               onPress={() => setShowThemeModal(true)}>
               <View style={styles.menuItemLeft}>
-                <Text style={styles.menuIcon}>🌙</Text>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>主题模式</Text>
               </View>
               <View style={styles.menuItemRight}>
@@ -321,7 +318,6 @@ const subject = encodeURIComponent('海月水母用户反馈');
           <View style={[styles.card, {backgroundColor: theme.cardBackground}]}>
             <View style={styles.menuItem}>
               <View style={styles.menuItemLeft}>
-                <Text style={styles.menuIcon}>📊</Text>
                 <View style={styles.switchItemContent}>
                   <Text style={[styles.menuItemText, {color: theme.text}]}>按回复时间排序</Text>
                   <Text style={[styles.switchItemDescription, {color: theme.secondaryText}]}>
@@ -350,7 +346,6 @@ const subject = encodeURIComponent('海月水母用户反馈');
               style={styles.menuItem}
               onPress={() => navigation.navigate('CacheManagement')}>
               <View style={styles.menuItemLeft}>
-                <Text style={styles.menuIcon}>🗂</Text>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>缓存管理</Text>
               </View>
               <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
@@ -371,7 +366,6 @@ const subject = encodeURIComponent('海月水母用户反馈');
               style={styles.menuItem}
               onPress={handleFeedback}>
               <View style={styles.menuItemLeft}>
-                <Text style={styles.menuIcon}>💬</Text>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>用户反馈</Text>
               </View>
               <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
@@ -381,7 +375,6 @@ const subject = encodeURIComponent('海月水母用户反馈');
               style={styles.menuItem}
               onPress={() => setShowDisclaimerModal(true)}>
               <View style={styles.menuItemLeft}>
-                <Text style={styles.menuIcon}>📄</Text>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>免责声明</Text>
               </View>
               <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
@@ -398,7 +391,6 @@ const subject = encodeURIComponent('海月水母用户反馈');
               <View style={[styles.card, {backgroundColor: theme.cardBackground}]}>
                 <View style={styles.menuItem}>
                   <View style={styles.menuItemLeft}>
-                    <Text style={styles.menuIcon}>🔗</Text>
                     <View style={styles.switchItemContent}>
                   <Text style={[styles.menuItemText, {color: theme.text}]}>登录 M 站</Text>
                       <Text style={[styles.switchItemDescription, {color: theme.secondaryText}]}>
@@ -421,7 +413,6 @@ const subject = encodeURIComponent('海月水母用户反馈');
                   style={styles.menuItem}
                   onPress={() => navigation.navigate('ChangePassword')}>
                   <View style={styles.menuItemLeft}>
-                    <Text style={styles.menuIcon}>🔒</Text>
                     <Text style={[styles.menuItemText, {color: theme.text}]}>修改密码</Text>
                   </View>
                   <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
@@ -431,7 +422,6 @@ const subject = encodeURIComponent('海月水母用户反馈');
                   style={styles.menuItem}
                   onPress={() => navigation.navigate('AccountSwitch')}>
                   <View style={styles.menuItemLeft}>
-                    <Text style={styles.menuIcon}>👥</Text>
                     <Text style={[styles.menuItemText, {color: theme.text}]}>切换账号</Text>
                   </View>
                   <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
@@ -587,12 +577,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
-  menuIcon: {
-    fontSize: FONT_SIZE.xxl,
-    marginRight: SPACING.md,
-    width: scaleModerate(28),
-    textAlign: 'center',
-  },
+
   menuItemText: {
     fontSize: FONT_SIZE.xl,
     // color 由主题动态控制

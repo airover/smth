@@ -24,6 +24,7 @@ import Clipboard from '@react-native-clipboard/clipboard';
 import ImageCropPicker from 'react-native-image-crop-picker';
 import QRCode from 'react-native-qrcode-svg';
 import Svg, { Path, Circle, Rect } from 'react-native-svg';
+import {SearchIcon, CameraIcon, StarIcon, MapPinIcon, CheckIcon, MailIcon, ImageIcon, TrashIcon, FlashlightIcon, LightbulbIcon} from '../components/SvgIcons';
 import {Camera, useCameraDevice, useCodeScanner} from 'react-native-vision-camera';
 import {useRoute, useNavigation} from '@react-navigation/native';
 import {getUserInfo, fetchUserInfo, sendMessage, addBlack, removeBlack, addFriend, removeFriend, checkIsHerBlack, getFriendsList, getBlackList} from '../services/api';
@@ -997,14 +998,14 @@ const UserProfileScreen: React.FC = () => {
                 style={styles.topBarButton}
                 onPress={() => navigation.navigate('SearchInput' as never)}
               >
-                <Text style={styles.topBarIcon}>🔍</Text>
+                <SearchIcon size={scaleModerate(20)} color="#333" />
               </TouchableOpacity>
               <View style={styles.topBarSpacer} />
               <TouchableOpacity 
                 style={styles.topBarButton}
                 onPress={handleOpenScanner}
               >
-                <Text style={styles.topBarIcon}>📷</Text>
+                <CameraIcon size={scaleModerate(20)} color="#333" />
               </TouchableOpacity>
               <View style={styles.topBarSpacer} />
               <TouchableOpacity 
@@ -1123,7 +1124,10 @@ const UserProfileScreen: React.FC = () => {
               </View>
             )}
             {user?.title && (
-              <Text style={styles.titleText}>⭐{user.title}</Text>
+              <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                <StarIcon size={scaleModerate(14)} color="#FFD700" />
+                <Text style={[styles.titleText, {marginLeft: 2}]}>{user.title}</Text>
+              </View>
             )}
             {user?.createTime && (
               <View style={styles.registerTimeBadge}>
@@ -1181,7 +1185,10 @@ const UserProfileScreen: React.FC = () => {
 
           {/* IP属地 */}
           {user?.city && (
-            <Text style={styles.locationText}>📍IP属地: {user.city}</Text>
+            <View style={{flexDirection: 'row', alignItems: 'center'}}>
+              <MapPinIcon size={scaleModerate(14)} color="#999" />
+              <Text style={[styles.locationText, {marginLeft: 2}]}>IP属地: {user.city}</Text>
+            </View>
           )}
         </View>
 
@@ -1250,17 +1257,23 @@ const UserProfileScreen: React.FC = () => {
               >
                 {followingLoading ? (
                   <ActivityIndicator size="small" color={isFollowing ? '#007AFF' : '#fff'} />
+                ) : isFollowing ? (
+                  <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                    <CheckIcon size={14} color="#007AFF" />
+                    <Text style={[styles.primaryButtonText, styles.primaryButtonTextFollowed]}> 已关注</Text>
+                  </View>
                 ) : (
-                  <Text style={[styles.primaryButtonText, isFollowing && styles.primaryButtonTextFollowed]}>
-                    {isFollowing ? '✓ 已关注' : '+ 关注'}
-                  </Text>
+                  <Text style={styles.primaryButtonText}>+ 关注</Text>
                 )}
               </TouchableOpacity>
               <TouchableOpacity 
                 style={styles.secondaryButton}
                 onPress={() => setShowMessageModal(true)}
               >
-                <Text style={styles.secondaryButtonText}>✉️ 发消息</Text>
+                <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                  <MailIcon size={scaleModerate(14)} color="#007AFF" />
+                  <Text style={[styles.secondaryButtonText, {marginLeft: 4}]}>发消息</Text>
+                </View>
               </TouchableOpacity>
             </>
           )}
@@ -1463,13 +1476,19 @@ const UserProfileScreen: React.FC = () => {
                 style={styles.imageSourceButton}
                 onPress={handleTakePhoto}
               >
-                <Text style={styles.imageSourceButtonText}>📷 拍照</Text>
+                <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                  <CameraIcon size={20} color="#333" />
+                  <Text style={[styles.imageSourceButtonText, {marginLeft: 6}]}>拍照</Text>
+                </View>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.imageSourceButton}
                 onPress={handleSelectFromGallery}
               >
-                <Text style={styles.imageSourceButtonText}>🖼️ 从相册选择</Text>
+                <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                  <ImageIcon size={20} color="#333" />
+                  <Text style={[styles.imageSourceButtonText, {marginLeft: 6}]}>从相册选择</Text>
+                </View>
               </TouchableOpacity>
               {backgroundImage && (
                 <TouchableOpacity
@@ -1479,7 +1498,10 @@ const UserProfileScreen: React.FC = () => {
                     handleDeleteBackgroundImage();
                   }}
                 >
-                  <Text style={[styles.imageSourceButtonText, styles.imageSourceDeleteText]}>🗑️ 删除背景图片</Text>
+                  <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                    <TrashIcon size={20} color="#FF3B30" />
+                    <Text style={[styles.imageSourceButtonText, styles.imageSourceDeleteText, {marginLeft: 6}]}>删除背景图片</Text>
+                  </View>
                 </TouchableOpacity>
               )}
               <TouchableOpacity
@@ -1550,7 +1572,7 @@ const UserProfileScreen: React.FC = () => {
                 style={styles.scannerTorchButton}
                 onPress={() => setTorchOn(!torchOn)}
               >
-                <Text style={styles.scannerTorchText}>{torchOn ? '🔦' : '💡'}</Text>
+                {torchOn ? <FlashlightIcon size={scaleModerate(24)} color="#FFD700" /> : <LightbulbIcon size={scaleModerate(24)} color="#fff" />}
               </TouchableOpacity>
               {/* 相册按钮 */}
               <TouchableOpacity

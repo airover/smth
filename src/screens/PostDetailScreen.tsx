@@ -36,6 +36,11 @@ import {sendMessage} from '../services/dataFetcher';
 import {useSettings} from '../context/SettingsContext';
 import {getTheme, getFontSizes} from '../utils/theme';
 import {ThemedHeaderButton, useFloatingHeader} from '../components/ThemeHeader';
+import {
+  ThumbsUpIcon,
+  EggIcon,
+  MessageIcon,
+} from '../components/SvgIcons';
 import {normalizeImageUrl, isImageAttachment, isVideoAttachment} from '../utils/imageUtils';
 import {
   SPACING,
@@ -1569,7 +1574,7 @@ const PostDetailScreen: React.FC = () => {
             onPress={() => handleQuoteReply(item)}
             activeOpacity={0.7}
           >
-            <Text style={[styles.quoteReplyButtonText, {color: theme.primary}]}>💬</Text>
+            <MessageIcon size={12} color={theme.primary} />
           </TouchableOpacity>
         </View>
       </View>
@@ -1705,7 +1710,7 @@ const PostDetailScreen: React.FC = () => {
                   onPress={handleLikePress}
                   activeOpacity={0.7}
                 >
-                  <Text style={styles.actionIconEmoji}>👍</Text>
+                  <ThumbsUpIcon size={20} color={theme.text} />
                 </TouchableOpacity>
                 
                 <TouchableOpacity
@@ -1714,7 +1719,7 @@ const PostDetailScreen: React.FC = () => {
                   onPress={handleDislikePress}
                   activeOpacity={0.7}
                 >
-                  <Text style={styles.actionIconEmoji}>🥚</Text>
+                  <EggIcon size={20} color={theme.text} />
                 </TouchableOpacity>
                 
                 <TouchableOpacity

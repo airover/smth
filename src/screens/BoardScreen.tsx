@@ -28,6 +28,17 @@ import {formatRelativeTime} from '../utils/timeFormat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useSettings} from '../context/SettingsContext';
 import {useTheme} from '../components/ThemedComponents';
+import {
+  StarIcon,
+  SearchIcon,
+  FolderOpenIcon,
+  FolderIcon,
+  FileIcon,
+  BoardIcon,
+  CalendarIcon,
+  MessageIcon,
+  EditIcon,
+} from '../components/SvgIcons';
 import {ThemedHeaderButton, useFloatingHeader} from '../components/ThemeHeader';
 import {useReadPosts} from '../context/ReadPostsContext';
 
@@ -602,7 +613,7 @@ const BoardScreen: React.FC = () => {
       headerRight: () => (
         <ThemedHeaderButton
           onPress={() => navigation.navigate('BoardList', {favorites: true})}>
-          <Text style={{fontSize: 24, color: theme.headerBackgroundImage ? '#FFFFFF' : theme.headerTint}}>⭐</Text>
+<StarIcon size={24} color={theme.headerBackgroundImage ? '#FFFFFF' : theme.headerTint} />
         </ThemedHeaderButton>
       ),
     });
@@ -1345,7 +1356,7 @@ const BoardScreen: React.FC = () => {
             navigation.navigate('SearchInput');
           }}
           activeOpacity={0.7}>
-          <Text style={themedStyles.searchPlaceholder}>🔍 搜索文章/版面/用户</Text>
+<View style={{flexDirection: 'row', alignItems: 'center'}}><SearchIcon size={16} color={theme.secondaryText} /><Text style={[themedStyles.searchPlaceholder, {marginLeft: 6}]}>搜索文章/版面/用户</Text></View>
         </TouchableOpacity>
       </View>
     );
@@ -1462,9 +1473,9 @@ const BoardScreen: React.FC = () => {
           <View style={styles.boardItemContent}>
             <View style={styles.boardIconContainer}>
               {item.isFolder ? (
-                <Text style={styles.folderIcon}>{isExpanded ? '📂' : '📁'}</Text>
+                <View style={styles.folderIcon}>{isExpanded ? <FolderOpenIcon size={18} color={theme.secondaryText} /> : <FolderIcon size={18} color={theme.secondaryText} />}</View>
               ) : (
-                <Text style={[styles.boardIcon, {opacity: 0.5}]}>📄</Text>
+                <View style={[styles.boardIcon, {opacity: 0.5}]}><FileIcon size={16} color={theme.secondaryText} /></View>
               )}
             </View>
             <Text style={[
@@ -1659,7 +1670,7 @@ const BoardScreen: React.FC = () => {
               setSelectedChannel(null); // 清除频道选择
             }}
           >
-            <Text style={[styles.albumBoardName, {color: theme.primary}]}>📋 {item.board.title}</Text>
+<View style={{flexDirection: 'row', alignItems: 'center'}}><BoardIcon size={14} color={theme.primary} /><Text style={[styles.albumBoardName, {color: theme.primary, marginLeft: 4}]}>{item.board.title}</Text></View>
           </TouchableOpacity>
         </View>
       </TouchableOpacity>
@@ -1763,7 +1774,7 @@ const BoardScreen: React.FC = () => {
   // 浮动按钮菜单项配置
   const fabMenuItems = [
     {
-      icon: sortByReplyTime ? '📅' : '💬',
+      icon: sortByReplyTime ? <CalendarIcon size={20} color={theme.primary} /> : <MessageIcon size={20} color={theme.primary} />,
       label: sortByReplyTime ? '按发布' : '按回复',
       onPress: () => {
         setShowFabMenu(false); // 立即关闭菜单
@@ -1776,7 +1787,7 @@ const BoardScreen: React.FC = () => {
       disabled: false,
     },
     {
-      icon: '✏️',
+      icon: <EditIcon size={20} color={theme.primary} />,
       label: '发帖',
       onPress: () => {
         setShowFabMenu(false); // 立即关闭菜单
@@ -1791,7 +1802,7 @@ const BoardScreen: React.FC = () => {
       disabled: false,
     },
     {
-      icon: '⭐',
+      icon: <StarIcon size={20} color={theme.primary} />,
       label: isBoardFavorited ? '已收藏' : '收藏',
       onPress: () => {
         if (selectedBoard) {
@@ -1856,7 +1867,7 @@ const BoardScreen: React.FC = () => {
                 style={[styles.fabMenuButton, {backgroundColor: theme.cardBackground, borderColor: theme.border}]}
                 onPress={item.onPress}
                 activeOpacity={0.8}>
-                <Text style={[styles.fabMenuIcon, {color: theme.primary}]}>{item.icon}</Text>
+<View style={styles.fabMenuIcon}>{item.icon}</View>
               </TouchableOpacity>
               <Text style={[styles.fabMenuLabel, {color: theme.text, backgroundColor: theme.cardBackground, borderColor: theme.border}]}>{item.label}</Text>
             </Animated.View>
@@ -2020,7 +2031,7 @@ const BoardScreen: React.FC = () => {
             ]}>
             <View style={[styles.modalHeader, {backgroundColor: theme.cardBackground, borderBottomColor: theme.border}]}>
               <View style={styles.drawerTitleContainer}>
-                <Text style={styles.drawerTitleEmoji}>📋</Text>
+                <View style={styles.drawerTitleEmoji}><BoardIcon size={20} color={theme.text} /></View>
                 <Text style={[styles.modalTitle, {color: theme.text}]}>版面目录</Text>
               </View>
               <TouchableOpacity onPress={closeDrawer} style={styles.drawerCloseButton}>
@@ -2374,7 +2385,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   drawerTitleEmoji: {
-    fontSize: 20,
     marginRight: 8,
   },
   drawerCloseButton: {
@@ -2433,9 +2443,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   folderIcon: {
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
     fontSize: 14,
   },
   boardIcon: {
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
     fontSize: 12,
     opacity: 0.5,
   },
@@ -2506,8 +2520,8 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   fabMenuIcon: {
-    fontSize: 20,
-    // color 由主题动态控制
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   },
   fabMenuLabel: {
     marginTop: 6,

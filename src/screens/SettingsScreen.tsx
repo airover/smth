@@ -17,6 +17,16 @@ import {User} from '../types';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {useTheme} from '../components/ThemedComponents';
 import {
+  HistoryIcon,
+  StarIcon,
+  ArticleIcon,
+  UsersIcon,
+  UserIcon,
+  BanIcon,
+  MailIcon,
+  SettingsIcon,
+} from '../components/SvgIcons';
+import {
   SPACING,
   FONT_SIZE,
   BORDER_RADIUS,
@@ -248,7 +258,9 @@ const SettingsScreen: React.FC = () => {
               style={styles.menuItem}
               onPress={() => navigation.navigate('BrowsingHistory')}>
               <View style={styles.menuItemLeft}>
-                <Text style={styles.menuIcon}>📜</Text>
+              <View style={styles.menuIcon}>
+                <HistoryIcon size={22} color={theme.text} />
+              </View>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>浏览历史</Text>
               </View>
               <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
@@ -258,7 +270,9 @@ const SettingsScreen: React.FC = () => {
               style={styles.menuItem}
               onPress={() => navigation.navigate('Favorites')}>
               <View style={styles.menuItemLeft}>
-                <Text style={styles.menuIcon}>⭐</Text>
+              <View style={styles.menuIcon}>
+                <StarIcon size={22} color={theme.text} />
+              </View>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>我的收藏</Text>
               </View>
               <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
@@ -268,7 +282,9 @@ const SettingsScreen: React.FC = () => {
               style={styles.menuItem}
               onPress={() => navigation.navigate('MyArticles')}>
               <View style={styles.menuItemLeft}>
-                <Text style={styles.menuIcon}>📝</Text>
+              <View style={styles.menuIcon}>
+                <ArticleIcon size={22} color={theme.text} />
+              </View>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>我的文章</Text>
               </View>
               <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
@@ -283,7 +299,9 @@ const SettingsScreen: React.FC = () => {
               style={styles.menuItem}
               onPress={() => navigation.navigate('MyFollowing')}>
               <View style={styles.menuItemLeft}>
-                <Text style={styles.menuIcon}>👥</Text>
+              <View style={styles.menuIcon}>
+                <UsersIcon size={22} color={theme.text} />
+              </View>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>我的关注</Text>
               </View>
               <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
@@ -293,7 +311,9 @@ const SettingsScreen: React.FC = () => {
               style={styles.menuItem}
               onPress={() => navigation.navigate('MyFans')}>
               <View style={styles.menuItemLeft}>
-                <Text style={styles.menuIcon}>👤</Text>
+              <View style={styles.menuIcon}>
+                <UserIcon size={22} color={theme.text} />
+              </View>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>我的粉丝</Text>
               </View>
               <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
@@ -303,7 +323,9 @@ const SettingsScreen: React.FC = () => {
               style={styles.menuItem}
               onPress={() => navigation.navigate('Blacklist')}>
               <View style={styles.menuItemLeft}>
-                <Text style={styles.menuIcon}>🚫</Text>
+              <View style={styles.menuIcon}>
+                <BanIcon size={22} color={theme.text} />
+              </View>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>黑名单</Text>
               </View>
               <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
@@ -318,7 +340,9 @@ const SettingsScreen: React.FC = () => {
               style={styles.menuItem}
               onPress={() => navigation.navigate('Mail')}>
               <View style={styles.menuItemLeft}>
-                <Text style={styles.menuIcon}>✉️</Text>
+              <View style={styles.menuIcon}>
+                <MailIcon size={22} color={theme.text} />
+              </View>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>站内邮箱</Text>
                 {unreadMailCount > 0 && (
                   <View style={styles.badge}>
@@ -340,7 +364,9 @@ const SettingsScreen: React.FC = () => {
               style={styles.menuItem}
               onPress={() => navigation.navigate('SettingsDetail')}>
               <View style={styles.menuItemLeft}>
-                <Text style={styles.menuIcon}>⚙️</Text>
+              <View style={styles.menuIcon}>
+                <SettingsIcon size={22} color={theme.text} />
+              </View>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>设置</Text>
               </View>
               <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
@@ -441,10 +467,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   menuIcon: {
-    fontSize: FONT_SIZE.xxl,
     marginRight: SPACING.md,
     width: scaleModerate(28),
-    textAlign: 'center',
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   },
   menuItemText: {
     fontSize: FONT_SIZE.xl,

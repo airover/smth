@@ -28,6 +28,7 @@ import {
   responsiveSize,
 } from '../utils/responsive';
 import {ThemedHeaderButton, useFloatingHeader} from '../components/ThemeHeader';
+import {CameraIcon, ImageIcon, CheckCircleIcon, CheckIcon, LightbulbIcon} from '../components/SvgIcons';
 
 interface RouteParams {
   boardId: string; // 版面ID (hash格式)
@@ -498,12 +499,18 @@ const CreatePostScreen: React.FC = () => {
             <TouchableOpacity
               style={styles.imageSourceButton}
               onPress={handleTakePhoto}>
-              <Text style={styles.imageSourceButtonText}>📷 拍照</Text>
+              <View style={styles.imageSourceButtonContent}>
+                <CameraIcon size={20} color="#333" />
+                <Text style={styles.imageSourceButtonText}> 拍照</Text>
+              </View>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.imageSourceButton}
               onPress={handleSelectFromGallery}>
-              <Text style={styles.imageSourceButtonText}>🖼️ 从相册选择</Text>
+              <View style={styles.imageSourceButtonContent}>
+                <ImageIcon size={20} color="#333" />
+                <Text style={styles.imageSourceButtonText}> 从相册选择</Text>
+              </View>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.imageSourceButton, styles.imageSourceCancelButton]}
@@ -586,7 +593,7 @@ const CreatePostScreen: React.FC = () => {
                   onPress={handleShowImageSourcePicker}
                   disabled={submitting || uploading || selectedImages.length >= 9}
                   activeOpacity={0.6}>
-                  <Text style={styles.imagePickerButtonText}>🖼️</Text>
+                  <ImageIcon size={22} color="#666" />
                 </TouchableOpacity>
               )}
             </View>
@@ -599,7 +606,10 @@ const CreatePostScreen: React.FC = () => {
               <View style={styles.imageListHeader}>
                 <Text style={styles.sectionTitle}>已选择 {selectedImages.length}/9 张图片</Text>
                 {uploadToken && (
-                  <Text style={styles.uploadSuccessText}>✓ 上传完成</Text>
+                  <View style={styles.uploadSuccessContent}>
+                    <CheckIcon size={14} color="#34C759" />
+                    <Text style={styles.uploadSuccessText}> 上传完成</Text>
+                  </View>
                 )}
               </View>
               
@@ -625,7 +635,7 @@ const CreatePostScreen: React.FC = () => {
                     </TouchableOpacity>
                     {uploadToken && (
                       <View style={styles.uploadedBadge}>
-                        <Text style={styles.uploadedBadgeText}>✓</Text>
+                      <CheckIcon size={12} color="#fff" />
                       </View>
                     )}
                     {uploading && (
@@ -651,22 +661,26 @@ const CreatePostScreen: React.FC = () => {
               ]}
               onPress={() => setShowCaptchaModal(true)}
               disabled={submitting}>
-              <Text
-                style={{
-                  fontSize: 16,
-                  color: captchaVerified ? '#34C759' : '#666',
-                }}>
-                {captchaVerified ? '✅ 验证码已验证' : '点击进行人机验证'}
-              </Text>
-              {!captchaVerified && (
-                <Text style={{fontSize: 14, color: '#007AFF'}}>去验证</Text>
+              {captchaVerified ? (
+                <View style={styles.captchaVerifiedContent}>
+                  <CheckCircleIcon size={18} color="#34C759" />
+                  <Text style={{fontSize: 16, color: '#34C759', marginLeft: 4}}>验证码已验证</Text>
+                </View>
+              ) : (
+                <>
+                  <Text style={{fontSize: 16, color: '#666'}}>点击进行人机验证</Text>
+                  <Text style={{fontSize: 14, color: '#007AFF'}}>去验证</Text>
+                </>
               )}
             </TouchableOpacity>
           </View>}
 
           {/* 提示信息 */}
           <View style={styles.tipContainer}>
-            <Text style={styles.tipText}>💡 提示：</Text>
+            <View style={styles.tipHeader}>
+              <LightbulbIcon size={16} color="#E6A700" />
+              <Text style={styles.tipText}> 提示：</Text>
+            </View>
             {isEditMode ? (
               <>
                 <Text style={styles.tipText}>• 修改标题和内容后点击右上角保存</Text>
@@ -751,12 +765,10 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: SPACING.sm,
     bottom: SPACING.sm,
-    padding: SPACING.xs,
+    paddingVertical: SPACING.xs,
+    paddingHorizontal: SPACING.sm,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  imagePickerButtonText: {
-    fontSize: scaleModerate(22),
   },
   counter: {
     fontSize: FONT_SIZE.sm,
@@ -781,10 +793,18 @@ const styles = StyleSheet.create({
     padding: SPACING.md,
     marginTop: SPACING.sm,
   },
+  tipHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   tipText: {
     fontSize: FONT_SIZE.sm,
     color: '#666',
     lineHeight: FONT_SIZE.xl,
+  },
+  captchaVerifiedContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   modalOverlay: {
     flex: 1,
@@ -807,6 +827,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: SPACING.sm,
+  },
+  uploadSuccessContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   uploadSuccessText: {
     fontSize: FONT_SIZE.sm,
@@ -879,11 +903,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  uploadedBadgeText: {
-    color: '#fff',
-    fontSize: FONT_SIZE.sm,
-    fontWeight: 'bold',
-  },
   uploadingOverlay: {
     position: 'absolute',
     top: 0,
@@ -946,6 +965,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: '#ddd',
+  },
+  imageSourceButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   imageSourceButtonText: {
     fontSize: FONT_SIZE.lg,
