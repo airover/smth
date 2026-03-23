@@ -32,6 +32,7 @@ import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import ImageViewer from '../components/ImageViewer';
 import {cacheManager} from '../services/cacheManager';
 import {saveBrowsingHistory} from './BrowsingHistoryScreen';
+import {sendMessage} from '../services/dataFetcher';
 import {useSettings} from '../context/SettingsContext';
 import {getTheme, getFontSizes} from '../utils/theme';
 import {ThemedHeaderButton, useFloatingHeader} from '../components/ThemeHeader';
@@ -191,7 +192,7 @@ const PostDetailScreen: React.FC = () => {
               deleteIndex = options.length - 1;
             }
             
-            options.push('回复', '收藏', '分享', '取消');
+            options.push('回复', '收藏', '分享', '举报', '取消');
             const cancelButtonIndex = options.length - 1;
             
             if (Platform.OS === 'ios') {
@@ -219,6 +220,8 @@ const PostDetailScreen: React.FC = () => {
                     handleFavorite();
                   } else if (selectedOption === '分享') {
                     handleShare();
+                  } else if (selectedOption === '举报') {
+                    handleReport();
                   }
                 }
               );
@@ -242,6 +245,7 @@ const PostDetailScreen: React.FC = () => {
                 {text: '回复', onPress: handleReply},
                 {text: '收藏', onPress: handleFavorite},
                 {text: '分享', onPress: handleShare},
+                {text: '举报', onPress: handleReport},
                 {text: '取消', style: 'cancel' as const}
               );
               
@@ -604,6 +608,60 @@ const PostDetailScreen: React.FC = () => {
       console.error('Share error:', error);
       Alert.alert('分享失败', '无法分享帖子');
     }
+  };
+
+  // 举报帖子 - 通过站内信发送给SYSOP
+  const handleReport = (replyAuthor?: string, replyId?: string) => {
+    const targetAuthor = replyAuthor || (post ? post.author : '');
+    const targetId = replyId || (post ? (post.articleId || post.id) : 0);
+    const targetType = replyAuthor ? '回复' : '帖子';
+    const boardInfo = post?.boardName || post?.board || board;
+    
+    const doReport = async (reason: string) => {
+      const subject = `举报${targetType} - ${reason}`;
+      const body = [
+        `举报类型：${reason}`,
+        `举报对象：${targetAuthor}`,
+        `所在版面：${boardInfo}`,
+        `${targetType}ID：${targetId}`,
+        `帖子标题：${post?.title || ''}`,
+        `举报时间：${new Date().toLocaleString('zh-CN')}`,
+        ``,
+        `请管理员审核处理，谢谢！`,
+      ].join('\n');
+      
+      try {
+        const result = await sendMessage('SYSOP', body, subject);
+        if (result.success) {
+          Alert.alert('举报已提交', `举报信息已通过站内信发送给系统管理员(SYSOP)，我们将尽快审核处理。`);
+        } else {
+          Alert.alert('举报失败', result.message || '发送站内信失败，请稍后重试');
+        }
+      } catch (error: any) {
+        console.error('Report error:', error);
+        if (error.message === 'LOGIN_EXPIRED') {
+          Alert.alert('登录已过期', '请重新登录后再进行举报');
+        } else {
+          Alert.alert('举报失败', '发送站内信失败，请稍后重试');
+        }
+      }
+    };
+    
+    Alert.alert(
+      `举报${targetType}`,
+      `确定要举报该${targetType}吗？\n\n举报对象：${targetAuthor}\n\n举报信息将通过站内信发送给SYSOP。恶意举报可能会影响您的账号使用。`,
+      [
+        {text: '取消', style: 'cancel'},
+        {
+          text: '违规内容',
+          onPress: () => doReport('违规内容'),
+        },
+        {
+          text: '垃圾广告',
+          onPress: () => doReport('垃圾广告'),
+        },
+      ]
+    );
   };
 
   const handleLikePress = () => {
@@ -1494,7 +1552,16 @@ const PostDetailScreen: React.FC = () => {
               onPress={() => handleDeleteReply(item)}
               activeOpacity={0.7}
             >
-              <Text style={styles.deleteReplyButtonText}>删除</Text>
+              <Text style={styles.deleteReplyButtonText}>❌</Text>
+            </TouchableOpacity>
+          )}
+          {currentUsername && item.author !== currentUsername && (
+            <TouchableOpacity
+              style={[styles.reportReplyButton, {borderColor: theme.border}]}
+              onPress={() => handleReport(item.author, item.id)}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.reportReplyButtonText, {color: theme.secondaryText}]}>⚠️</Text>
             </TouchableOpacity>
           )}
           <TouchableOpacity
@@ -2349,6 +2416,20 @@ const styles = StyleSheet.create({
   quoteReplyButtonText: {
     fontSize: 12,
     color: '#007AFF',
+    fontWeight: '500',
+  },
+  reportReplyButton: {
+    paddingHorizontal: 12,
+    height: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  reportReplyButtonText: {
+    fontSize: 12,
+    color: '#999',
     fontWeight: '500',
   },
   location: {

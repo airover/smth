@@ -290,7 +290,7 @@
 				DEVELOPMENT_TEAM = U9DFY9K89N;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = SmthApp/Info.plist;
-INFOPLIST_KEY_CFBundleDisplayName = "海月水母";
+				INFOPLIST_KEY_CFBundleDisplayName = "海月水母";
 				IPHONEOS_DEPLOYMENT_TARGET = 15.6;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -320,7 +320,7 @@ INFOPLIST_KEY_CFBundleDisplayName = "海月水母";
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = U9DFY9K89N;
 				INFOPLIST_FILE = SmthApp/Info.plist;
-INFOPLIST_KEY_CFBundleDisplayName = "海月水母";
+				INFOPLIST_KEY_CFBundleDisplayName = "海月水母";
 				IPHONEOS_DEPLOYMENT_TARGET = 15.6;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
