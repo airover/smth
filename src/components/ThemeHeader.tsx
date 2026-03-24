@@ -1,8 +1,8 @@
 import React, {createContext, useContext, useState, useCallback} from 'react';
 import {View, Text, ImageBackground, StyleSheet, TouchableOpacity} from 'react-native';
-import Svg, {Path} from 'react-native-svg';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useNavigation} from '@react-navigation/native';
+import {ArrowLeftIcon} from './SvgIcons';
 import {useTheme} from './ThemedComponents';
 import {
   SPACING,
@@ -148,15 +148,10 @@ const ThemeHeader: React.FC<ThemeHeaderProps> = ({
       onPress={onGoBack}
       style={hasBackgroundImage ? styles.themedButton : styles.normalBackButton}
     >
-      <Svg width={hasBackgroundImage ? 22 : 28} height={hasBackgroundImage ? 22 : 28} viewBox="0 0 24 24" fill="none">
-        <Path
-          d="M15 18L9 12L15 6"
-          stroke={hasBackgroundImage ? '#FFFFFF' : theme.headerTint}
-          strokeWidth={2.5}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </Svg>
+      <ArrowLeftIcon
+        size={hasBackgroundImage ? 22 : 28}
+        color={hasBackgroundImage ? '#FFFFFF' : theme.tabBarInactive}
+      />
     </TouchableOpacity>
   ) : null;
 

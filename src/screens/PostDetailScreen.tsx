@@ -40,6 +40,7 @@ import {
   ThumbsUpIcon,
   EggIcon,
   MessageIcon,
+  MoreVerticalIcon,
 } from '../components/SvgIcons';
 import {normalizeImageUrl, isImageAttachment, isVideoAttachment} from '../utils/imageUtils';
 import {
@@ -258,7 +259,7 @@ const PostDetailScreen: React.FC = () => {
             }
           }}
         >
-          <Text style={[styles.headerMenuButtonText, theme.headerBackgroundImage ? {color: '#FFFFFF'} : null]}>⋮</Text>
+          <MoreVerticalIcon size={24} color={theme.headerBackgroundImage ? '#FFFFFF' : theme.tabBarInactive} />
         </ThemedHeaderButton>
       ),
     });

@@ -390,3 +390,40 @@ export const PlusIcon: React.FC<IconProps> = ({
     <Line x1="5" y1="12" x2="19" y2="12" />
   </SvgIcon>
 );
+
+// ==================== 通用导航图标 ====================
+
+/** 返回箭头（左箭头） */
+export const ArrowLeftIcon: React.FC<IconProps> = ({
+  size = 24,
+  color = '#333',
+}) => (
+  <SvgIcon size={size} color={color}>
+    <Line x1="19" y1="12" x2="5" y2="12" />
+    <Polyline points="12 19 5 12 12 5" />
+  </SvgIcon>
+);
+
+/** 竖三点/更多（MoreVertical） */
+export const MoreVerticalIcon: React.FC<IconProps> = ({
+  size = 24,
+  color = '#333',
+}) => (
+  <SvgIcon size={size} color={color} strokeWidth={0}>
+    <Circle cx="12" cy="12" r="1.5" fill={color} />
+    <Circle cx="12" cy="5.5" r="1.5" fill={color} />
+    <Circle cx="12" cy="18.5" r="1.5" fill={color} />
+  </SvgIcon>
+);
+
+/** 菜单（三横线汉堡按钮） */
+export const MenuIcon: React.FC<IconProps> = ({
+  size = 24,
+  color = '#333',
+}) => (
+  <SvgIcon size={size} color={color}>
+    <Line x1="3" y1="12" x2="21" y2="12" />
+    <Line x1="3" y1="6" x2="21" y2="6" />
+    <Line x1="3" y1="18" x2="21" y2="18" />
+  </SvgIcon>
+);

@@ -24,7 +24,7 @@ import Clipboard from '@react-native-clipboard/clipboard';
 import ImageCropPicker from 'react-native-image-crop-picker';
 import QRCode from 'react-native-qrcode-svg';
 import Svg, { Path, Circle, Rect } from 'react-native-svg';
-import {SearchIcon, CameraIcon, StarIcon, MapPinIcon, CheckIcon, MailIcon, ImageIcon, TrashIcon, FlashlightIcon, LightbulbIcon} from '../components/SvgIcons';
+import {SearchIcon, CameraIcon, StarIcon, MapPinIcon, CheckIcon, MailIcon, ImageIcon, TrashIcon, FlashlightIcon, LightbulbIcon, ArrowLeftIcon, MoreVerticalIcon} from '../components/SvgIcons';
 import {Camera, useCameraDevice, useCodeScanner} from 'react-native-vision-camera';
 import {useRoute, useNavigation} from '@react-navigation/native';
 import {getUserInfo, fetchUserInfo, sendMessage, addBlack, removeBlack, addFriend, removeFriend, checkIsHerBlack, getFriendsList, getBlackList} from '../services/api';
@@ -991,7 +991,7 @@ const UserProfileScreen: React.FC = () => {
               style={styles.topBarButton}
               onPress={() => navigation.goBack()}
             >
-              <Text style={styles.topBarIcon}>←</Text>
+              <ArrowLeftIcon size={scaleModerate(20)} color="#333" />
             </TouchableOpacity>
             <View style={styles.topBarActions}>
               <TouchableOpacity 
@@ -1065,7 +1065,7 @@ const UserProfileScreen: React.FC = () => {
                   }
                 }}
               >
-                <Text style={styles.topBarIcon}>⋮</Text>
+                <MoreVerticalIcon size={scaleModerate(20)} color="#333" />
               </TouchableOpacity>
             </View>
           </View>

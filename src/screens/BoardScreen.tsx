@@ -38,6 +38,7 @@ import {
   CalendarIcon,
   MessageIcon,
   EditIcon,
+  MenuIcon,
 } from '../components/SvgIcons';
 import {ThemedHeaderButton, useFloatingHeader} from '../components/ThemeHeader';
 import {useReadPosts} from '../context/ReadPostsContext';
@@ -607,13 +608,13 @@ const BoardScreen: React.FC = () => {
       headerLeft: () => (
         <ThemedHeaderButton
           onPress={() => setShowBoardList(true)}>
-          <Text style={{fontSize: 24, color: theme.headerBackgroundImage ? '#FFFFFF' : theme.headerTint}}>☰</Text>
+          <MenuIcon size={24} color={theme.headerBackgroundImage ? '#FFFFFF' : theme.tabBarInactive} />
         </ThemedHeaderButton>
       ),
       headerRight: () => (
         <ThemedHeaderButton
           onPress={() => navigation.navigate('BoardList', {favorites: true})}>
-<StarIcon size={24} color={theme.headerBackgroundImage ? '#FFFFFF' : theme.headerTint} />
+          <StarIcon size={24} color={theme.headerBackgroundImage ? '#FFFFFF' : theme.tabBarInactive} />
         </ThemedHeaderButton>
       ),
     });

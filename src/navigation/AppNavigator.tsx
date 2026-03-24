@@ -2,8 +2,7 @@ import React from 'react';
 import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import {Text, TouchableOpacity, ImageBackground, StyleSheet} from 'react-native';
-import Svg, {Path} from 'react-native-svg';
-import {HomeIcon, BoardIcon, UserIcon} from '../components/SvgIcons';
+import {HomeIcon, BoardIcon, UserIcon, ArrowLeftIcon} from '../components/SvgIcons';
 
 import {useTheme} from '../components/ThemedComponents';
 import {FloatingHeaderProvider} from '../components/ThemeHeader';
@@ -195,15 +194,7 @@ const AppNavigator = () => {
             <TouchableOpacity
               onPress={() => navigation.goBack()}
               style={{marginLeft: -4, padding: 4, paddingRight: 12}}>
-              <Svg width={28} height={28} viewBox="0 0 24 24" fill="none">
-                <Path
-                  d="M15 18L9 12L15 6"
-                  stroke={theme.headerTint}
-                  strokeWidth={2.5}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </Svg>
+              <ArrowLeftIcon size={28} color={theme.tabBarInactive} />
             </TouchableOpacity>
           ) : null,
       })}>
