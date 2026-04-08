@@ -8,6 +8,7 @@ import {
   RefreshControl,
   FlatList,
   Alert,
+  InteractionManager,
 } from 'react-native';
 import {useNavigation, useFocusEffect} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -128,7 +129,10 @@ const MyFollowingScreen: React.FC = () => {
   useFocusEffect(
     useCallback(() => {
       if (!loading) {
-        loadFollowing(1);
+        const task = InteractionManager.runAfterInteractions(() => {
+          loadFollowing(1);
+        });
+        return () => task.cancel();
       }
     }, [])
   );

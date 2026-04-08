@@ -1,10 +1,9 @@
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useCallback} from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  SafeAreaView,
   ScrollView,
   Alert,
   Modal,
@@ -12,13 +11,15 @@ import {
   Linking,
   Platform,
   Clipboard,
+  InteractionManager,
 } from 'react-native';
-import {useNavigation} from '@react-navigation/native';
+import {SafeAreaView} from 'react-native-safe-area-context';
+import {useNavigation, useFocusEffect} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 // import {logout} from '../services/api'; // 移除直接导入
 import {useSettings} from '../context/SettingsContext';
 import {useAuth} from '../context/AuthContext'; // 导入 useAuth
-import {loginMSite, logoutMSite, checkMSiteLoginStatus} from '../services/api';
+import {loginMSite, logoutMSite, checkMSiteLoginStatus, verifyMSiteLoginStatus} from '../services/api';
 import {getSavedCredentials} from '../utils/storage';
 import CaptchaScreen from './CaptchaScreen';
 import {useTheme} from '../components/ThemedComponents';
@@ -45,13 +46,37 @@ const SettingsDetailScreen: React.FC = () => {
 
   useEffect(() => {
     loadUserStatus();
-    checkMSiteStatus();
   }, [isLoggedIn]);
 
-  const checkMSiteStatus = async () => {
-    const status = await checkMSiteLoginStatus();
-    setIsMSiteLoggedIn(status);
-  };
+  // 每次界面获得焦点时实时验证 M 站登录状态
+  useFocusEffect(
+    useCallback(() => {
+      if (!isLoggedIn) {
+        setIsMSiteLoggedIn(false);
+        return;
+      }
+      let cancelled = false;
+      const verifyStatus = async () => {
+        // 先用本地缓存快速展示
+        const localStatus = await checkMSiteLoginStatus();
+        if (!cancelled) {
+          setIsMSiteLoggedIn(localStatus);
+        }
+        // 使用 InteractionManager 延迟网络请求，确保 UI 先恢复响应
+        InteractionManager.runAfterInteractions(async () => {
+          if (cancelled || !localStatus) return;
+          const realStatus = await verifyMSiteLoginStatus();
+          if (!cancelled) {
+            setIsMSiteLoggedIn(realStatus);
+          }
+        });
+      };
+      verifyStatus();
+      return () => {
+        cancelled = true;
+      };
+    }, [isLoggedIn])
+  );
 
   const loadUserStatus = async () => {
     try {

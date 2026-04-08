@@ -7,9 +7,10 @@ import {
   TouchableOpacity,
   RefreshControl,
   ActivityIndicator,
-  SafeAreaView,
   Alert,
+  InteractionManager,
 } from 'react-native';
+import {SafeAreaView} from 'react-native-safe-area-context';
 import {useNavigation, useFocusEffect} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {getMessages} from '../services/api';
@@ -39,14 +40,14 @@ const MailScreen: React.FC = () => {
   // 页面获得焦点时检查登录状态并刷新消息列表
   useFocusEffect(
     React.useCallback(() => {
-      const refreshOnFocus = async () => {
+      const task = InteractionManager.runAfterInteractions(async () => {
         await checkLoginStatus();
         // 如果已登录，刷新消息列表
         if (isLoggedIn) {
           await loadMails();
         }
-      };
-      refreshOnFocus();
+      });
+      return () => task.cancel();
     }, [isLoggedIn])
   );
 

@@ -1,7 +1,6 @@
 // 主题化的通用组件
 import React from 'react';
 import {
-  SafeAreaView,
   View,
   Text,
   StyleSheet,
@@ -10,6 +9,7 @@ import {
   TextStyle,
   ActivityIndicator,
 } from 'react-native';
+import {SafeAreaView} from 'react-native-safe-area-context';
 import {useSettings} from '../context/SettingsContext';
 import {getTheme, ThemeColors} from '../utils/theme';
 

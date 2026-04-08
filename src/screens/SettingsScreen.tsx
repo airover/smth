@@ -8,6 +8,7 @@ import {
   ScrollView,
   Alert,
   RefreshControl,
+  InteractionManager,
 } from 'react-native';
 import {useNavigation, useFocusEffect} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -51,8 +52,12 @@ const SettingsScreen: React.FC = () => {
   // 页面获得焦点时重新加载用户信息
   useFocusEffect(
     useCallback(() => {
-      loadUserInfo(false);
-      loadUnreadMailCount();
+      // 使用 InteractionManager 延迟网络请求，确保 UI 先恢复响应
+      const task = InteractionManager.runAfterInteractions(() => {
+        loadUserInfo(false);
+        loadUnreadMailCount();
+      });
+      return () => task.cancel();
     }, [])
   );
 

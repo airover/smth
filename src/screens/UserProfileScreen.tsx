@@ -5,7 +5,6 @@ import {
   StyleSheet,
   ScrollView,
   ActivityIndicator,
-  SafeAreaView,
   RefreshControl,
   TouchableOpacity,
   Alert,
@@ -20,6 +19,7 @@ import {
   Linking,
   NativeModules,
 } from 'react-native';
+import {SafeAreaView} from 'react-native-safe-area-context';
 import Clipboard from '@react-native-clipboard/clipboard';
 import ImageCropPicker from 'react-native-image-crop-picker';
 import QRCode from 'react-native-qrcode-svg';

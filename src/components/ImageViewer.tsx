@@ -5,7 +5,6 @@ import {
   Image,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   Dimensions,
   ActivityIndicator,
   Platform,
@@ -17,6 +16,7 @@ import {
   PermissionsAndroid,
   Linking,
 } from 'react-native';
+import {SafeAreaView} from 'react-native-safe-area-context';
 import {
   CameraRoll,
   iosReadGalleryPermission,

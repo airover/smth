@@ -11,6 +11,7 @@ import {AuthProvider, useAuth} from './src/context/AuthContext';
 import {ReadPostsProvider} from './src/context/ReadPostsContext';
 import {getTheme} from './src/utils/theme';
 import {startMSiteKeepAlive, stopMSiteKeepAlive} from './src/services/auth';
+import {AppStateProvider} from './src/context/AppStateContext';
 
 const {SplashScreenManager} = NativeModules;
 
@@ -143,13 +144,15 @@ const AppContent = () => {
 
 const App = () => {
   return (
-    <AuthProvider>
-      <SettingsProvider>
-        <ReadPostsProvider>
-          <AppContent />
-        </ReadPostsProvider>
-      </SettingsProvider>
-    </AuthProvider>
+    <AppStateProvider>
+      <AuthProvider>
+        <SettingsProvider>
+          <ReadPostsProvider>
+            <AppContent />
+          </ReadPostsProvider>
+        </SettingsProvider>
+      </AuthProvider>
+    </AppStateProvider>
   );
 };
 

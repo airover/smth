@@ -5,7 +5,6 @@ import {
   StyleSheet,
   FlatList,
   ActivityIndicator,
-  SafeAreaView,
   Image,
   TouchableOpacity,
   ScrollView,
@@ -20,7 +19,9 @@ import {
   Share,
   ActionSheetIOS,
   AppState,
+  InteractionManager,
 } from 'react-native';
+import {SafeAreaView} from 'react-native-safe-area-context';
 import {useRoute, useNavigation} from '@react-navigation/native';
 import {WebView} from 'react-native-webview';
 import {getPostDetail, getTopicReplies, deletePost, getUserInfo, addFavoriteTopic, addLike, removeLike, getPostPermissions, PostPermissions} from '../services/api';
@@ -157,6 +158,8 @@ const PostDetailScreen: React.FC = () => {
   }, []);
 
   // 监听应用前后台切换，解决WebView内容丢失问题
+  // 优化：不再每次都销毁重建 WebView，而是先尝试通过 JS 注入重新计算高度
+  // 只有在 WebView 内容确实丢失（高度变为0）时才强制重建
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextAppState) => {
       // 从后台切换到前台时
@@ -164,13 +167,13 @@ const PostDetailScreen: React.FC = () => {
         appStateRef.current.match(/inactive|background/) &&
         nextAppState === 'active'
       ) {
-        console.log('[PostDetail] App从后台切回前台，刷新WebView');
-        // 延迟一点执行，确保界面完全恢复
-        setTimeout(() => {
-          // 重置contentHeights并强制刷新WebView
+        console.log('[PostDetail] App从后台切回前台，尝试恢复WebView');
+        // 使用 InteractionManager 延迟执行，确保 UI 先恢复响应
+        InteractionManager.runAfterInteractions(() => {
+          // 只重置高度缓存，让 WebView 通过 injectedJavaScript 重新上报高度
+          // 不改变 webViewKey，避免销毁重建 WebView
           setContentHeights({});
-          setWebViewKey(prev => prev + 1);
-        }, 100);
+        });
       }
       appStateRef.current = nextAppState;
     });
@@ -1585,7 +1588,7 @@ const PostDetailScreen: React.FC = () => {
 
   if (loading && !post) {
     return (
-      <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
+    <SafeAreaView edges={['bottom']} style={[styles.container, {backgroundColor: theme.background}]}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={theme.primary} />
         </View>
@@ -1595,7 +1598,7 @@ const PostDetailScreen: React.FC = () => {
 
   if (!post) {
     return (
-      <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
+    <SafeAreaView edges={['bottom']} style={[styles.container, {backgroundColor: theme.background}]}>
         <View style={styles.emptyContainer}>
           <Text style={[styles.emptyText, {color: theme.secondaryText}]}>帖子不存在</Text>
         </View>
@@ -1622,7 +1625,7 @@ const PostDetailScreen: React.FC = () => {
   };
 
   return (
-    <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
+    <SafeAreaView edges={['bottom']} style={[styles.container, {backgroundColor: theme.background}]}>
       <FlatList
         data={getSortedReplies()}
         renderItem={renderReply}

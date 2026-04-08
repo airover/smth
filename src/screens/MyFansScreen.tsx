@@ -8,6 +8,7 @@ import {
   RefreshControl,
   FlatList,
   Alert,
+  InteractionManager,
 } from 'react-native';
 import {useNavigation, useFocusEffect} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -125,7 +126,10 @@ const MyFansScreen: React.FC = () => {
   useFocusEffect(
     useCallback(() => {
       if (!loading) {
-        loadFans(1);
+        const task = InteractionManager.runAfterInteractions(() => {
+          loadFans(1);
+        });
+        return () => task.cancel();
       }
     }, [])
   );

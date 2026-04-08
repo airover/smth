@@ -14,7 +14,7 @@ import {
   buildDeleteHeaders,
   buildLoginHeaders,
 } from '../utils/requestUtils';
-import {getCookies, storeCookies, storeMSiteCookies, getMSiteCookies, extractAndStoreMSiteCookiesFromJar, clearMSiteCookieJar} from './auth';
+import {getCookies, storeCookies, storeMSiteCookies, getMSiteCookies, extractAndStoreMSiteCookiesFromJar, clearMSiteCookieJar, isMSiteResponseLoggedIn, handleMSiteCookieExpired} from './auth';
 import {buildHeaders} from '../utils/requestUtils';
 import {setCache, getCacheWithTimestamp, clearCache as clearCacheManager} from './cacheManager';
 
@@ -486,6 +486,58 @@ export const checkMSiteLoginStatus = async (): Promise<boolean> => {
   } catch (error) {
     console.error('[M站状态] 检查失败:', error);
     return false;
+  }
+};
+
+/**
+ * 实时验证 M 站登录状态
+ * 先检查本地是否有 Cookie，再请求 M 站验证 Cookie 是否真正有效
+ * 适用于打开设置页面时的实时状态检查
+ */
+export const verifyMSiteLoginStatus = async (): Promise<boolean> => {
+  try {
+    const cookies = await getMSiteCookies();
+    if (!cookies) {
+      console.log('[M站验证] 未登录（无本地Cookie）');
+      return false;
+    }
+
+    // 请求 M 站验证 Cookie 有效性
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+    const response = await fetch('https://m.newsmth.net/favor', {
+      method: 'GET',
+      headers: {
+        'Cookie': cookies,
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9',
+        'Referer': 'https://m.newsmth.net/favor',
+      },
+      credentials: 'include',
+      signal: controller.signal,
+    } as any);
+
+    clearTimeout(timeoutId);
+    const html = await response.text();
+
+    if (isMSiteResponseLoggedIn(html)) {
+      console.log('[M站验证] ✅ Cookie 有效，已登录');
+      return true;
+    } else {
+      console.log('[M站验证] ⚠️ Cookie 已过期，清除本地存储');
+      await handleMSiteCookieExpired();
+      return false;
+    }
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      console.log('[M站验证] 请求超时，保持当前状态');
+    } else {
+      console.log('[M站验证] 请求失败:', error?.message || error);
+    }
+    // 网络异常时回退到本地 Cookie 检查
+    return checkMSiteLoginStatus();
   }
 };
 

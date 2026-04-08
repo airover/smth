@@ -8,6 +8,7 @@ import {
   RefreshControl,
   FlatList,
   Alert,
+  InteractionManager,
 } from 'react-native';
 import {useNavigation, useFocusEffect} from '@react-navigation/native';
 import {getBlackList} from '../services/api';
@@ -85,7 +86,10 @@ const BlacklistScreen: React.FC = () => {
   useFocusEffect(
     useCallback(() => {
       if (!loading) {
-        loadBlacklist();
+        const task = InteractionManager.runAfterInteractions(() => {
+          loadBlacklist();
+        });
+        return () => task.cancel();
       }
     }, [])
   );
