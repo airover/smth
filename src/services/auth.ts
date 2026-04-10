@@ -8,6 +8,7 @@ const STORAGE_KEYS = {
   USERNAME: 'username',
   COOKIES: 'cookies',
   M_SITE_COOKIES: 'mSiteCookies', // M站(m.newsmth.net)的独立cookie
+  M_SITE_ENABLED: 'mSiteEnabled', // M站登录功能全局开关（用户是否启用了M站登录）
 };
 
 /**
@@ -139,6 +140,40 @@ export const storeCookies = async (newCookies: string, replace: boolean = false)
   } catch (error) {
     console.error('Store cookies error:', error);
     throw error;
+  }
+};
+
+// ==================== M 站登录全局开关 ====================
+
+/**
+ * 检查 M 站登录功能是否已启用
+ * 用户在设置中开启 M 站登录开关时设为 true，关闭时设为 false
+ * 心跳保活和静默登录会先检查此开关，避免用户关闭后仍自动登录
+ */
+export const isMSiteEnabled = async (): Promise<boolean> => {
+  try {
+    const enabled = await AsyncStorage.getItem(STORAGE_KEYS.M_SITE_ENABLED);
+    return enabled === 'true';
+  } catch (error) {
+    console.error('[M站开关] 读取失败:', error);
+    return false;
+  }
+};
+
+/**
+ * 设置 M 站登录功能开关
+ * @param enabled true=启用, false=禁用
+ */
+export const setMSiteEnabled = async (enabled: boolean): Promise<void> => {
+  try {
+    if (enabled) {
+      await AsyncStorage.setItem(STORAGE_KEYS.M_SITE_ENABLED, 'true');
+    } else {
+      await AsyncStorage.removeItem(STORAGE_KEYS.M_SITE_ENABLED);
+    }
+    console.log('[M站开关]', enabled ? '已启用' : '已禁用');
+  } catch (error) {
+    console.error('[M站开关] 设置失败:', error);
   }
 };
 
@@ -348,10 +383,18 @@ let mSiteKeepAliveTimer: ReturnType<typeof setInterval> | null = null;
  */
 const doMSiteKeepAlive = async (): Promise<void> => {
   try {
+    // 先检查全局开关，用户关闭了 M 站登录则跳过一切操作
+    const enabled = await isMSiteEnabled();
+    if (!enabled) {
+      console.log('[M站心跳] M 站登录未启用，跳过心跳');
+      return;
+    }
+
     const cookies = await getMSiteCookies();
     if (!cookies) {
-      // 没有 M 站 cookie，停止心跳
-      console.log('[M站心跳] 无 M 站 Cookie，跳过心跳');
+      // 没有 M 站 cookie（可能被被动探测清除），尝试静默登录恢复
+      console.log('[M站心跳] 无 M 站 Cookie，尝试静默自动登录...');
+      await silentMSiteReLogin();
       return;
     }
 
@@ -372,12 +415,61 @@ const doMSiteKeepAlive = async (): Promise<void> => {
     if (isMSiteResponseLoggedIn(html)) {
       console.log('[M站心跳] ✅ session 仍然有效');
     } else {
-      console.log('[M站心跳] ⚠️ session 已过期，清除本地 Cookie');
+      console.log('[M站心跳] ⚠️ session 已过期，尝试静默自动登录...');
       await handleMSiteCookieExpired();
+      // 尝试静默自动登录（不带验证码）
+      await silentMSiteReLogin();
     }
   } catch (error) {
     // 网络错误不处理，下次心跳再试
     console.log('[M站心跳] 请求失败（可能网络问题），跳过:', (error as any)?.message || error);
+  }
+};
+
+/**
+ * 静默自动重新登录 M 站（方案 B）
+ * 1. 通过隐藏 WebView 静默完成极验无感验证，获取验证码参数
+ * 2. 带验证码参数调用 loginMSite（和手动登录完全一致）
+ * 3. 如果极验判定需要人机交互（滑块等），超时后静默放弃，不打扰用户
+ */
+const silentMSiteReLogin = async (): Promise<void> => {
+  try {
+    // 延迟导入避免循环依赖（auth.ts ↔ api.ts）
+    const { loginMSite } = require('./api');
+    const { getSavedCredentials } = require('../utils/storage');
+    const { requestSilentCaptcha } = require('./silentCaptchaEvent');
+
+    const credentials = await getSavedCredentials();
+    if (!credentials.username || !credentials.password) {
+      console.log('[M站静默登录] 无保存的凭据，放弃自动登录');
+      return;
+    }
+
+    // 第一步：通过隐藏 WebView 静默完成极验无感验证
+    console.log('[M站静默登录] 请求静默极验验证...');
+    const captchaResult = await requestSilentCaptcha(15000);
+
+    if (!captchaResult.success || !captchaResult.captchaParams) {
+      // 极验需要人机交互或超时，静默放弃
+      console.log('[M站静默登录] 极验验证未通过，静默放弃:', captchaResult.error);
+      return;
+    }
+
+    // 第二步：带验证码参数登录（和手动登录完全一致）
+    console.log('[M站静默登录] 极验验证通过，带参数登录...');
+    const result = await loginMSite(
+      credentials.username,
+      credentials.password,
+      captchaResult.captchaParams,
+    );
+
+    if (result.success) {
+      console.log('[M站静默登录] ✅ 自动登录成功');
+    } else {
+      console.log('[M站静默登录] ❌ 登录失败，静默放弃:', result.message);
+    }
+  } catch (error) {
+    console.log('[M站静默登录] 异常，静默放弃:', (error as any)?.message || error);
   }
 };
 

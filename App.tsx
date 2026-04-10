@@ -12,6 +12,7 @@ import {ReadPostsProvider} from './src/context/ReadPostsContext';
 import {getTheme} from './src/utils/theme';
 import {startMSiteKeepAlive, stopMSiteKeepAlive} from './src/services/auth';
 import {AppStateProvider} from './src/context/AppStateContext';
+import SilentCaptchaWebView from './src/components/SilentCaptchaWebView';
 
 const {SplashScreenManager} = NativeModules;
 
@@ -138,6 +139,8 @@ const AppContent = () => {
           )}
         </RootStack.Navigator>
       </NavigationContainer>
+      {/* 隐藏的静默验证码 WebView，用于 M 站心跳检测到过期后自动重新登录 */}
+      {isLoggedIn && <SilentCaptchaWebView />}
     </View>
   );
 };

@@ -20,6 +20,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useSettings} from '../context/SettingsContext';
 import {useAuth} from '../context/AuthContext'; // 导入 useAuth
 import {loginMSite, logoutMSite, checkMSiteLoginStatus, verifyMSiteLoginStatus} from '../services/api';
+import {isMSiteEnabled, setMSiteEnabled} from '../services/auth';
 import {getSavedCredentials} from '../utils/storage';
 import CaptchaScreen from './CaptchaScreen';
 import {useTheme} from '../components/ThemedComponents';
@@ -40,7 +41,8 @@ const SettingsDetailScreen: React.FC = () => {
   const [showFontSizeModal, setShowFontSizeModal] = useState(false);
   const [showThemeModal, setShowThemeModal] = useState(false);
   const [showDisclaimerModal, setShowDisclaimerModal] = useState(false);
-  const [isMSiteLoggedIn, setIsMSiteLoggedIn] = useState(false);
+  const [mSiteEnabled, setMSiteEnabledState] = useState(false); // 开关状态：用户是否启用了M站登录
+  const [mSiteLoggedIn, setMSiteLoggedIn] = useState<boolean | null>(null); // 实际登录状态：null=检查中, true=已登录, false=未登录
   const [showCaptcha, setShowCaptcha] = useState(false);
   const [savedPassword, setSavedPassword] = useState('');
 
@@ -48,26 +50,38 @@ const SettingsDetailScreen: React.FC = () => {
     loadUserStatus();
   }, [isLoggedIn]);
 
-  // 每次界面获得焦点时实时验证 M 站登录状态
+  // 每次界面获得焦点时读取开关状态并验证 M 站登录状态
   useFocusEffect(
     useCallback(() => {
       if (!isLoggedIn) {
-        setIsMSiteLoggedIn(false);
+        setMSiteEnabledState(false);
+        setMSiteLoggedIn(null);
         return;
       }
       let cancelled = false;
       const verifyStatus = async () => {
-        // 先用本地缓存快速展示
+        // 1. 读取全局开关状态
+        const enabled = await isMSiteEnabled();
+        if (!cancelled) {
+          setMSiteEnabledState(enabled);
+        }
+        if (!enabled) {
+          if (!cancelled) {
+            setMSiteLoggedIn(null); // 开关关闭时不显示登录状态
+          }
+          return;
+        }
+        // 2. 先用本地缓存快速展示登录状态
         const localStatus = await checkMSiteLoginStatus();
         if (!cancelled) {
-          setIsMSiteLoggedIn(localStatus);
+          setMSiteLoggedIn(localStatus);
         }
-        // 使用 InteractionManager 延迟网络请求，确保 UI 先恢复响应
+        // 3. 使用 InteractionManager 延迟网络请求，确保 UI 先恢复响应
         InteractionManager.runAfterInteractions(async () => {
           if (cancelled || !localStatus) return;
           const realStatus = await verifyMSiteLoginStatus();
           if (!cancelled) {
-            setIsMSiteLoggedIn(realStatus);
+            setMSiteLoggedIn(realStatus);
           }
         });
       };
@@ -105,7 +119,8 @@ const SettingsDetailScreen: React.FC = () => {
           await logoutMSite(); // 同时清除 M 站登录状态
           await logout(); // 使用 AuthContext 的 logout
           setUsername('');
-          setIsMSiteLoggedIn(false); // 重置 M 站登录开关状态
+          setMSiteEnabledState(false); // 重置 M 站开关状态
+          setMSiteLoggedIn(null); // 重置 M 站登录状态
           // 不需要手动导航，App.tsx 会自动切换到登录界面
           // 这样重新登录后会回到首页而不是当前页面
         },
@@ -126,7 +141,8 @@ const SettingsDetailScreen: React.FC = () => {
     } else {
       // 关闭 M 站登录
       await logoutMSite();
-      setIsMSiteLoggedIn(false);
+      setMSiteEnabledState(false);
+      setMSiteLoggedIn(null);
       Alert.alert('提示', '已断开 M 站连接');
     }
   };
@@ -161,8 +177,10 @@ const SettingsDetailScreen: React.FC = () => {
     try {
       const result = await loginMSite(username, savedPassword, captchaParams);
       if (result.success) {
-        setIsMSiteLoggedIn(true);
-        // 登录成功，只更新开关状态，不弹窗不跳转
+        // 登录成功，同时启用全局开关并更新状态
+        await setMSiteEnabled(true);
+        setMSiteEnabledState(true);
+        setMSiteLoggedIn(true);
         console.log('[M站登录] 登录成功，开关已开启');
       } else {
         Alert.alert('失败', result.message || 'M 站登录失败');
@@ -417,16 +435,20 @@ const subject = encodeURIComponent('海月水母用户反馈');
                 <View style={styles.menuItem}>
                   <View style={styles.menuItemLeft}>
                     <View style={styles.switchItemContent}>
-                  <Text style={[styles.menuItemText, {color: theme.text}]}>登录 M 站</Text>
+                      <Text style={[styles.menuItemText, {color: theme.text}]}>登录 M 站</Text>
                       <Text style={[styles.switchItemDescription, {color: theme.secondaryText}]}>
-                        {isMSiteLoggedIn 
-                          ? '已登录，可改善帖子图片加载' 
-                          : '开启后可改善部分帖子图片加载失败的情况'}
+                        {!mSiteEnabled
+                          ? '开启后可改善部分帖子图片加载失败的情况'
+                          : mSiteLoggedIn === null
+                            ? '检查登录状态...'
+                            : mSiteLoggedIn
+                              ? '✅ 已登录，可改善帖子图片加载'
+                              : '⚠️ 未登录，等待自动重连...'}
                       </Text>
                     </View>
                   </View>
                   <Switch
-                    value={isMSiteLoggedIn}
+                    value={mSiteEnabled}
                     onValueChange={handleMSiteToggle}
                     trackColor={{false: theme.border, true: '#34C759'}}
                     thumbColor="#fff"

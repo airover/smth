@@ -14,7 +14,7 @@ import {
   buildDeleteHeaders,
   buildLoginHeaders,
 } from '../utils/requestUtils';
-import {getCookies, storeCookies, storeMSiteCookies, getMSiteCookies, extractAndStoreMSiteCookiesFromJar, clearMSiteCookieJar, isMSiteResponseLoggedIn, handleMSiteCookieExpired} from './auth';
+import {getCookies, storeCookies, storeMSiteCookies, getMSiteCookies, extractAndStoreMSiteCookiesFromJar, clearMSiteCookieJar, isMSiteResponseLoggedIn, handleMSiteCookieExpired, setMSiteEnabled} from './auth';
 import {buildHeaders} from '../utils/requestUtils';
 import {setCache, getCacheWithTimestamp, clearCache as clearCacheManager} from './cacheManager';
 
@@ -462,6 +462,8 @@ export const logoutMSite = async (): Promise<void> => {
     await AsyncStorage.removeItem('mSiteCookiesExpiry');
     await AsyncStorage.removeItem('mSiteCookiesTimestamp');
     await AsyncStorage.removeItem('mSiteLoggedIn');
+    // 关闭 M 站登录全局开关
+    await setMSiteEnabled(false);
     // 清除系统 cookie jar 中的 M 站 cookie
     await clearMSiteCookieJar();
     console.log('[M站登出] 已清除 M 站 Cookie、登录标记和系统 cookie jar');
