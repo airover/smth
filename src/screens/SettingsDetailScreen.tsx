@@ -307,7 +307,7 @@ const subject = encodeURIComponent('海月水母用户反馈');
   );
 
   return (
-    <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
+    <SafeAreaView edges={['bottom']} style={[styles.container, {backgroundColor: theme.background}]}>
       <ScrollView style={styles.content}>
         {/* 个人中心 */}
         {username && (

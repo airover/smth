@@ -78,7 +78,7 @@ const ChangePasswordScreen: React.FC = () => {
   };
 
   return (
-    <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
+    <SafeAreaView edges={['bottom']} style={[styles.container, {backgroundColor: theme.background}]}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.keyboardView}>

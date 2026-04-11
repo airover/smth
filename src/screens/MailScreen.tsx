@@ -183,7 +183,7 @@ const MailScreen: React.FC = () => {
 
   if (loading) {
     return (
-      <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
+      <SafeAreaView edges={['bottom']} style={[styles.container, {backgroundColor: theme.background}]}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={theme.primary} />
         </View>
@@ -193,7 +193,7 @@ const MailScreen: React.FC = () => {
 
   if (!isLoggedIn) {
     return (
-      <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
+      <SafeAreaView edges={['bottom']} style={[styles.container, {backgroundColor: theme.background}]}>
         <View style={styles.emptyContainer}>
           <Text style={[styles.emptyTitle, {color: theme.text}]}>未登录</Text>
           <Text style={[styles.emptyText, {color: theme.secondaryText}]}>请先登录以查看信箱</Text>
@@ -206,7 +206,7 @@ const MailScreen: React.FC = () => {
   }
 
   return (
-    <SafeAreaView style={[styles.container, {backgroundColor: theme.background}]}>
+    <SafeAreaView edges={['bottom']} style={[styles.container, {backgroundColor: theme.background}]}>
       <FlatList
         data={mails}
         renderItem={renderMailItem}
