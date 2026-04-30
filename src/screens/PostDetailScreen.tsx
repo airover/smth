@@ -158,22 +158,41 @@ const PostDetailScreen: React.FC = () => {
   }, []);
 
   // 监听应用前后台切换，解决WebView内容丢失问题
-  // 优化：不再每次都销毁重建 WebView，而是先尝试通过 JS 注入重新计算高度
-  // 只有在 WebView 内容确实丢失（高度变为0）时才强制重建
+  // 分档策略：
+  //  - 后台 < 30s：不做任何处理（避免不必要的闪烁和卡顿）
+  //  - 后台 30s ~ 5min：仅重置高度缓存，让 WebView 通过 injectedJavaScript 重新上报高度
+  //  - 后台 > 5min：强制重建 WebView（此时 WKWebView 内容进程大概率已被系统回收）
+  const backgroundAtRef = useRef<number | null>(null);
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextAppState) => {
+      const prevState = appStateRef.current;
+      // 进入后台：记录时间
+      if (nextAppState.match(/inactive|background/) && prevState === 'active') {
+        backgroundAtRef.current = Date.now();
+      }
       // 从后台切换到前台时
-      if (
-        appStateRef.current.match(/inactive|background/) &&
-        nextAppState === 'active'
-      ) {
-        console.log('[PostDetail] App从后台切回前台，尝试恢复WebView');
-        // 使用 InteractionManager 延迟执行，确保 UI 先恢复响应
-        InteractionManager.runAfterInteractions(() => {
-          // 只重置高度缓存，让 WebView 通过 injectedJavaScript 重新上报高度
-          // 不改变 webViewKey，避免销毁重建 WebView
-          setContentHeights({});
-        });
+      if (prevState.match(/inactive|background/) && nextAppState === 'active') {
+        const bgDuration = backgroundAtRef.current ? Date.now() - backgroundAtRef.current : 0;
+        backgroundAtRef.current = null;
+        console.log(`[PostDetail] App从后台切回前台，后台时长: ${bgDuration}ms`);
+
+        if (bgDuration < 30 * 1000) {
+          // 档位1：短时间切换，不处理，避免卡顿
+          console.log('[PostDetail] 后台时长 < 30s，不做恢复处理');
+        } else if (bgDuration < 5 * 60 * 1000) {
+          // 档位2：中等时长，仅重置高度让 WebView 重新上报
+          console.log('[PostDetail] 后台时长 30s~5min，重置高度缓存');
+          InteractionManager.runAfterInteractions(() => {
+            setContentHeights({});
+          });
+        } else {
+          // 档位3：长时间后台，WebView 进程大概率已回收，强制重建
+          console.log('[PostDetail] 后台时长 > 5min，强制重建 WebView');
+          InteractionManager.runAfterInteractions(() => {
+            setContentHeights({});
+            setWebViewKey(k => k + 1);
+          });
+        }
       }
       appStateRef.current = nextAppState;
     });
@@ -1264,6 +1283,13 @@ const PostDetailScreen: React.FC = () => {
           if (newHeight && newHeight > 0 && newHeight !== contentHeights[key]) {
             setContentHeights(prev => ({ ...prev, [key]: newHeight }));
           }
+        }}
+        onContentProcessDidTerminate={() => {
+          // iOS WKWebView 内容进程被系统回收时触发（白屏的根本原因）
+          // 收到此回调后强制重建所有 WebView
+          console.log('[PostDetail] WebView 内容进程已终止，强制重建');
+          setContentHeights({});
+          setWebViewKey(k => k + 1);
         }}
         onLoadEnd={() => {
           // WebView加载完成后，确保触发高度计算
