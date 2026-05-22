@@ -26,6 +26,18 @@ const M_SITE_BASE_URL = 'https://m.newsmth.net';
 const DEFAULT_PAGE = 1; // 默认页码
 const DEFAULT_PAGE_SIZE = 20; // 默认每页数量
 const DEFAULT_SEARCH_STATUS = 0; // 默认搜索状态
+let userInfoRequest: Promise<any> | null = null;
+
+const fetchUserInfoOnce = async (): Promise<any> => {
+  if (userInfoRequest) {
+    return userInfoRequest;
+  }
+
+  userInfoRequest = fetchUserInfoFromServer().finally(() => {
+    userInfoRequest = null;
+  });
+  return userInfoRequest;
+};
 
 // storeCookies 已移至 auth.ts 统一管理
 
@@ -699,7 +711,7 @@ export const getUserInfo = async (forceRefresh: boolean = false): Promise<any> =
   // 如果强制刷新，跳过所有缓存，直接从服务器获取
   if (forceRefresh) {
     console.log('getUserInfo: 强制刷新，跳过缓存直接从服务器获取');
-    return await fetchUserInfoFromServer();
+    return await fetchUserInfoOnce();
   }
   
   // 第一层：检查 cacheManager 内存缓存（最快）
@@ -731,7 +743,7 @@ export const getUserInfo = async (forceRefresh: boolean = false): Promise<any> =
       console.log('getUserInfo: 持久化缓存已过期（', Math.floor(age / 1000), '秒前），返回旧数据并异步更新');
       
       // 异步更新
-      fetchUserInfoFromServer().catch(error => {
+      fetchUserInfoOnce().catch(error => {
         console.error('getUserInfo: 异步更新缓存失败:', error);
       });
       
@@ -744,7 +756,7 @@ export const getUserInfo = async (forceRefresh: boolean = false): Promise<any> =
   
   // 第三层：无任何缓存，同步获取
   console.log('getUserInfo: 无缓存，同步从服务器获取');
-  return await fetchUserInfoFromServer();
+  return await fetchUserInfoOnce();
 };
 
 // 清除用户信息缓存（用于登出等场景）

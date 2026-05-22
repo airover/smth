@@ -48,15 +48,6 @@ interface CacheData<T> {
   timestamp: number;
 }
 
-// 统一的缓存有效性判断
-const isCacheValid = (parsed: any, maxAge: number, version: string): boolean => {
-  if (!parsed || parsed.version !== version) {
-    return false;
-  }
-  const age = Date.now() - parsed.timestamp;
-  return age < maxAge;
-};
-
 // 统一的缓存读取逻辑
 const loadCacheData = async <T,>(
   key: string,
@@ -116,7 +107,7 @@ const HomeScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const theme = useTheme();
   const headerHeight = useThemeHeaderHeight();
-  const {readPosts, isRead, markAsRead} = useReadPosts();
+  const {isRead, markAsRead} = useReadPosts();
   const [topTen, setTopTen] = useState<TopTenItem[]>([]);
   const [hotPosts, setHotPosts] = useState<TopTenItem[]>([]);
   const [hotBoards, setHotBoards] = useState<Board[]>([]);
@@ -229,25 +220,25 @@ const HomeScreen: React.FC = () => {
       
       // 只有在数据非空时才更新缓存和状态
       if (topTenData !== null && topTenData.length > 0) {
-        await saveCacheData('topTen_cache', topTenData, CACHE_CONFIG.TOP_TEN.VERSION);
         setTopTen(topTenData);
+        saveCacheData('topTen_cache', topTenData, CACHE_CONFIG.TOP_TEN.VERSION);
       } else {
         console.log('[Cache] topTen返回空数据，保留本地缓存');
       }
       
       // 热门版面和热帖：只有在有数据时才更新
       if (hotBoardsData && hotBoardsData.length > 0) {
-        await saveCacheData('hotBoards_cache', hotBoardsData, CACHE_CONFIG.HOT_BOARDS.VERSION);
         setHotBoards(hotBoardsData);
+        saveCacheData('hotBoards_cache', hotBoardsData, CACHE_CONFIG.HOT_BOARDS.VERSION);
       } else {
         console.log('[Cache] hotBoards返回空数据，保留本地缓存');
       }
       
       if (hotPostsResult.topics && hotPostsResult.topics.length > 0) {
-        await saveCacheData('hotPosts_page1_cache', hotPostsResult, CACHE_CONFIG.HOT_POSTS.VERSION);
         setHotPosts(hotPostsResult.topics);
         setHotPostsPage(1);
         setHasMoreHotPosts(hotPostsResult.totalPages > 1);
+        saveCacheData('hotPosts_page1_cache', hotPostsResult, CACHE_CONFIG.HOT_POSTS.VERSION);
       } else {
         console.log('[Cache] hotPosts返回空数据，保留本地缓存');
       }
@@ -591,4 +582,3 @@ const styles = StyleSheet.create({
 });
 
 export default HomeScreen;
-

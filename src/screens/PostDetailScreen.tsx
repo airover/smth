@@ -74,6 +74,8 @@ const formatDateTime = (time: string): string => {
 
 const SCREEN_WIDTH = RESPONSIVE.SCREEN_WIDTH;
 const SCREEN_HEIGHT = RESPONSIVE.SCREEN_HEIGHT;
+const POST_DETAIL_CACHE_FRESH_AGE = 60 * 1000;
+const POST_DETAIL_CACHE_MAX_STALE_AGE = 30 * 60 * 1000;
 
 // 点赞/扔鸡蛋专用的 Captcha ID
 const LIKE_CAPTCHA_ID = '3a6990c763f90e33fa62a97faad3a05f';
@@ -81,7 +83,7 @@ const LIKE_CAPTCHA_ID = '3a6990c763f90e33fa62a97faad3a05f';
 const PostDetailScreen: React.FC = () => {
   const route = useRoute();
   const navigation = useNavigation<any>();
-  const {board, postId} = route.params as {board: string; postId: string};
+  const {board, postId, mSitePostId} = route.params as {board: string; postId: string; mSitePostId?: string | null};
   const {settings} = useSettings();
   const theme = getTheme(settings.themeMode);
   const fontSizes = getFontSizes(settings.fontSize);
@@ -309,6 +311,21 @@ const PostDetailScreen: React.FC = () => {
     }
   };
 
+  const getStaleCache = <T,>(category: 'postDetail' | 'topicReplies', key: string): {data: T; age: number} | null => {
+    const cached = cacheManager.getWithTimestamp<T>(category, key);
+    if (!cached) {
+      return null;
+    }
+
+    const age = Date.now() - cached.timestamp;
+    if (age < POST_DETAIL_CACHE_MAX_STALE_AGE) {
+      console.log(`[PostDetail] Stale cache available for ${category}[${key}], age: ${Math.floor(age / 1000)}s`);
+      return {data: cached.data, age};
+    }
+
+    return null;
+  };
+
   const loadPostDetail = async (pageNum: number, forceRefresh: boolean = false) => {
     try {
       if (pageNum > 1) {
@@ -321,21 +338,53 @@ const PostDetailScreen: React.FC = () => {
         const repliesCacheKey = `${postId}-1`;
         
         // 尝试从缓存获取数据（下拉刷新时跳过缓存）
-        let detailData = forceRefresh ? null : cacheManager.get('postDetail', postCacheKey, 60 * 1000); // 1分钟缓存
-        let repliesData = forceRefresh ? null : cacheManager.get('topicReplies', repliesCacheKey, 60 * 1000);
+        let detailData = forceRefresh ? null : cacheManager.get('postDetail', postCacheKey, POST_DETAIL_CACHE_FRESH_AGE);
+        let repliesData = forceRefresh ? null : cacheManager.get('topicReplies', repliesCacheKey, POST_DETAIL_CACHE_FRESH_AGE);
+        const staleDetailCache = detailData || forceRefresh ? null : getStaleCache<any>('postDetail', postCacheKey);
+        const staleRepliesCache = repliesData || forceRefresh ? null : getStaleCache<any>('topicReplies', repliesCacheKey);
+        const shouldRefreshDetail = !detailData && staleDetailCache;
+        const shouldRefreshReplies = !repliesData && staleRepliesCache;
+
+        if (staleDetailCache) {
+          detailData = staleDetailCache.data;
+        }
+        if (staleRepliesCache) {
+          repliesData = staleRepliesCache.data;
+        }
         
         // 保存旧缓存作为降级方案
         const oldDetailData = detailData;
         const oldRepliesData = repliesData;
+
+        if (!forceRefresh && (shouldRefreshDetail || shouldRefreshReplies)) {
+          if (detailData) {
+            setPost(detailData as any);
+            saveBrowsingHistory({
+              postId,
+              board,
+              title: (detailData as any).title,
+              author: (detailData as any).author,
+              boardName: (detailData as any).boardName || board,
+              replyCount: (detailData as any).replyCount,
+            });
+          }
+
+          if (repliesData) {
+            const filteredReplies = (repliesData as {replies: any[], totalItems: number}).replies.filter((r: any) => r.floor !== 1 && (r.status == null || r.status === 0));
+            setReplies(filteredReplies);
+            setPage(1);
+            setHasMore((repliesData as {replies: any[], totalItems: number}).replies.length >= 20);
+          }
+        }
         
         // 如果缓存中没有数据或强制刷新，则从API获取
-        if (!detailData || !repliesData || forceRefresh) {
-          console.log(`[PostDetail] ${forceRefresh ? 'Force refresh' : 'Cache miss'}, fetching from API`);
+        if (!detailData || !repliesData || forceRefresh || shouldRefreshDetail || shouldRefreshReplies) {
+          console.log(`[PostDetail] ${forceRefresh ? 'Force refresh' : shouldRefreshDetail || shouldRefreshReplies ? 'Stale cache' : 'Cache miss'}, fetching from API`);
           
           try {
             const [apiDetailData, apiRepliesData] = await Promise.all([
-              detailData ? Promise.resolve(detailData) : getPostDetail(board, postId, 1),
-              repliesData ? Promise.resolve(repliesData) : getTopicReplies(postId, 1)
+              detailData && !shouldRefreshDetail && !forceRefresh ? Promise.resolve(detailData) : getPostDetail(board, postId, 1, mSitePostId),
+              repliesData && !shouldRefreshReplies && !forceRefresh ? Promise.resolve(repliesData) : getTopicReplies(postId, 1)
             ]);
             
             // ✅ 修复：只有成功获取且数据有效时才缓存和更新
@@ -395,10 +444,25 @@ const PostDetailScreen: React.FC = () => {
       } else {
         // 后续页：检查缓存并获取回复列表
         const repliesCacheKey = `${postId}-${pageNum}`;
-        let repliesData = cacheManager.get('topicReplies', repliesCacheKey, 60 * 1000);
+        let repliesData = cacheManager.get('topicReplies', repliesCacheKey, POST_DETAIL_CACHE_FRESH_AGE);
+        const staleRepliesCache = repliesData ? null : getStaleCache<any>('topicReplies', repliesCacheKey);
+        const shouldRefreshReplies = !repliesData && staleRepliesCache;
+        if (staleRepliesCache) {
+          repliesData = staleRepliesCache.data;
+          if ((repliesData as {replies: any[], totalItems: number}).replies.length > 0) {
+            setReplies(prev => {
+              const existingIds = new Set(prev.map(r => r.id));
+              const newReplies = (repliesData as {replies: any[], totalItems: number}).replies.filter((r: any) => !existingIds.has(r.id) && (r.status == null || r.status === 0));
+              return [...prev, ...newReplies];
+            });
+            setPage(pageNum);
+            setHasMore((repliesData as {replies: any[], totalItems: number}).replies.length >= 20);
+          }
+        }
+        const oldRepliesData = repliesData;
         
-        if (!repliesData) {
-          console.log(`[PostDetail] Cache miss for page ${pageNum}, fetching from API`);
+        if (!repliesData || shouldRefreshReplies) {
+          console.log(`[PostDetail] ${shouldRefreshReplies ? 'Stale cache' : 'Cache miss'} for page ${pageNum}, fetching from API`);
           try {
             repliesData = await getTopicReplies(postId, pageNum);
             // ✅ 修复：只有成功获取且数据有效时才缓存（totalItems !== -1）
@@ -406,12 +470,12 @@ const PostDetailScreen: React.FC = () => {
               cacheManager.set('topicReplies', repliesCacheKey, repliesData);
             } else {
               // API返回失败，不更新数据
-              repliesData = null;
+              repliesData = oldRepliesData;
             }
           } catch (error: any) {
             console.error(`[PostDetail] Failed to fetch page ${pageNum}:`, error.message);
-            // 失败时不更新数据
-            repliesData = null;
+            // 失败时使用旧缓存降级
+            repliesData = oldRepliesData;
           }
         } else {
           console.log(`[PostDetail] Cache hit for page ${pageNum}, using cached data`);
@@ -2721,4 +2785,3 @@ const styles = StyleSheet.create({
 });
 
 export default PostDetailScreen;
-

@@ -13,12 +13,46 @@ import {
   buildPostHeaders,
   buildDeleteHeaders,
 } from '../utils/requestUtils';
-import {setCache, getCacheWithTimestamp} from './cacheManager';
+import {setCache, getCacheWithTimestamp, clearCache} from './cacheManager';
 import {extractStaticAttachmentUrls, isImageAttachment} from '../utils/imageUtils';
 import {getCookies, getMSiteCookies, isMSiteResponseLoggedIn, handleMSiteCookieExpired} from './auth';
 import {cleanHtml} from '../utils/htmlParser';
 
 const WAP_BASE_URL = 'https://wap.newsmth.net';
+const CACHE_REFRESH_THRESHOLD = 60 * 1000;
+const MAX_STALE_CACHE_AGE = 24 * 60 * 60 * 1000;
+const MSITE_BOARD_PAGE_CACHE_DURATION = 60 * 1000;
+const inFlightRequests = new Map<string, Promise<any>>();
+const mSiteBoardPageCache = new Map<string, {timestamp: number; posts: MSiteBoardPost[]}>();
+
+interface MSiteBoardPost {
+  postId: string;
+  rawTitle: string;
+  cleanTitle: string;
+  page: number;
+}
+
+const runOnce = async <T,>(key: string, request: () => Promise<T>): Promise<T> => {
+  const existing = inFlightRequests.get(key);
+  if (existing) {
+    return existing as Promise<T>;
+  }
+
+  const promise = request().finally(() => {
+    inFlightRequests.delete(key);
+  });
+  inFlightRequests.set(key, promise);
+  return promise;
+};
+
+const invalidateFavoriteBoardsCache = async (): Promise<void> => {
+  clearCache('favoriteBoards');
+  try {
+    await AsyncStorage.removeItem('favorite_boards_cache');
+  } catch (error) {
+    console.error('[Cache] Failed to invalidate favorite boards cache:', error);
+  }
+};
 
 /**
  * 获取 M 站请求使用的 Cookie
@@ -67,7 +101,7 @@ const fetchStaticAttachmentUrls = async (
 ): Promise<string[]> => {
   if (!boardName || !mSitePostId) return [];
 
-  try {
+  return await runOnce(`msite-static:${boardName}:${mSitePostId}`, async () => {
     const url = `https://m.newsmth.net/article/${boardName}/${mSitePostId}`;
     const cookies = await getMSiteRequestCookies();
     const referer = `https://m.newsmth.net/board/${boardName}`;
@@ -106,10 +140,10 @@ const fetchStaticAttachmentUrls = async (
       console.log('[PostDetail] Fallback static attachments:', urls);
     }
     return urls;
-  } catch (error: any) {
+  }).catch((error: any) => {
     console.error('[PostDetail] Fetch static attachments failed:', error.message || error);
     return [];
-  }
+  });
 };
 
 // 计算两个字符串的相似度（基于编辑距离）
@@ -161,6 +195,130 @@ const getStringSimilarity = (a: string, b: string): number => {
   return (maxLen - distance) / maxLen;
 };
 
+const escapeRegExp = (value: string): string => {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+};
+
+const getEstimatedMSitePages = (wapPage: number, wapPosition: number): number[] => {
+  const globalIndex = (wapPage - 1) * 20 + wapPosition;
+  const mBasePage = Math.floor(globalIndex / 30) + 1;
+  return [mBasePage, mBasePage + 1];
+};
+
+const parseMSiteBoardPosts = (pageHtml: string, boardName: string, page: number): MSiteBoardPost[] => {
+  const pattern = new RegExp(
+    `<a href="/article/${escapeRegExp(boardName)}/(\\d+)"[^>]*>([\\s\\S]*?)</a>`,
+    'gi'
+  );
+  const posts: MSiteBoardPost[] = [];
+  let match;
+
+  while ((match = pattern.exec(pageHtml)) !== null) {
+    const rawTitle = match[2];
+    posts.push({
+      postId: match[1],
+      rawTitle,
+      cleanTitle: cleanHtml(rawTitle, {collapseWhitespace: true}),
+      page,
+    });
+  }
+
+  return posts;
+};
+
+const matchMSitePostIdFromPosts = (
+  posts: MSiteBoardPost[],
+  targetClean: string,
+  logTag: string,
+): string | null => {
+  let bestId: string | null = null;
+  let highestScore = 0;
+
+  for (const {postId, cleanTitle} of posts) {
+    if (targetClean.length >= 10 && cleanTitle.includes(targetClean.substring(0, 10))) {
+      console.log(`[${logTag}] 前缀匹配成功: ${postId}`);
+      return postId;
+    }
+
+    if (cleanTitle === targetClean) {
+      console.log(`[${logTag}] 精确匹配成功: ${postId}`);
+      return postId;
+    }
+
+    const score = getStringSimilarity(targetClean, cleanTitle);
+    if (score > highestScore) {
+      highestScore = score;
+      bestId = postId;
+    }
+  }
+
+  if (highestScore > 0.9 && bestId) {
+    console.log(`[${logTag}] 模糊匹配成功 (相似度: ${highestScore.toFixed(2)}): ${bestId}`);
+    return bestId;
+  }
+
+  return null;
+};
+
+const fetchMSiteBoardPagePosts = async (boardName: string, page: number): Promise<MSiteBoardPost[]> => {
+  if (!boardName || page < 1) return [];
+
+  const cacheKey = `${boardName}:${page}`;
+  const cached = mSiteBoardPageCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < MSITE_BOARD_PAGE_CACHE_DURATION) {
+    return cached.posts;
+  }
+
+  return await runOnce(`msite-board-page:${cacheKey}`, async () => {
+    const latestCached = mSiteBoardPageCache.get(cacheKey);
+    if (latestCached && Date.now() - latestCached.timestamp < MSITE_BOARD_PAGE_CACHE_DURATION) {
+      return latestCached.posts;
+    }
+
+    const cookies = await getMSiteRequestCookies();
+    const url = `https://m.newsmth.net/board/${boardName}?p=${page}`;
+    console.log(`[MMapper] 正在检索 M 站第 ${page} 页...`);
+
+    const headers = buildHeaders({
+      cookie: cookies,
+      acceptType: 'html',
+      referer: `https://m.newsmth.net/board/${boardName}`,
+      origin: 'https://m.newsmth.net',
+      customHeaders: {
+        'Accept-Language': 'zh-CN,zh;q=0.9',
+      },
+    });
+
+    try {
+      const response = await fetchWithRetry(url, {
+        method: 'GET',
+        headers,
+        credentials: 'include',
+      }, 10000);
+
+      if (!response.ok) {
+        console.log(`[MMapper] 第 ${page} 页请求失败: ${response.status}`);
+        return [];
+      }
+
+      const pageHtml = await response.text();
+      if (!isMSiteResponseLoggedIn(pageHtml)) {
+        console.log('[MMapper] M站Cookie已过期（响应中无注销链接），清除本地缓存');
+        await handleMSiteCookieExpired();
+        return [];
+      }
+
+      const posts = parseMSiteBoardPosts(pageHtml, boardName, page);
+      console.log(`[MMapper] 第 ${page} 页找到 ${posts.length} 个帖子`);
+      mSiteBoardPageCache.set(cacheKey, {timestamp: Date.now(), posts});
+      return posts;
+    } catch (error: any) {
+      console.error(`[MMapper] 第 ${page} 页请求出错:`, error.message || error);
+      return [];
+    }
+  });
+};
+
 // 获取 M 站帖子短 ID
 // 通过 WAP 站的页码和位置，在 M 站搜索匹配的帖子
 // M 站每页30条，WAP 站每页20条
@@ -171,124 +329,22 @@ export const findMSitePostId = async (
   targetTitle: string
 ): Promise<string | null> => {
   if (!boardName || !targetTitle) return null;
-  
-  try {
-    const cookies = await getMSiteRequestCookies();
-    
-    // 1. 计算理论全局索引及M站基准页
-    // WAP 站每页20条，M 站每页30条
-    const globalIndex = (wapPage - 1) * 20 + wapPosition;
-    const mBasePage = Math.floor(globalIndex / 30) + 1;
-    
-    // 2. 确定搜索窗口（考虑置顶帖导致的目标后移）
-    // 检查基准页及后续一页
-    const pagesToCheck = [mBasePage, mBasePage + 1];
-    
-    const targetClean = cleanHtml(targetTitle, {collapseWhitespace: true});
-    console.log(`[MMapper] 开始匹配: ${boardName} | WAP Page: ${wapPage}, Pos: ${wapPosition}`);
-    console.log(`[MMapper] 目标标题: ${targetClean}`);
-    
-    const headers = buildHeaders({
-      cookie: cookies,
-      acceptType: 'html',
-      referer: `https://m.newsmth.net/board/${boardName}`,
-      origin: 'https://m.newsmth.net',
-      customHeaders: {
-        'Accept-Language': 'zh-CN,zh;q=0.9',
-      },
-    });
-    
-    for (const page of pagesToCheck) {
-      const url = `https://m.newsmth.net/board/${boardName}?p=${page}`;
-      console.log(`[MMapper] 正在检索 M 站第 ${page} 页...`);
-      
-      try {
-        const response = await fetchWithRetry(url, {
-          method: 'GET',
-          headers,
-          credentials: 'include',
-        }, 10000); // 10秒超时
-        
-        if (!response.ok) {
-          console.log(`[MMapper] 第 ${page} 页请求失败: ${response.status}`);
-          continue;
-        }
-        
-        const pageHtml = await response.text();
-        
-        // 被动探测：检查响应中是否处于登录状态
-        if (!isMSiteResponseLoggedIn(pageHtml)) {
-          console.log('[MMapper] M站Cookie已过期（响应中无注销链接），清除本地缓存');
-          await handleMSiteCookieExpired();
-          return null;
-        }
-        
-        // 3. 提取该页所有帖子链接和标题
-        // 匹配格式: <a href="/article/BoardName/123456">标题内容</a>
-        const pattern = new RegExp(
-          `<a href="/article/${boardName}/(\\d+)"[^>]*>([\\s\\S]*?)</a>`,
-          'gi'
-        );
-        
-        const matches: Array<{postId: string, rawTitle: string}> = [];
-        let match;
-        while ((match = pattern.exec(pageHtml)) !== null) {
-          matches.push({
-            postId: match[1],
-            rawTitle: match[2],
-          });
-        }
-        
-        if (matches.length === 0) {
-          console.log(`[MMapper] 第 ${page} 页未找到帖子链接`);
-          continue;
-        }
-        
-        console.log(`[MMapper] 第 ${page} 页找到 ${matches.length} 个帖子`);
-        
-        let bestId: string | null = null;
-        let highestScore = 0;
-        
-        for (const {postId, rawTitle} of matches) {
-          const currentTitle = cleanHtml(rawTitle, {collapseWhitespace: true});
-          
-          // 优先进行前缀匹配 (性能最高)
-          if (targetClean.length >= 10 && currentTitle.includes(targetClean.substring(0, 10))) {
-            console.log(`[MMapper] 前缀匹配成功: ${postId}`);
-            return postId;
-          }
-          
-          // 精确匹配
-          if (currentTitle === targetClean) {
-            console.log(`[MMapper] 精确匹配成功: ${postId}`);
-            return postId;
-          }
-          
-          // 相似度兜底 (处理标题中间有换行或特殊截断的情况)
-          const score = getStringSimilarity(targetClean, currentTitle);
-          if (score > highestScore) {
-            highestScore = score;
-            bestId = postId;
-          }
-        }
-        
-        // 如果相似度极高（设定阈值为0.8），直接返回
-        if (highestScore > 0.9 && bestId) {
-          console.log(`[MMapper] 模糊匹配成功 (相似度: ${highestScore.toFixed(2)}): ${bestId}`);
-          return bestId;
-        }
-        
-      } catch (error: any) {
-        console.error(`[MMapper] 第 ${page} 页请求出错:`, error.message || error);
-      }
+
+  const pagesToCheck = getEstimatedMSitePages(wapPage, wapPosition);
+  const targetClean = cleanHtml(targetTitle, {collapseWhitespace: true});
+  console.log(`[MMapper] 开始匹配: ${boardName} | WAP Page: ${wapPage}, Pos: ${wapPosition}`);
+  console.log(`[MMapper] 目标标题: ${targetClean}`);
+
+  for (const page of pagesToCheck) {
+    const posts = await fetchMSiteBoardPagePosts(boardName, page);
+    const matchedId = matchMSitePostIdFromPosts(posts, targetClean, 'MMapper');
+    if (matchedId) {
+      return matchedId;
     }
-    
-    console.log('[MMapper] 未找到匹配的帖子');
-    return null;
-  } catch (error: any) {
-    console.error('[MMapper] 查找 M 站帖子 ID 失败:', error.message || error);
-    return null;
   }
+
+  console.log('[MMapper] 未找到匹配的帖子');
+  return null;
 };
 
 // 通过帖子标题直接在 M 站搜索获取短 ID
@@ -299,95 +355,21 @@ export const findMSitePostIdByTitle = async (
   maxPages: number = 3
 ): Promise<string | null> => {
   if (!boardName || !targetTitle) return null;
-  
-  try {
-    const cookies = await getMSiteRequestCookies();
-    const targetClean = cleanHtml(targetTitle, {collapseWhitespace: true});
-    
-    console.log(`[MMapper] 按标题搜索: ${boardName}`);
-    console.log(`[MMapper] 目标标题: ${targetClean}`);
-    
-    const headers = buildHeaders({
-      cookie: cookies,
-      acceptType: 'html',
-      referer: `https://m.newsmth.net/board/${boardName}`,
-      origin: 'https://m.newsmth.net',
-      customHeaders: {
-        'Accept-Language': 'zh-CN,zh;q=0.9',
-      },
-    });
-    
-    for (let page = 1; page <= maxPages; page++) {
-      const url = `https://m.newsmth.net/board/${boardName}?p=${page}`;
-      console.log(`[MMapper] 正在检索 M 站第 ${page} 页...`);
-      
-      try {
-        const response = await fetchWithRetry(url, {
-          method: 'GET',
-          headers,
-          credentials: 'include',
-        }, 10000);
-        
-        if (!response.ok) continue;
-        
-        const pageHtml = await response.text();
-        
-        // 被动探测：检查响应中是否处于登录状态
-        if (!isMSiteResponseLoggedIn(pageHtml)) {
-          console.log('[MMapper] M站Cookie已过期（响应中无注销链接），清除本地缓存');
-          await handleMSiteCookieExpired();
-          return null;
-        }
-        
-        const pattern = new RegExp(
-          `<a href="/article/${boardName}/(\\d+)"[^>]*>([\\s\\S]*?)</a>`,
-          'gi'
-        );
-        
-        let match;
-        let bestId: string | null = null;
-        let highestScore = 0;
-        
-        while ((match = pattern.exec(pageHtml)) !== null) {
-          const postId = match[1];
-          const currentTitle = cleanHtml(match[2], {collapseWhitespace: true});
-          
-          // 精确匹配
-          if (currentTitle === targetClean) {
-            console.log(`[MMapper] 精确匹配成功: ${postId}`);
-            return postId;
-          }
-          
-          // 前缀匹配
-          if (targetClean.length >= 10 && currentTitle.includes(targetClean.substring(0, 10))) {
-            console.log(`[MMapper] 前缀匹配成功: ${postId}`);
-            return postId;
-          }
-          
-          // 相似度计算
-          const score = getStringSimilarity(targetClean, currentTitle);
-          if (score > highestScore) {
-            highestScore = score;
-            bestId = postId;
-          }
-        }
-        
-        if (highestScore > 0.9 && bestId) {
-          console.log(`[MMapper] 模糊匹配成功 (相似度: ${highestScore.toFixed(2)}): ${bestId}`);
-          return bestId;
-        }
-        
-      } catch (error: any) {
-        console.error(`[MMapper] 第 ${page} 页请求出错:`, error.message || error);
-      }
+
+  const targetClean = cleanHtml(targetTitle, {collapseWhitespace: true});
+  console.log(`[MMapper] 按标题搜索: ${boardName}`);
+  console.log(`[MMapper] 目标标题: ${targetClean}`);
+
+  for (let page = 1; page <= maxPages; page++) {
+    const posts = await fetchMSiteBoardPagePosts(boardName, page);
+    const matchedId = matchMSitePostIdFromPosts(posts, targetClean, 'MMapper');
+    if (matchedId) {
+      return matchedId;
     }
-    
-    console.log('[MMapper] 未找到匹配的帖子');
-    return null;
-  } catch (error: any) {
-    console.error('[MMapper] 按标题查找失败:', error.message || error);
-    return null;
   }
+
+  console.log('[MMapper] 未找到匹配的帖子');
+  return null;
 };
 
 // ============================================================
@@ -415,19 +397,47 @@ export const hasImageAttachmentWithoutCloudUrl = (attachments: any[]): boolean =
 // ===== M站帖子短ID 持久缓存 (AsyncStorage) =====
 const MSITE_POST_ID_CACHE_KEY = '@msite_post_id_cache';
 const MSITE_POST_ID_CACHE_MAX_SIZE = 10000; // 缓存最大条目数
+const MSITE_STATIC_URL_CACHE_KEY = '@msite_static_attachment_url_cache';
+const MSITE_STATIC_URL_CACHE_MAX_SIZE = 5000;
+let mSitePostIdCacheMemory: Record<string, string> | null = null;
+let mSiteStaticUrlCacheMemory: Record<string, string[]> | null = null;
+
+const loadMSitePostIdCache = async (): Promise<Record<string, string>> => {
+  if (mSitePostIdCacheMemory) {
+    return mSitePostIdCacheMemory;
+  }
+
+  try {
+    const raw = await AsyncStorage.getItem(MSITE_POST_ID_CACHE_KEY);
+    mSitePostIdCacheMemory = raw ? JSON.parse(raw) : {};
+  } catch {
+    mSitePostIdCacheMemory = {};
+  }
+
+  return mSitePostIdCacheMemory as Record<string, string>;
+};
+
+const loadMSiteStaticUrlCache = async (): Promise<Record<string, string[]>> => {
+  if (mSiteStaticUrlCacheMemory) {
+    return mSiteStaticUrlCacheMemory;
+  }
+
+  try {
+    const raw = await AsyncStorage.getItem(MSITE_STATIC_URL_CACHE_KEY);
+    mSiteStaticUrlCacheMemory = raw ? JSON.parse(raw) : {};
+  } catch {
+    mSiteStaticUrlCacheMemory = {};
+  }
+
+  return mSiteStaticUrlCacheMemory as Record<string, string[]>;
+};
 
 /**
  * 从持久缓存中获取 topicId 对应的 mSitePostId
  */
 const getMSitePostIdFromCache = async (topicId: string): Promise<string | null> => {
-  try {
-    const raw = await AsyncStorage.getItem(MSITE_POST_ID_CACHE_KEY);
-    if (!raw) return null;
-    const cache: Record<string, string> = JSON.parse(raw);
-    return cache[topicId] || null;
-  } catch {
-    return null;
-  }
+  const cache = await loadMSitePostIdCache();
+  return cache[topicId] || null;
 };
 
 /**
@@ -435,8 +445,7 @@ const getMSitePostIdFromCache = async (topicId: string): Promise<string | null> 
  */
 const saveMSitePostIdToCache = async (topicId: string, mSitePostId: string): Promise<void> => {
   try {
-    const raw = await AsyncStorage.getItem(MSITE_POST_ID_CACHE_KEY);
-    let cache: Record<string, string> = raw ? JSON.parse(raw) : {};
+    const cache = await loadMSitePostIdCache();
     // 限制缓存条目数量，超过上限时删除最早的100条
     const keys = Object.keys(cache);
     if (keys.length > MSITE_POST_ID_CACHE_MAX_SIZE) {
@@ -448,6 +457,102 @@ const saveMSitePostIdToCache = async (topicId: string, mSitePostId: string): Pro
   } catch (err: any) {
     console.log('[MSiteIdCache] 写入缓存失败:', err.message || err);
   }
+};
+
+const getStaticAttachmentUrlsFromCache = async (topicId: string): Promise<string[] | null> => {
+  const cache = await loadMSiteStaticUrlCache();
+  return cache[topicId] || null;
+};
+
+const saveStaticAttachmentUrlsToCache = async (topicId: string, urls: string[]): Promise<void> => {
+  if (!topicId || urls.length === 0) return;
+
+  try {
+    const cache = await loadMSiteStaticUrlCache();
+    const keys = Object.keys(cache);
+    if (keys.length > MSITE_STATIC_URL_CACHE_MAX_SIZE) {
+      keys.slice(0, 100).forEach(key => delete cache[key]);
+    }
+    cache[topicId] = urls;
+    await AsyncStorage.setItem(MSITE_STATIC_URL_CACHE_KEY, JSON.stringify(cache));
+  } catch (err: any) {
+    console.log('[MSiteStaticUrlCache] 写入缓存失败:', err.message || err);
+  }
+};
+
+const resolveMSitePostIdsForBoardList = async (topics: any[], wapPage: number): Promise<Map<string, string | null>> => {
+  const results = new Map<string, string | null>();
+  const candidates: Array<{
+    topicId: string;
+    boardName: string;
+    title: string;
+    targetClean: string;
+    pages: number[];
+  }> = [];
+
+  for (let index = 0; index < topics.length; index++) {
+    const topic = topics[index];
+    const rawAttachments = (topic.article?.attachments || []).filter((att: any) => att != null);
+    if (!hasImageAttachmentWithoutCloudUrl(rawAttachments)) {
+      continue;
+    }
+
+    const topicId = topic.id;
+    const cachedId = topicId ? await getMSitePostIdFromCache(topicId) : null;
+    if (cachedId) {
+      results.set(topicId, cachedId);
+      continue;
+    }
+
+    const boardName = topic.board?.name || '';
+    const title = topic.subject?.trim() || '';
+    if (!topicId || !boardName || !title) {
+      continue;
+    }
+
+    candidates.push({
+      topicId,
+      boardName,
+      title,
+      targetClean: cleanHtml(title, {collapseWhitespace: true}),
+      pages: getEstimatedMSitePages(wapPage, index),
+    });
+  }
+
+  const pageRequests = new Map<string, {boardName: string; page: number}>();
+  candidates.forEach(candidate => {
+    candidate.pages.forEach(page => {
+      pageRequests.set(`${candidate.boardName}:${page}`, {boardName: candidate.boardName, page});
+    });
+  });
+
+  const postsByPage = new Map<string, MSiteBoardPost[]>();
+  await Promise.all(Array.from(pageRequests.entries()).map(async ([key, request]) => {
+    const posts = await fetchMSiteBoardPagePosts(request.boardName, request.page);
+    postsByPage.set(key, posts);
+  }));
+
+  const fallbackCandidates: typeof candidates = [];
+  for (const candidate of candidates) {
+    const posts = candidate.pages.flatMap(page => postsByPage.get(`${candidate.boardName}:${page}`) || []);
+    const matchedId = matchMSitePostIdFromPosts(posts, candidate.targetClean, 'BoardPosts');
+    if (matchedId) {
+      results.set(candidate.topicId, matchedId);
+      await saveMSitePostIdToCache(candidate.topicId, matchedId);
+    } else {
+      fallbackCandidates.push(candidate);
+    }
+  }
+
+  await Promise.all(fallbackCandidates.map(async candidate => {
+    const matchedId = await findMSitePostIdByTitle(candidate.boardName, candidate.title, 2);
+    results.set(candidate.topicId, matchedId);
+    if (matchedId) {
+      await saveMSitePostIdToCache(candidate.topicId, matchedId);
+    }
+  }));
+
+  return results;
 };
 
 /**
@@ -586,6 +691,14 @@ export const getStaticAttachmentUrlsForTopic = async (params: {
   console.log(`[${logTag}] 帖子 ${topicId} 检测到图片附件缺少云存储URL，尝试获取M站静态URL...`);
   
   try {
+    if (topicId) {
+      const cachedStaticUrls = await getStaticAttachmentUrlsFromCache(topicId);
+      if (cachedStaticUrls && cachedStaticUrls.length > 0) {
+        console.log(`[${logTag}] 帖子 ${topicId} 使用静态附件URL缓存，数量: ${cachedStaticUrls.length}`);
+        return cachedStaticUrls;
+      }
+    }
+
     // 优先从持久缓存获取M站短ID，缓存没有则通过标题搜索
     let mSitePostId: string | null = null;
     if (topicId) {
@@ -614,6 +727,9 @@ export const getStaticAttachmentUrlsForTopic = async (params: {
     
     if (staticUrls.length > 0) {
       console.log(`[${logTag}] 帖子 ${topicId} 获取到 ${staticUrls.length} 个静态URL`);
+      if (topicId) {
+        await saveStaticAttachmentUrlsToCache(topicId, staticUrls);
+      }
     } else {
       console.log(`[${logTag}] 帖子 ${topicId} 未获取到静态URL`);
     }
@@ -859,42 +975,43 @@ export const getFavoriteBoards = async (forceRefresh: boolean = false): Promise<
       }
     }
     
-    const timestamp = Date.now();
-    const url = `${WAP_BASE_URL}/wap/api/profile/fav/boards?t=${timestamp}`;
+    return await runOnce('favoriteBoards', async () => {
+      const timestamp = Date.now();
+      const url = `${WAP_BASE_URL}/wap/api/profile/fav/boards?t=${timestamp}`;
     
-    console.log('Fetching Favorite Boards from API:', url);
+      console.log('Fetching Favorite Boards from API:', url);
     
-    const headers = buildGetHeaders(cookies);
+      const headers = buildGetHeaders(cookies);
 
-    const response = await fetchWithRetry(url, {
-      headers,
-      credentials: 'include',
-    }, 10000); // 10秒超时
+      const response = await fetchWithRetry(url, {
+        headers,
+        credentials: 'include',
+      }, 10000); // 10秒超时
     
-    // 检查HTTP状态码，401/403表示未登录或Cookie过期
-    if (response.status === 401 || response.status === 403) {
-      console.error('getFavoriteBoards: Cookie已过期或无权限，状态码:', response.status);
-      // 清除本地登录状态
-      // 注意：不在这里清除登录态，让上层UI决定如何处理
-      // 登录态只在用户主动退出登录时才清除
-      throw new Error('LOGIN_EXPIRED');
-    }
-
-    const json = await response.json();
-    console.log('getFavoriteBoards API response code:', json.code);
-    
-    // 检查API返回码，某些错误码也表示未登录
-    if (json.code !== 1) {
-      console.error('getFavoriteBoards: API返回错误，code:', json.code, 'message:', json.message);
-      if (json.code === 401 || json.code === 403 || json.message?.includes('登录')) {
+      // 检查HTTP状态码，401/403表示未登录或Cookie过期
+      if (response.status === 401 || response.status === 403) {
+        console.error('getFavoriteBoards: Cookie已过期或无权限，状态码:', response.status);
+        // 清除本地登录状态
         // 注意：不在这里清除登录态，让上层UI决定如何处理
+        // 登录态只在用户主动退出登录时才清除
         throw new Error('LOGIN_EXPIRED');
       }
-      throw new Error(json.message || 'API_ERROR');
-    }
 
-    if (json.data?.favBoards) {
-      const allFavBoards: any[] = [];
+      const json = await response.json();
+      console.log('getFavoriteBoards API response code:', json.code);
+
+      // 检查API返回码，某些错误码也表示未登录
+      if (json.code !== 1) {
+        console.error('getFavoriteBoards: API返回错误，code:', json.code, 'message:', json.message);
+        if (json.code === 401 || json.code === 403 || json.message?.includes('登录')) {
+          // 注意：不在这里清除登录态，让上层UI决定如何处理
+          throw new Error('LOGIN_EXPIRED');
+        }
+        throw new Error(json.message || 'API_ERROR');
+      }
+
+      if (json.data?.favBoards) {
+        const allFavBoards: any[] = [];
       
       // 兼容处理：有些 API 返回的是对象格式（带数字键）而非标准数组
       const rawData = json.data.favBoards;
@@ -957,7 +1074,8 @@ export const getFavoriteBoards = async (forceRefresh: boolean = false): Promise<
       return allFavBoards;
     }
     
-    return [];
+      return [];
+    });
   } catch (error: any) {
     console.error('Get favorite boards error:', error);
     // 登录相关错误需要抛出，让调用方处理
@@ -1129,6 +1247,7 @@ export const getBoardPosts = async (
       const tops = json.data.tops || [];
       // API返回的是total表示总页数，不是totalPages
       const totalPages = json.data.pager?.total || 1;
+      const boardListMSiteIds = await resolveMSitePostIdsForBoardList(topics, page);
       
       // wapPosition: 页内位置（仅普通帖子有效，置顶帖为-1）
       const processTopic = async (topic: any, isTop: boolean = false, wapPosition: number = -1) => {
@@ -1150,20 +1269,24 @@ export const getBoardPosts = async (
         // 注意：列表页不获取静态URL，交给帖子详情处理
         let mSitePostId: string | null = null;
         if (hasImageWithoutCloudUrl && rawAttachments.length > 0) {
-          const boardNameForFetch = topic.board?.name || '';
-          const topicTitle = topic.subject?.trim() || '';
-          
-          // 使用公共函数获取M站短ID
-          mSitePostId = await getMSitePostIdForTopic({
-            attachments: rawAttachments,
-            boardName: boardNameForFetch,
-            topicTitle: topicTitle,
-            logTag: 'BoardPosts',
-            topicId: topic.id,
-            page: page,
-            position: wapPosition,
-            isTop: isTop,
-          });
+          if (!isTop && boardListMSiteIds.has(topic.id)) {
+            mSitePostId = boardListMSiteIds.get(topic.id) || null;
+          } else {
+            const boardNameForFetch = topic.board?.name || '';
+            const topicTitle = topic.subject?.trim() || '';
+
+            // 置顶帖没有普通页内位置，继续走单帖标题兜底
+            mSitePostId = await getMSitePostIdForTopic({
+              attachments: rawAttachments,
+              boardName: boardNameForFetch,
+              topicTitle: topicTitle,
+              logTag: 'BoardPosts',
+              topicId: topic.id,
+              page: page,
+              position: wapPosition,
+              isTop: isTop,
+            });
+          }
         }
 
         // 处理附件URL
@@ -1232,6 +1355,7 @@ export const getPostDetail = async (
   _board: string,
   topicId: string, // 现在传入的是 topicId
   _page: number = 1,
+  initialMSitePostId?: string | null,
 ): Promise<any> => {
   try {
     const cookies = await getCookies();
@@ -1279,9 +1403,18 @@ export const getPostDetail = async (
       if (hasEmptyCloudUrl && rawAttachments.length > 0) {
         const topicTitle = topic.subject?.trim() || '';
         
-        // 优先从持久缓存获取M站短ID
-        let mSitePostId = await getMSitePostIdFromCache(topicId);
-        if (mSitePostId) {
+        const cachedStaticUrls = await getStaticAttachmentUrlsFromCache(topicId);
+        if (cachedStaticUrls && cachedStaticUrls.length > 0) {
+          staticUrls = cachedStaticUrls;
+          console.log('[PostDetail] 使用静态附件URL缓存，数量:', staticUrls.length);
+        }
+
+        // 优先使用列表页传入的M站短ID，再读持久缓存
+        let mSitePostId = initialMSitePostId || await getMSitePostIdFromCache(topicId);
+        if (initialMSitePostId) {
+          console.log('[PostDetail] 使用M站短ID:', initialMSitePostId, '(从列表传入)');
+          await saveMSitePostIdToCache(topicId, initialMSitePostId);
+        } else if (mSitePostId) {
           console.log('[PostDetail] 使用M站短ID:', mSitePostId, '(从缓存获取)');
         } else if (boardNameForFetch && topicTitle) {
           // 缓存没有则通过网络查找
@@ -1295,13 +1428,14 @@ export const getPostDetail = async (
           });
         }
         
-        if (mSitePostId) {
+        if (mSitePostId && staticUrls.length === 0) {
           if (!await getMSitePostIdFromCache(topicId)) {
             console.log('[PostDetail] 使用M站短ID:', mSitePostId, '(新查找)');
           }
           try {
             staticUrls = await fetchStaticAttachmentUrls(boardNameForFetch, mSitePostId);
             console.log('[PostDetail] 获取到静态URL数量:', staticUrls.length);
+            await saveStaticAttachmentUrlsToCache(topicId, staticUrls);
           } catch (err: any) {
             console.log('[PostDetail] 获取静态URL失败:', err.message || err);
           }
@@ -2230,27 +2364,31 @@ export const getFriendsList = async (
     if (!forceRefresh) {
       const cachedData = getCacheWithTimestamp<{friends: any[], total: number, hasMore: boolean, page: number, pageSize: number}>('friendsList', cacheKey);
       if (cachedData) {
-        console.log('getFriendsList: Using cached data for', username, 'page', page, 'age:', Math.floor((Date.now() - cachedData.timestamp) / 1000), 's');
+        const age = Date.now() - cachedData.timestamp;
+        console.log('getFriendsList: Using cached data for', username, 'page', page, 'age:', Math.floor(age / 1000), 's');
         
-        // 异步更新缓存
-        fetchFriendsListFromAPI(username, page, cookies, cacheKey).catch(err => {
-          console.error('Background update friends list error:', err);
-        });
+        if (age > CACHE_REFRESH_THRESHOLD && age < MAX_STALE_CACHE_AGE) {
+          runOnce(`friendsList:${cacheKey}`, () => fetchFriendsListFromAPI(username, page, cookies, cacheKey)).catch(err => {
+            console.error('Background update friends list error:', err);
+          });
+        }
         
-        return {
-          success: true,
-          friends: cachedData.data.friends,
-          total: cachedData.data.total,
-          hasMore: cachedData.data.hasMore,
-          page: cachedData.data.page,
-          pageSize: cachedData.data.pageSize,
-          message: '获取成功'
-        };
+        if (age < MAX_STALE_CACHE_AGE) {
+          return {
+            success: true,
+            friends: cachedData.data.friends,
+            total: cachedData.data.total,
+            hasMore: cachedData.data.hasMore,
+            page: cachedData.data.page,
+            pageSize: cachedData.data.pageSize,
+            message: '获取成功'
+          };
+        }
       }
     }
     
     // 没有缓存或强制刷新，从API获取
-    return await fetchFriendsListFromAPI(username, page, cookies, cacheKey);
+    return await runOnce(`friendsList:${cacheKey}`, () => fetchFriendsListFromAPI(username, page, cookies, cacheKey));
   } catch (error: any) {
     console.error('Get friends list error:', error);
     if (error.message === 'LOGIN_EXPIRED') {
@@ -2375,27 +2513,31 @@ export const getFansList = async (
     if (!forceRefresh) {
       const cachedData = getCacheWithTimestamp<{fans: any[], total: number, hasMore: boolean, page: number, pageSize: number}>('fansList', cacheKey);
       if (cachedData) {
-        console.log('getFansList: Using cached data for', username, 'page', page, 'age:', Math.floor((Date.now() - cachedData.timestamp) / 1000), 's');
+        const age = Date.now() - cachedData.timestamp;
+        console.log('getFansList: Using cached data for', username, 'page', page, 'age:', Math.floor(age / 1000), 's');
         
-        // 异步更新缓存
-        fetchFansListFromAPI(username, page, cookies, cacheKey).catch(err => {
-          console.error('Background update fans list error:', err);
-        });
+        if (age > CACHE_REFRESH_THRESHOLD && age < MAX_STALE_CACHE_AGE) {
+          runOnce(`fansList:${cacheKey}`, () => fetchFansListFromAPI(username, page, cookies, cacheKey)).catch(err => {
+            console.error('Background update fans list error:', err);
+          });
+        }
         
-        return {
-          success: true,
-          fans: cachedData.data.fans,
-          total: cachedData.data.total,
-          hasMore: cachedData.data.hasMore,
-          page: cachedData.data.page,
-          pageSize: cachedData.data.pageSize,
-          message: '获取成功'
-        };
+        if (age < MAX_STALE_CACHE_AGE) {
+          return {
+            success: true,
+            fans: cachedData.data.fans,
+            total: cachedData.data.total,
+            hasMore: cachedData.data.hasMore,
+            page: cachedData.data.page,
+            pageSize: cachedData.data.pageSize,
+            message: '获取成功'
+          };
+        }
       }
     }
     
     // 没有缓存或强制刷新，从API获取
-    return await fetchFansListFromAPI(username, page, cookies, cacheKey);
+    return await runOnce(`fansList:${cacheKey}`, () => fetchFansListFromAPI(username, page, cookies, cacheKey));
   } catch (error: any) {
     console.error('Get fans list error:', error);
     if (error.message === 'LOGIN_EXPIRED') {
@@ -2644,6 +2786,7 @@ export const addBoardFavorite = async (boardId: string): Promise<{success: boole
     console.log('addBoardFavorite API response:', json);
 
     if (json.code === 1) {
+      await invalidateFavoriteBoardsCache();
       return {success: true, message: json.message || '收藏成功'};
     }
     
@@ -2685,6 +2828,7 @@ export const removeBoardFavorite = async (boardId: string): Promise<{success: bo
     console.log('removeBoardFavorite API response:', json);
 
     if (json.code === 1) {
+      await invalidateFavoriteBoardsCache();
       return {success: true, message: json.message || '取消收藏成功'};
     }
     
@@ -2804,24 +2948,28 @@ export const getBlackList = async (
     if (!forceRefresh) {
       const cachedData = getCacheWithTimestamp<{blacklist: any[], total: number}>('blackList', cacheKey);
       if (cachedData) {
-        console.log('getBlackList: Using cached data, age:', Math.floor((Date.now() - cachedData.timestamp) / 1000), 's');
+        const age = Date.now() - cachedData.timestamp;
+        console.log('getBlackList: Using cached data, age:', Math.floor(age / 1000), 's');
         
-        // 异步更新缓存
-        fetchBlackListFromAPI(cookies, cacheKey).catch(err => {
-          console.error('Background update blacklist error:', err);
-        });
+        if (age > CACHE_REFRESH_THRESHOLD && age < MAX_STALE_CACHE_AGE) {
+          runOnce(`blackList:${cacheKey}`, () => fetchBlackListFromAPI(cookies, cacheKey)).catch(err => {
+            console.error('Background update blacklist error:', err);
+          });
+        }
         
-        return {
-          success: true,
-          blacklist: cachedData.data.blacklist,
-          total: cachedData.data.total,
-          message: '获取成功'
-        };
+        if (age < MAX_STALE_CACHE_AGE) {
+          return {
+            success: true,
+            blacklist: cachedData.data.blacklist,
+            total: cachedData.data.total,
+            message: '获取成功'
+          };
+        }
       }
     }
     
     // 没有缓存或强制刷新，从API获取
-    return await fetchBlackListFromAPI(cookies, cacheKey);
+    return await runOnce(`blackList:${cacheKey}`, () => fetchBlackListFromAPI(cookies, cacheKey));
   } catch (error: any) {
     console.error('Get blacklist error:', error);
     if (error.message === 'LOGIN_EXPIRED') {

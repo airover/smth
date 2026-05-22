@@ -33,7 +33,7 @@ import {formatRelativeTime} from '../utils/timeFormat';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import RNFetchBlob from 'rn-fetch-blob';
-import {getCache, setCache, getCacheWithTimestamp} from '../services/cacheManager';
+import {setCache, getCacheWithTimestamp} from '../services/cacheManager';
 import {
   RESPONSIVE,
   scaleWidth,
@@ -50,6 +50,22 @@ import {cleanHtml} from '../utils/htmlParser';
 
 const SCREEN_WIDTH = RESPONSIVE.SCREEN_WIDTH;
 const HEADER_HEIGHT = responsiveSize(200, 240, 260, 300);
+const PROFILE_REFRESH_THRESHOLD = 60 * 1000;
+const PROFILE_MAX_STALE_AGE = 24 * 60 * 60 * 1000;
+const profileRefreshRequests = new Map<string, Promise<any>>();
+
+const refreshUserProfileOnce = async (username: string): Promise<any> => {
+  const existing = profileRefreshRequests.get(username);
+  if (existing) {
+    return existing;
+  }
+
+  const promise = fetchUserInfo(username).finally(() => {
+    profileRefreshRequests.delete(username);
+  });
+  profileRefreshRequests.set(username, promise);
+  return promise;
+};
 
 // 用户数据目录（独立于缓存，不会被清除）
 const USER_DATA_DIR = `${RNFetchBlob.fs.dirs.DocumentDir}/user_data`;
@@ -649,29 +665,33 @@ const UserProfileScreen: React.FC = () => {
         if (!forceRefresh) {
           const cachedData = getCacheWithTimestamp<any>('otherUserInfo', username!);
           if (cachedData) {
-            console.log('UserProfileScreen: Using cached data for', username, 'age:', Math.floor((Date.now() - cachedData.timestamp) / 1000), 's');
-            setUser(cachedData.data);
-            setLoading(false);
+            const age = Date.now() - cachedData.timestamp;
+            console.log('UserProfileScreen: Using cached data for', username, 'age:', Math.floor(age / 1000), 's');
+            if (age < PROFILE_MAX_STALE_AGE) {
+              setUser(cachedData.data);
+              setLoading(false);
             
-            // 异步更新缓存
-            fetchUserInfo(username!).then(freshData => {
-              if (freshData) {
-                console.log('UserProfileScreen: Background update for', username);
-                // 如果积分为负数，不更新界面和缓存（数据可能异常）
-                if (freshData.score !== undefined && freshData.score < 0) {
-                  console.log('UserProfileScreen: Skip update due to negative score:', freshData.score);
-                  return;
-                }
-                setUser(freshData);
-                setCache('otherUserInfo', username!, freshData);
-                // 使用新数据重新检查关注状态，确保状态同步
-                checkFollowingStatus(username!, false, freshData);
+              if (age > PROFILE_REFRESH_THRESHOLD) {
+                refreshUserProfileOnce(username!).then(freshData => {
+                  if (freshData) {
+                    console.log('UserProfileScreen: Background update for', username);
+                    // 如果积分为负数，不更新界面和缓存（数据可能异常）
+                    if (freshData.score !== undefined && freshData.score < 0) {
+                      console.log('UserProfileScreen: Skip update due to negative score:', freshData.score);
+                      return;
+                    }
+                    setUser(freshData);
+                    setCache('otherUserInfo', username!, freshData);
+                    // 使用新数据重新检查关注状态，确保状态同步
+                    checkFollowingStatus(username!, false, freshData);
+                  }
+                }).catch(err => {
+                  console.error('Background update error:', err);
+                });
               }
-            }).catch(err => {
-              console.error('Background update error:', err);
-            });
             
-            return cachedData.data; // 返回缓存数据
+              return cachedData.data; // 返回缓存数据
+            }
           }
         }
         
@@ -2369,4 +2389,3 @@ const styles = StyleSheet.create({
 });
 
 export default UserProfileScreen;
-

@@ -46,6 +46,8 @@ import {useReadPosts} from '../context/ReadPostsContext';
 
 const {width: SCREEN_WIDTH} = Dimensions.get('window');
 const DRAWER_WIDTH = SCREEN_WIDTH * 0.8;
+const LIST_CACHE_FRESH_AGE = 60 * 1000;
+const LIST_CACHE_MAX_STALE_AGE = 30 * 60 * 1000;
 
 // 频道类型定义
 interface Channel {
@@ -818,16 +820,19 @@ const BoardScreen: React.FC = () => {
             const { timestamp, data } = cached;
             const { data: topics, pager } = data;
             if (topics && topics.length > 0) {
-              setChannelPosts(topics);
-              setChannelPage(1);
-              const totalPages = Math.ceil(pager.items / pager.size);
-              setChannelHasMore(1 < totalPages);
-              setChannelPostsDataLoaded(true);
+              const age = Date.now() - timestamp;
+              if (age < LIST_CACHE_MAX_STALE_AGE) {
+                setChannelPosts(topics);
+                setChannelPage(1);
+                const totalPages = Math.ceil(pager.items / pager.size);
+                setChannelHasMore(1 < totalPages);
+                setChannelPostsDataLoaded(true);
 
-              if (Date.now() - timestamp < 60 * 1000) {
-                return;
+                if (age < LIST_CACHE_FRESH_AGE) {
+                  return;
+                }
+                shouldUseCache = true;
               }
-              shouldUseCache = true;
             }
           }
         } catch (e) {
@@ -1033,16 +1038,19 @@ const BoardScreen: React.FC = () => {
             const { timestamp, data } = cached;
             const { data: topics, pager } = data;
             if (topics && topics.length > 0) {
-              setChannelPosts(topics);
-              setChannelPage(1);
-              const totalPages = Math.ceil(pager.items / pager.size);
-              setChannelHasMore(1 < totalPages);
-              setChannelPostsDataLoaded(true);
+              const age = Date.now() - timestamp;
+              if (age < LIST_CACHE_MAX_STALE_AGE) {
+                setChannelPosts(topics);
+                setChannelPage(1);
+                const totalPages = Math.ceil(pager.items / pager.size);
+                setChannelHasMore(1 < totalPages);
+                setChannelPostsDataLoaded(true);
 
-              if (Date.now() - timestamp < 60 * 1000) {
-                return;
+                if (age < LIST_CACHE_FRESH_AGE) {
+                  return;
+                }
+                shouldUseCache = true;
               }
-              shouldUseCache = true;
             }
           }
         } catch (e) {
@@ -1182,16 +1190,19 @@ const BoardScreen: React.FC = () => {
             const { timestamp, data } = cached;
             const { data: topics, tops, totalPages } = data;
             if (topics && topics.length > 0) {
-              const combinedPosts = [...(tops || []), ...topics];
-              setPosts(combinedPosts);
-              setPage(1);
-              setHasMore(true);
-              setPostsDataLoaded(true);
+              const age = Date.now() - timestamp;
+              if (age < LIST_CACHE_MAX_STALE_AGE) {
+                const combinedPosts = [...(tops || []), ...topics];
+                setPosts(combinedPosts);
+                setPage(1);
+                setHasMore(true);
+                setPostsDataLoaded(true);
               
-              if (Date.now() - timestamp < 60 * 1000) {
-                return;
+                if (age < LIST_CACHE_FRESH_AGE) {
+                  return;
+                }
+                shouldUseCache = true;
               }
-              shouldUseCache = true;
             }
           }
         } catch (e) {
@@ -1523,6 +1534,7 @@ const BoardScreen: React.FC = () => {
         navigation.navigate('PostDetail', {
           board: item.board,
           postId: item.id,
+          mSitePostId: item.mSitePostId,
         });
       }}>
       <View style={styles.postHeader}>
@@ -1586,6 +1598,7 @@ const BoardScreen: React.FC = () => {
           navigation.navigate('PostDetail', {
             board: item.board.name,
             postId: item.topicId || item.id,
+            mSitePostId: item.mSitePostId,
           });
         }}>
         {/* 用户信息 */}

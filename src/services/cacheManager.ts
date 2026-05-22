@@ -6,6 +6,8 @@
 interface CacheItem<T> {
   data: T;
   timestamp: number;
+  duration?: number;
+  lastAccess: number;
 }
 
 interface CacheStore {
@@ -39,12 +41,49 @@ class CacheManager {
   private static instance: CacheManager;
   private cache: CacheStore;
   private readonly DEFAULT_DURATION = 60 * 1000; // 默认1分钟
+  private readonly DICT_CATEGORIES: Array<keyof CacheStore> = [
+    'subBoards',
+    'boardPosts',
+    'hotPosts',
+    'postDetail',
+    'topicReplies',
+    'channelPosts',
+    'albumPosts',
+    'otherUserInfo',
+    'friendsList',
+    'fansList',
+    'blackList',
+  ];
+  private readonly SINGLE_CATEGORIES: Array<keyof CacheStore> = [
+    'boards',
+    'userInfo',
+    'favoriteBoards',
+    'topTen',
+    'hotBoards',
+    'channels',
+  ];
+  private readonly MAX_ENTRIES: {[key: string]: number} = {
+    subBoards: 80,
+    boardPosts: 60,
+    hotPosts: 40,
+    postDetail: 120,
+    topicReplies: 120,
+    channelPosts: 40,
+    albumPosts: 10,
+    otherUserInfo: 120,
+    friendsList: 80,
+    fansList: 80,
+    blackList: 10,
+  };
   
   // 针对不同数据类型的缓存时长配置
   private readonly CACHE_DURATIONS: {[key: string]: number} = {
     topTen: 5 * 60 * 1000,        // 5分钟（今日十大变化较慢）
     hotBoards: 10 * 60 * 1000,     // 10分钟（热门版面更稳定）
     hotPosts: 2 * 60 * 1000,       // 2分钟（热帖变化较快）
+    boards: 24 * 60 * 60 * 1000,   // 24小时（版面树变化很少）
+    channels: 30 * 60 * 1000,      // 30分钟（频道导航变化较少）
+    favoriteBoards: 5 * 60 * 1000, // 5分钟（收藏版面）
     boardPosts: 60 * 1000,         // 1分钟（版面帖子实时性要求高）
     channelPosts: 60 * 1000,       // 1分钟（频道帖子实时性要求高）
     albumPosts: 60 * 1000,         // 1分钟（图览帖子实时性要求高）
@@ -52,6 +91,7 @@ class CacheManager {
     topicReplies: 60 * 1000,       // 1分钟（回复实时性要求高）
     otherUserInfo: 5 * 60 * 1000,  // 5分钟（他人资料相对稳定）
     friendsList: 5 * 60 * 1000,    // 5分钟（关注列表相对稳定）
+    fansList: 5 * 60 * 1000,       // 5分钟（粉丝列表相对稳定）
     blackList: 5 * 60 * 1000,      // 5分钟（黑名单相对稳定）
   };
 
@@ -88,11 +128,12 @@ class CacheManager {
       // 带 key 的缓存（如 subBoards[id]）
       const categoryCache = this.cache[category] as {[key: string]: CacheItem<T>};
       if (typeof categoryCache === 'object' && !Array.isArray(categoryCache)) {
-        categoryCache[key] = {data, timestamp};
+        categoryCache[key] = {data, timestamp, duration, lastAccess: timestamp};
+        this.pruneCategory(category);
       }
     } else {
       // 不带 key 的缓存（如 boards）
-      (this.cache as any)[category] = {data, timestamp};
+      (this.cache as any)[category] = {data, timestamp, duration, lastAccess: timestamp};
     }
     
     console.log(`[Cache] Set ${category}${key ? `[${key}]` : ''}`);
@@ -103,8 +144,6 @@ class CacheManager {
    */
   get<T>(category: keyof CacheStore, key?: string, duration?: number): T | null {
     const now = Date.now();
-    // 使用配置的缓存时长，如果没有配置则使用默认时长
-    const cacheDuration = duration || this.CACHE_DURATIONS[category as string] || this.DEFAULT_DURATION;
 
     try {
       if (key) {
@@ -112,7 +151,9 @@ class CacheManager {
         const categoryCache = this.cache[category] as {[key: string]: CacheItem<T>};
         if (typeof categoryCache === 'object' && !Array.isArray(categoryCache)) {
           const item = categoryCache[key];
+          const cacheDuration = this.getDuration(category, duration, item?.duration);
           if (item && now - item.timestamp < cacheDuration) {
+            item.lastAccess = now;
             console.log(`[Cache] Hit ${category}[${key}], age: ${Math.floor((now - item.timestamp) / 1000)}s`);
             return item.data;
           }
@@ -120,7 +161,9 @@ class CacheManager {
       } else {
         // 不带 key 的缓存
         const item = (this.cache as any)[category] as CacheItem<T> | undefined;
+        const cacheDuration = this.getDuration(category, duration, item?.duration);
         if (item && now - item.timestamp < cacheDuration) {
+          item.lastAccess = now;
           console.log(`[Cache] Hit ${category}, age: ${Math.floor((now - item.timestamp) / 1000)}s`);
           return item.data;
         }
@@ -144,6 +187,7 @@ class CacheManager {
         if (typeof categoryCache === 'object' && !Array.isArray(categoryCache)) {
           const item = categoryCache[key];
           if (item) {
+            item.lastAccess = Date.now();
             return {data: item.data, timestamp: item.timestamp};
           }
         }
@@ -151,6 +195,7 @@ class CacheManager {
         // 不带 key 的缓存
         const item = (this.cache as any)[category] as CacheItem<T> | undefined;
         if (item) {
+          item.lastAccess = Date.now();
           return {data: item.data, timestamp: item.timestamp};
         }
       }
@@ -164,7 +209,7 @@ class CacheManager {
    * 清除指定分类的缓存
    */
   clearCategory(category: keyof CacheStore): void {
-    if (category === 'subBoards' || category === 'boardPosts' || category === 'postDetail' || category === 'topicReplies' || category === 'friendsList' || category === 'blackList' || category === 'channelPosts' || category === 'albumPosts' || category === 'otherUserInfo' || category === 'hotPosts') {
+    if (this.DICT_CATEGORIES.includes(category)) {
       (this.cache[category] as any) = {};
     } else {
       delete (this.cache as any)[category];
@@ -235,24 +280,16 @@ class CacheManager {
    */
   cleanExpired(duration?: number): number {
     const now = Date.now();
-    const cacheDuration = duration || this.DEFAULT_DURATION;
     let cleaned = 0;
 
     // 清理字典类型的缓存
-    const dictCategories: Array<'subBoards' | 'boardPosts' | 'hotPosts' | 'postDetail' | 'topicReplies' | 'channelPosts' | 'albumPosts' | 'otherUserInfo'> = [
-      'subBoards',
-      'boardPosts',
-      'hotPosts',
-      'postDetail',
-      'topicReplies',
-      'channelPosts',
-      'albumPosts',
-      'otherUserInfo',
-    ];
-
-    for (const category of dictCategories) {
-      const categoryCache = this.cache[category];
+    for (const category of this.DICT_CATEGORIES) {
+      const categoryCache = this.cache[category] as {[key: string]: CacheItem<any>} | undefined;
+      if (!categoryCache) {
+        continue;
+      }
       for (const key in categoryCache) {
+        const cacheDuration = this.getDuration(category, duration, categoryCache[key].duration);
         if (now - categoryCache[key].timestamp >= cacheDuration) {
           delete categoryCache[key];
           cleaned++;
@@ -261,16 +298,9 @@ class CacheManager {
     }
 
     // 清理单个缓存项
-    const singleCategories: Array<'boards' | 'userInfo' | 'favoriteBoards' | 'topTen' | 'hotBoards'> = [
-      'boards',
-      'userInfo',
-      'favoriteBoards',
-      'topTen',
-      'hotBoards',
-    ];
-
-    for (const category of singleCategories) {
-      const item = this.cache[category];
+    for (const category of this.SINGLE_CATEGORIES) {
+      const item = this.cache[category] as CacheItem<any> | undefined;
+      const cacheDuration = this.getDuration(category, duration, item?.duration);
       if (item && now - item.timestamp >= cacheDuration) {
         delete this.cache[category];
         cleaned++;
@@ -279,6 +309,30 @@ class CacheManager {
 
     console.log(`[Cache] Cleaned ${cleaned} expired items`);
     return cleaned;
+  }
+
+  private getDuration(category: keyof CacheStore, duration?: number, itemDuration?: number): number {
+    return duration || itemDuration || this.CACHE_DURATIONS[category as string] || this.DEFAULT_DURATION;
+  }
+
+  private pruneCategory(category: keyof CacheStore): void {
+    const maxEntries = this.MAX_ENTRIES[category as string];
+    if (!maxEntries) {
+      return;
+    }
+
+    const categoryCache = this.cache[category] as {[key: string]: CacheItem<any>};
+    const entries = Object.entries(categoryCache);
+    if (entries.length <= maxEntries) {
+      return;
+    }
+
+    entries
+      .sort(([, a], [, b]) => (a.lastAccess || a.timestamp) - (b.lastAccess || b.timestamp))
+      .slice(0, entries.length - maxEntries)
+      .forEach(([entryKey]) => {
+        delete categoryCache[entryKey];
+      });
   }
 }
 

@@ -69,6 +69,7 @@ export interface Post {
   content?: string;
   contentText?: string;
   attachments?: Attachment[];
+  mSitePostId?: string | null; // M站短ID，用于帖子详情获取静态附件URL
   likes?: Like[];
   replies?: Reply[];
 }
