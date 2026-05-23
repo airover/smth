@@ -75,7 +75,7 @@ const formatDateTime = (time: string): string => {
 const SCREEN_WIDTH = RESPONSIVE.SCREEN_WIDTH;
 const SCREEN_HEIGHT = RESPONSIVE.SCREEN_HEIGHT;
 const POST_DETAIL_CACHE_FRESH_AGE = 60 * 1000;
-const POST_DETAIL_CACHE_MAX_STALE_AGE = 30 * 60 * 1000;
+const POST_DETAIL_CACHE_MAX_STALE_AGE = 8 * 60 * 60 * 1000;
 
 // 点赞/扔鸡蛋专用的 Captcha ID
 const LIKE_CAPTCHA_ID = '3a6990c763f90e33fa62a97faad3a05f';

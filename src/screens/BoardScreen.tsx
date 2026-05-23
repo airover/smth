@@ -47,7 +47,7 @@ import {useReadPosts} from '../context/ReadPostsContext';
 const {width: SCREEN_WIDTH} = Dimensions.get('window');
 const DRAWER_WIDTH = SCREEN_WIDTH * 0.8;
 const LIST_CACHE_FRESH_AGE = 60 * 1000;
-const LIST_CACHE_MAX_STALE_AGE = 30 * 60 * 1000;
+const LIST_CACHE_MAX_STALE_AGE = 8 * 60 * 60 * 1000;
 
 // 频道类型定义
 interface Channel {
