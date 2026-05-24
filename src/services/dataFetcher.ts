@@ -15,7 +15,7 @@ import {
 } from '../utils/requestUtils';
 import {setCache, getCacheWithTimestamp, clearCache} from './cacheManager';
 import {extractStaticAttachmentUrls, isImageAttachment} from '../utils/imageUtils';
-import {getCookies, getMSiteCookies, isMSiteResponseLoggedIn, handleMSiteCookieExpired} from './auth';
+import {getCookies, getMSiteCookies, isMSiteResponseLoggedIn, handleMSiteCookieExpired, triggerSilentMSiteReLogin} from './auth';
 import {cleanHtml} from '../utils/htmlParser';
 
 const WAP_BASE_URL = 'https://wap.newsmth.net';
@@ -132,6 +132,8 @@ const fetchStaticAttachmentUrls = async (
     if (!isMSiteResponseLoggedIn(html)) {
       console.log('[PostDetail] M站Cookie已过期（响应中无注销链接），清除本地缓存');
       await handleMSiteCookieExpired();
+      // 异步触发静默重登录（不阻塞当前请求）
+      triggerSilentMSiteReLogin();
       return [];
     }
 
@@ -305,6 +307,8 @@ const fetchMSiteBoardPagePosts = async (boardName: string, page: number): Promis
       if (!isMSiteResponseLoggedIn(pageHtml)) {
         console.log('[MMapper] M站Cookie已过期（响应中无注销链接），清除本地缓存');
         await handleMSiteCookieExpired();
+        // 异步触发静默重登录（不阻塞当前请求）
+        triggerSilentMSiteReLogin();
         return [];
       }
 
@@ -2597,17 +2601,18 @@ const fetchFansListFromAPI = async (
     const hasMore = currentPage < totalPages;
     
     // 提取所有粉丝信息
+    // 注意：fans 接口中 item.account 是粉丝，item.friend 是被关注者（自己）
     if (json.data?.fans && Array.isArray(json.data.fans)) {
       json.data.fans.forEach((item: any) => {
-        if (item.friend) {
+        if (item.account) {
           fansList.push({
-            id: item.friend.id,
-            username: item.friend.name,
-            nickname: item.friend.nick,
-            avatar: item.friend.avatarUrl,
-            level: item.friend.level,
-            levelTitle: item.friend.levelTitle,
-            score: item.friend.score,
+            id: item.account.id,
+            username: item.account.name,
+            nickname: item.account.nick,
+            avatar: item.account.avatarUrl,
+            level: item.account.level,
+            levelTitle: item.account.levelTitle,
+            score: item.account.score,
           });
         }
       });

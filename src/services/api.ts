@@ -14,7 +14,7 @@ import {
   buildDeleteHeaders,
   buildLoginHeaders,
 } from '../utils/requestUtils';
-import {getCookies, storeCookies, storeMSiteCookies, getMSiteCookies, extractAndStoreMSiteCookiesFromJar, clearMSiteCookieJar, isMSiteResponseLoggedIn, handleMSiteCookieExpired, setMSiteEnabled} from './auth';
+import {getCookies, storeCookies, storeMSiteCookies, getMSiteCookies, extractAndStoreMSiteCookiesFromJar, clearMSiteCookieJar, isMSiteResponseLoggedIn, handleMSiteCookieExpired, setMSiteEnabled, resetMSiteBackoff} from './auth';
 import {buildHeaders} from '../utils/requestUtils';
 import {setCache, getCacheWithTimestamp, clearCache as clearCacheManager} from './cacheManager';
 
@@ -361,6 +361,7 @@ export const loginMSite = async (
     if (setCookie) {
       console.log('[M站登录] 从响应头获取到 Set-Cookie:', setCookie.substring(0, 200));
       await storeMSiteCookies(setCookie);
+      resetMSiteBackoff();
       return { success: true, message: '登录成功' };
     }
 
@@ -385,6 +386,7 @@ export const loginMSite = async (
         if (redirectSetCookie) {
           console.log('[M站登录] 从重定向响应获取到 Set-Cookie');
           await storeMSiteCookies(redirectSetCookie);
+          resetMSiteBackoff();
           return { success: true, message: '登录成功' };
         }
         // 检查重定向后的页面内容来判断是否登录成功
@@ -394,6 +396,7 @@ export const loginMSite = async (
           // 使用 CookieManager 从系统 cookie jar 中提取 cookie 并持久化
           const extracted302 = await extractAndStoreMSiteCookiesFromJar();
           if (extracted302) {
+            resetMSiteBackoff();
             return { success: true, message: '登录成功' };
           }
           return { success: false, message: '登录成功但无法从 cookie jar 提取 Cookie' };
@@ -424,15 +427,23 @@ export const loginMSite = async (
         console.log('[M站登录] 检测到登录成功（页面含注销链接），通过 CookieManager 提取 cookie...');
         
         // 使用 CookieManager 从系统 cookie jar 中提取 cookie 并持久化
-        const extracted = await extractAndStoreMSiteCookiesFromJar();
+        let extracted = await extractAndStoreMSiteCookiesFromJar();
+        if (!extracted) {
+          // 第一次提取失败，等待一下再试（cookie jar 可能还没刷新）
+          console.log('[M站登录] 第一次提取失败，延迟 500ms 重试...');
+          await new Promise<void>(resolve => setTimeout(resolve, 500));
+          extracted = await extractAndStoreMSiteCookiesFromJar();
+        }
+        
         if (extracted) {
           console.log('[M站登录] ✅ 通过 CookieManager 成功提取并存储 M 站 cookie');
+          resetMSiteBackoff();
           return { success: true, message: '登录成功' };
         } else {
           // CookieManager 无法提取到 cookie，但登录确实成功了
-          // 乐观处理：标记登录成功，后续通过 credentials: include 自动附带
-          console.log('[M站登录] ⚠️ CookieManager 未提取到 cookie，使用系统 cookie jar 模式');
-          return { success: true, message: '登录成功' };
+          // 返回失败，避免心跳检测时发现无 Cookie 又触发重登录循环
+          console.log('[M站登录] ⚠️ CookieManager 未提取到 cookie，标记为失败以避免重登录循环');
+          return { success: false, message: '登录成功但无法提取Cookie，请手动重试' };
         }
       }
       

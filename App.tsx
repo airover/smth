@@ -10,8 +10,8 @@ import {SettingsProvider, useSettings} from './src/context/SettingsContext';
 import {AuthProvider, useAuth} from './src/context/AuthContext';
 import {ReadPostsProvider} from './src/context/ReadPostsContext';
 import {getTheme} from './src/utils/theme';
-import {startMSiteKeepAlive, stopMSiteKeepAlive} from './src/services/auth';
-import {AppStateProvider} from './src/context/AppStateContext';
+import {startMSiteKeepAlive, stopMSiteKeepAlive, triggerSilentMSiteReLogin} from './src/services/auth';
+import {AppStateProvider, useOnAppResume} from './src/context/AppStateContext';
 import SilentCaptchaWebView from './src/components/SilentCaptchaWebView';
 
 const {SplashScreenManager} = NativeModules;
@@ -49,6 +49,14 @@ const AppContent = () => {
       stopMSiteKeepAlive();
     };
   }, [isLoggedIn, authLoading]);
+
+  // App 从后台切回前台时，立即触发一次 M 站心跳检测
+  // （后台挂起期间定时器不工作，session 可能已过期）
+  useOnAppResume(() => {
+    if (isLoggedIn) {
+      triggerSilentMSiteReLogin();
+    }
+  }, [isLoggedIn]);
 
   // 当 app 初始化完成且认证状态加载完成后，隐藏原生启动屏覆盖层
   useEffect(() => {

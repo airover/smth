@@ -374,8 +374,41 @@ export const storeMSiteCookies = async (setCookieHeader: string): Promise<void> 
 
 // ==================== M 站心跳保活 ====================
 
-const M_SITE_KEEPALIVE_INTERVAL = 60 * 1000; // 1分钟
+const M_SITE_KEEPALIVE_INTERVAL = 5 * 60 * 1000; // 5分钟（M站session有效期通常≥30分钟，5分钟足够保活）
+const M_SITE_FIRST_HEARTBEAT_DELAY = 3 * 60 * 1000; // 首次心跳延迟3分钟（刚登录完不需要马上检查）
+const M_SITE_BACKOFF_BASE = 5 * 60 * 1000; // 退避基数5分钟
+const M_SITE_BACKOFF_MAX = 30 * 60 * 1000; // 最大退避30分钟
 let mSiteKeepAliveTimer: ReturnType<typeof setInterval> | null = null;
+let mSiteFirstHeartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+let mSiteConsecutiveFailures = 0; // 连续静默登录失败次数
+let mSiteLastReLoginAttempt = 0; // 上次尝试静默登录的时间戳
+let mSiteReLoginLock = false; // 防止并发重登录
+
+/**
+ * 检查是否在退避冷却期内
+ * 连续失败后逐渐增大重试间隔，避免频繁骚扰极验服务
+ */
+const isInBackoffPeriod = (): boolean => {
+  if (mSiteConsecutiveFailures === 0) return false;
+  const backoffMs = Math.min(
+    M_SITE_BACKOFF_BASE * Math.pow(2, mSiteConsecutiveFailures - 1),
+    M_SITE_BACKOFF_MAX,
+  );
+  const elapsed = Date.now() - mSiteLastReLoginAttempt;
+  if (elapsed < backoffMs) {
+    console.log(`[M站心跳] 退避冷却中（${Math.round((backoffMs - elapsed) / 1000)}s 后再试，连续失败${mSiteConsecutiveFailures}次）`);
+    return true;
+  }
+  return false;
+};
+
+/**
+ * 重置退避状态（登录成功或用户手动操作后调用）
+ */
+export const resetMSiteBackoff = (): void => {
+  mSiteConsecutiveFailures = 0;
+  mSiteLastReLoginAttempt = 0;
+};
 
 /**
  * M 站心跳保活 - 定期请求 M 站页面以防止 session 过期
@@ -398,6 +431,9 @@ const doMSiteKeepAlive = async (): Promise<void> => {
       return;
     }
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
     const response = await fetch('https://m.newsmth.net/favor', {
       method: 'GET',
       headers: {
@@ -408,31 +444,59 @@ const doMSiteKeepAlive = async (): Promise<void> => {
         'Referer': 'https://m.newsmth.net/favor',
       },
       credentials: 'include',
+      signal: controller.signal,
     } as any);
 
+    clearTimeout(timeoutId);
     const html = await response.text();
     
     if (isMSiteResponseLoggedIn(html)) {
-      console.log('[M站心跳] ✅ session 仍然有效');
+      // session 有效，重置退避计数
+      if (mSiteConsecutiveFailures > 0) {
+        console.log('[M站心跳] ✅ session 恢复有效，重置退避计数');
+        resetMSiteBackoff();
+      }
     } else {
       console.log('[M站心跳] ⚠️ session 已过期，尝试静默自动登录...');
       await handleMSiteCookieExpired();
-      // 尝试静默自动登录（不带验证码）
       await silentMSiteReLogin();
     }
-  } catch (error) {
-    // 网络错误不处理，下次心跳再试
-    console.log('[M站心跳] 请求失败（可能网络问题），跳过:', (error as any)?.message || error);
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      console.log('[M站心跳] 请求超时，跳过');
+    } else {
+      // 网络错误不处理，下次心跳再试
+      console.log('[M站心跳] 请求失败（可能网络问题），跳过:', error?.message || error);
+    }
   }
 };
 
 /**
- * 静默自动重新登录 M 站（方案 B）
+ * 静默自动重新登录 M 站
  * 1. 通过隐藏 WebView 静默完成极验无感验证，获取验证码参数
  * 2. 带验证码参数调用 loginMSite（和手动登录完全一致）
  * 3. 如果极验判定需要人机交互（滑块等），超时后静默放弃，不打扰用户
+ * 
+ * 特性：
+ * - 指数退避：连续失败后间隔 5min → 10min → 20min → 30min(max)
+ * - 防并发锁：同一时间只允许一个静默登录流程
+ * - 静默放弃：任何失败都不弹窗不通知用户
  */
 const silentMSiteReLogin = async (): Promise<void> => {
+  // 防并发：如果已有一个登录流程在进行中，直接返回
+  if (mSiteReLoginLock) {
+    console.log('[M站静默登录] 已有登录流程进行中，跳过');
+    return;
+  }
+
+  // 退避检查
+  if (isInBackoffPeriod()) {
+    return;
+  }
+
+  mSiteReLoginLock = true;
+  mSiteLastReLoginAttempt = Date.now();
+
   try {
     // 延迟导入避免循环依赖（auth.ts ↔ api.ts）
     const { loginMSite } = require('./api');
@@ -450,8 +514,9 @@ const silentMSiteReLogin = async (): Promise<void> => {
     const captchaResult = await requestSilentCaptcha(15000);
 
     if (!captchaResult.success || !captchaResult.captchaParams) {
-      // 极验需要人机交互或超时，静默放弃
-      console.log('[M站静默登录] 极验验证未通过，静默放弃:', captchaResult.error);
+      // 极验需要人机交互或超时，记录失败并退避
+      mSiteConsecutiveFailures++;
+      console.log(`[M站静默登录] 极验验证未通过（连续第${mSiteConsecutiveFailures}次失败），静默放弃:`, captchaResult.error);
       return;
     }
 
@@ -465,27 +530,51 @@ const silentMSiteReLogin = async (): Promise<void> => {
 
     if (result.success) {
       console.log('[M站静默登录] ✅ 自动登录成功');
+      resetMSiteBackoff();
     } else {
-      console.log('[M站静默登录] ❌ 登录失败，静默放弃:', result.message);
+      mSiteConsecutiveFailures++;
+      console.log(`[M站静默登录] ❌ 登录失败（连续第${mSiteConsecutiveFailures}次），静默放弃:`, result.message);
     }
   } catch (error) {
-    console.log('[M站静默登录] 异常，静默放弃:', (error as any)?.message || error);
+    mSiteConsecutiveFailures++;
+    console.log(`[M站静默登录] 异常（连续第${mSiteConsecutiveFailures}次失败），静默放弃:`, (error as any)?.message || error);
+  } finally {
+    mSiteReLoginLock = false;
   }
+};
+
+/**
+ * 被动探测触发的静默重登录
+ * 当 dataFetcher 请求 M 站时发现 Cookie 已过期，调用此函数尝试恢复
+ * 和心跳触发的逻辑一致（含退避保护），不会重复触发
+ */
+export const triggerSilentMSiteReLogin = async (): Promise<void> => {
+  // 先检查全局开关
+  const enabled = await isMSiteEnabled();
+  if (!enabled) return;
+  await silentMSiteReLogin();
 };
 
 /**
  * 启动 M 站心跳保活定时器
  * 应在用户登录后调用，会自动检查是否有 M 站 Cookie
+ * 首次心跳延迟3分钟执行（刚登录完无需立即检查）
  */
 export const startMSiteKeepAlive = (): void => {
   // 避免重复启动
-  if (mSiteKeepAliveTimer) {
+  if (mSiteKeepAliveTimer || mSiteFirstHeartbeatTimer) {
     console.log('[M站心跳] 定时器已存在，跳过重复启动');
     return;
   }
 
-  console.log('[M站心跳] 启动心跳保活，间隔:', M_SITE_KEEPALIVE_INTERVAL / 1000, '秒');
-  mSiteKeepAliveTimer = setInterval(doMSiteKeepAlive, M_SITE_KEEPALIVE_INTERVAL);
+  console.log('[M站心跳] 启动心跳保活，首次延迟', M_SITE_FIRST_HEARTBEAT_DELAY / 1000, '秒，间隔:', M_SITE_KEEPALIVE_INTERVAL / 1000, '秒');
+  
+  // 首次延迟执行，之后按固定间隔
+  mSiteFirstHeartbeatTimer = setTimeout(() => {
+    mSiteFirstHeartbeatTimer = null;
+    doMSiteKeepAlive();
+    mSiteKeepAliveTimer = setInterval(doMSiteKeepAlive, M_SITE_KEEPALIVE_INTERVAL);
+  }, M_SITE_FIRST_HEARTBEAT_DELAY);
 };
 
 /**
@@ -493,9 +582,16 @@ export const startMSiteKeepAlive = (): void => {
  * 应在用户登出或 App 销毁时调用
  */
 export const stopMSiteKeepAlive = (): void => {
+  if (mSiteFirstHeartbeatTimer) {
+    clearTimeout(mSiteFirstHeartbeatTimer);
+    mSiteFirstHeartbeatTimer = null;
+  }
   if (mSiteKeepAliveTimer) {
     clearInterval(mSiteKeepAliveTimer);
     mSiteKeepAliveTimer = null;
     console.log('[M站心跳] 已停止心跳保活');
   }
+  // 停止时重置退避状态
+  resetMSiteBackoff();
+  mSiteReLoginLock = false;
 };
