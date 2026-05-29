@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  ActivityIndicator,
   Alert,
   RefreshControl,
 } from 'react-native';
@@ -12,7 +11,8 @@ import {useNavigation, useFocusEffect} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {SwipeListView} from 'react-native-swipe-list-view';
 import {formatRelativeTime} from '../utils/timeFormat';
-import {useTheme} from '../components/ThemedComponents';
+import {useTheme, SkeletonList, EmptyState} from '../components/ThemedComponents';
+import {HistoryIcon, ChevronRightIcon} from '../components/SvgIcons';
 import {
   SPACING,
   FONT_SIZE,
@@ -153,14 +153,16 @@ const BrowsingHistoryScreen: React.FC = () => {
           浏览于 {formatRelativeTime(new Date(item.timestamp).toISOString())}
         </Text>
       </View>
-      <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
+      <View style={styles.chevron}>
+        <ChevronRightIcon size={18} color={theme.chevron} />
+      </View>
     </TouchableOpacity>
   );
 
   const renderHiddenItem = ({item}: {item: BrowsingHistoryItem}) => (
     <View style={[styles.rowBack, {backgroundColor: theme.background}]}>
       <TouchableOpacity
-        style={styles.deleteButton}
+        style={[styles.deleteButton, {backgroundColor: theme.error}]}
         onPress={() => handleDeleteItem(item.postId)}
       >
         <Text style={styles.deleteButtonText}>删除</Text>
@@ -169,11 +171,13 @@ const BrowsingHistoryScreen: React.FC = () => {
   );
 
   const renderEmpty = () => (
-    <View style={styles.emptyContainer}>
-      <Text style={styles.emptyIcon}>📜</Text>
-      <Text style={[styles.emptyText, {color: theme.secondaryText}]}>暂无浏览历史</Text>
-      <Text style={[styles.emptyHint, {color: theme.secondaryText}]}>浏览过的帖子会显示在这里</Text>
-    </View>
+    <EmptyState
+      icon={<HistoryIcon size={48} color={theme.secondaryText} />}
+      title="暂无浏览记录"
+      subtitle="看过的帖子会出现在这里"
+      actionLabel="去首页看看"
+      onAction={() => navigation.navigate('MainTabs', {screen: 'Home'})}
+    />
   );
 
   const renderHeader = () => {
@@ -183,7 +187,7 @@ const BrowsingHistoryScreen: React.FC = () => {
       <View style={styles.header}>
         <Text style={[styles.headerText, {color: theme.secondaryText}]}>共 {history.length} 条记录</Text>
         <TouchableOpacity onPress={handleClearAll}>
-          <Text style={styles.clearAllText}>清空</Text>
+          <Text style={[styles.clearAllText, {color: theme.error}]}>清空</Text>
         </TouchableOpacity>
       </View>
     );
@@ -191,10 +195,8 @@ const BrowsingHistoryScreen: React.FC = () => {
 
   if (loading) {
     return (
-      <View style={styles.container}>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={theme.primary} />
-        </View>
+      <View style={[styles.container, {backgroundColor: theme.background}]}>
+        <SkeletonList count={6} />
       </View>
     );
   }
@@ -230,16 +232,12 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
   list: {
     padding: SPACING.md,
   },
   emptyList: {
     flex: 1,
+    justifyContent: 'center',
   },
   header: {
     flexDirection: 'row',
@@ -249,19 +247,23 @@ const styles = StyleSheet.create({
     paddingVertical: SPACING.md,
   },
   headerText: {
-    fontSize: FONT_SIZE.md,
+    fontSize: FONT_SIZE.sm,
   },
   clearAllText: {
-    fontSize: FONT_SIZE.md,
-    color: '#FF3B30',
+    fontSize: FONT_SIZE.sm,
     fontWeight: '500',
   },
   historyItem: {
-    borderRadius: BORDER_RADIUS.md,
+    borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.lg,
     marginBottom: SPACING.md,
     flexDirection: 'row',
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 2,
   },
   itemContent: {
     flex: 1,
@@ -285,26 +287,8 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZE.xs,
   },
   chevron: {
-    fontSize: FONT_SIZE.xl,
     marginLeft: SPACING.sm,
-  },
-  emptyContainer: {
-    flex: 1,
     justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: scaleModerate(40),
-  },
-  emptyIcon: {
-    fontSize: scaleModerate(64),
-    marginBottom: SPACING.lg,
-  },
-  emptyText: {
-    fontSize: FONT_SIZE.lg,
-    marginBottom: SPACING.sm,
-  },
-  emptyHint: {
-    fontSize: FONT_SIZE.md,
-    textAlign: 'center',
   },
   rowBack: {
     alignItems: 'flex-end',
@@ -316,7 +300,6 @@ const styles = StyleSheet.create({
     borderRadius: BORDER_RADIUS.md,
   },
   deleteButton: {
-    backgroundColor: '#FF3B30',
     justifyContent: 'center',
     alignItems: 'center',
     width: scaleModerate(75),

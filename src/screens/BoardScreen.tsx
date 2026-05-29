@@ -39,9 +39,12 @@ import {
   MessageIcon,
   EditIcon,
   MenuIcon,
+  ChevronDownIcon,
 } from '../components/SvgIcons';
 import {ThemedHeaderButton, useFloatingHeader} from '../components/ThemeHeader';
 import {useReadPosts} from '../context/ReadPostsContext';
+import {SPACING, FONT_SIZE, BORDER_RADIUS, RESPONSIVE, lineHeight} from '../utils/responsive';
+import {getCardElevation} from '../utils/theme';
 
 
 const {width: SCREEN_WIDTH} = Dimensions.get('window');
@@ -152,54 +155,54 @@ const BoardScreen: React.FC = () => {
   const themedStyles = useMemo(() => ({
     searchBarContainer: {
       backgroundColor: 'transparent',
-      paddingHorizontal: 16,
-      paddingVertical: 8,
+      paddingHorizontal: SPACING.lg,
+      paddingVertical: SPACING.sm,
       borderBottomWidth: 1,
       borderBottomColor: 'transparent',
     } as const,
     searchInput: {
       height: 36,
       backgroundColor: theme.placeholderBackground,
-      borderRadius: 18,
-      paddingHorizontal: 16,
+      borderRadius: BORDER_RADIUS.round,
+      paddingHorizontal: SPACING.lg,
       justifyContent: 'center' as const,
       alignItems: 'center' as const,
     },
     searchPlaceholder: {
-      fontSize: 14,
+      fontSize: FONT_SIZE.md,
       color: theme.secondaryText,
     },
     channelsContainer: {
       backgroundColor: 'transparent',
       borderBottomWidth: 1,
       borderBottomColor: 'transparent',
-      paddingVertical: 8,
+      paddingVertical: SPACING.sm,
     },
     channelItem: {
-      paddingHorizontal: 16,
-      paddingVertical: 8,
-      marginRight: 8,
+      paddingHorizontal: SPACING.lg,
+      paddingVertical: SPACING.sm,
+      marginRight: SPACING.sm,
       backgroundColor: theme.placeholderBackground,
-      borderRadius: 16,
+      borderRadius: BORDER_RADIUS.xl,
       borderWidth: 1,
       borderColor: theme.border,
     },
     channelItemSelected: {
-      paddingHorizontal: 16,
-      paddingVertical: 8,
-      marginRight: 8,
+      paddingHorizontal: SPACING.lg,
+      paddingVertical: SPACING.sm,
+      marginRight: SPACING.sm,
       backgroundColor: theme.primary,
-      borderRadius: 16,
+      borderRadius: BORDER_RADIUS.xl,
       borderWidth: 1,
       borderColor: theme.primary,
     },
     channelText: {
-      fontSize: 14,
+      fontSize: FONT_SIZE.md,
       fontWeight: '500' as const,
       color: theme.text,
     },
     channelTextSelected: {
-      fontSize: 14,
+      fontSize: FONT_SIZE.md,
       fontWeight: '600' as const,
       color: '#fff',
     },
@@ -1458,10 +1461,12 @@ const BoardScreen: React.FC = () => {
       // 根节点渲染为可点击的分类标题
       return (
         <View style={styles.sectionGroup}>
-          <TouchableOpacity style={[styles.sectionHeader, {backgroundColor: theme.placeholderBackground, borderBottomColor: theme.border}]} onPress={handleToggle}>
+          <TouchableOpacity style={[styles.sectionHeader, {backgroundColor: theme.placeholderBackground, borderBottomColor: theme.border}]} onPress={handleToggle} activeOpacity={0.7}>
             <View style={styles.sectionHeaderContent}>
               <Text style={[styles.sectionHeaderText, {color: theme.secondaryText}]}>{item.chineseName || item.name}</Text>
-              <Text style={[styles.sectionExpandArrow, {color: theme.secondaryText}]}>{isExpanded ? '▼' : '▶'}</Text>
+              <View style={[styles.sectionExpandArrow, {transform: [{rotate: isExpanded ? '0deg' : '-90deg'}]}]}>
+                <ChevronDownIcon size={16} color={theme.chevron} />
+              </View>
             </View>
           </TouchableOpacity>
           {isExpanded && hasChildren && (
@@ -1478,10 +1483,11 @@ const BoardScreen: React.FC = () => {
         <TouchableOpacity
           style={[
             styles.boardItem,
-            {paddingLeft: 16 + (level - 1) * 16, borderBottomColor: theme.border},
+            {paddingLeft: SPACING.lg * level, borderBottomColor: theme.border},
             isSelected && [styles.selectedBoardItem, {backgroundColor: theme.primary + '15', borderLeftColor: theme.primary}]
           ]}
-          onPress={handleToggle}>
+          onPress={handleToggle}
+          activeOpacity={0.7}>
           <View style={styles.boardItemContent}>
             <View style={styles.boardIconContainer}>
               {item.isFolder ? (
@@ -1498,9 +1504,9 @@ const BoardScreen: React.FC = () => {
               {item.chineseName || item.name}
             </Text>
             {item.isFolder && (
-              <Text style={[styles.expandArrow, {color: theme.secondaryText}]}>
-                {isExpanded ? '▼' : '▶'}
-              </Text>
+              <View style={[styles.expandArrow, {transform: [{rotate: isExpanded ? '0deg' : '-90deg'}]}]}>
+                <ChevronDownIcon size={16} color={theme.chevron} />
+              </View>
             )}
           </View>
         </TouchableOpacity>
@@ -1524,11 +1530,10 @@ const BoardScreen: React.FC = () => {
     <TouchableOpacity
       style={[
         styles.postItem,
-        {
-          backgroundColor: theme.cardBackground,
-          borderBottomColor: theme.divider  // 使用更明显的分隔线颜色
-        }
+        {backgroundColor: theme.cardBackground},
+        getCardElevation(theme),
       ]}
+      activeOpacity={0.7}
       onPress={() => {
         markAsRead(item.id);
         navigation.navigate('PostDetail', {
@@ -1570,14 +1575,17 @@ const BoardScreen: React.FC = () => {
     const images = item.attachments || [];
     
     // 计算图片网格布局
+    const GAP = SPACING.xs;
+    // 卡片内容可用宽度 = 屏幕宽 - 卡片左右外边距(SPACING.md*2) - 卡片左右内边距(SPACING.lg*2)
+    const contentWidth = RESPONSIVE.SCREEN_WIDTH - SPACING.md * 2 - SPACING.lg * 2;
     const getImageLayout = (count: number) => {
       if (count === 0) return [];
-      if (count === 1) return [{width: SCREEN_WIDTH - 32, height: 300}];
-      if (count === 2) return Array(2).fill({width: (SCREEN_WIDTH - 40) / 2, height: 200});
-      if (count === 3) return Array(3).fill({width: (SCREEN_WIDTH - 48) / 3, height: 120});
-      if (count === 4) return Array(4).fill({width: (SCREEN_WIDTH - 40) / 2, height: 150});
+      if (count === 1) return [{width: contentWidth, height: 300}];
+      if (count === 2) return Array(2).fill({width: (contentWidth - GAP) / 2, height: 200});
+      if (count === 3) return Array(3).fill({width: (contentWidth - GAP * 2) / 3, height: 120});
+      if (count === 4) return Array(4).fill({width: (contentWidth - GAP) / 2, height: 150});
       // 5张及以上，显示前4张，第4张显示"+N"遮罩
-      return Array(4).fill({width: (SCREEN_WIDTH - 40) / 2, height: 150});
+      return Array(4).fill({width: (contentWidth - GAP) / 2, height: 150});
     };
 
     const imageLayout = getImageLayout(images.length);
@@ -1588,11 +1596,10 @@ const BoardScreen: React.FC = () => {
       <TouchableOpacity
         style={[
           styles.albumPostItem,
-          {
-            backgroundColor: theme.cardBackground,
-            borderBottomColor: theme.divider  // 使用更明显的分隔线颜色
-          }
+          {backgroundColor: theme.cardBackground},
+          getCardElevation(theme),
         ]}
+        activeOpacity={0.7}
         onPress={() => {
           markAsRead(item.id);
           navigation.navigate('PostDetail', {
@@ -1698,11 +1705,10 @@ const BoardScreen: React.FC = () => {
       <TouchableOpacity
         style={[
           styles.postItem,
-          {
-            backgroundColor: theme.cardBackground,
-            borderBottomColor: theme.divider  // 使用更明显的分隔线颜色
-          }
+          {backgroundColor: theme.cardBackground},
+          getCardElevation(theme),
         ]}
+        activeOpacity={0.7}
         onPress={() => {
           markAsRead(item.id);
           navigation.navigate('PostDetail', {
@@ -2129,37 +2135,38 @@ const styles = StyleSheet.create({
   },
   postItem: {
     backgroundColor: 'transparent',
-    padding: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'transparent',
+    padding: SPACING.lg,
+    marginHorizontal: SPACING.md,
+    marginVertical: SPACING.xs,
+    borderRadius: BORDER_RADIUS.lg,
   },
   postHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    marginBottom: 8,
+    marginBottom: SPACING.sm,
   },
   topBadge: {
     backgroundColor: 'transparent',
-    paddingHorizontal: 6,
+    paddingHorizontal: SPACING.xs,
     paddingVertical: 2,
-    borderRadius: 4,
-    marginRight: 8,
+    borderRadius: BORDER_RADIUS.sm,
+    marginRight: SPACING.sm,
     marginTop: 2,
   },
   topBadgeText: {
     color: '#fff',
-    fontSize: 10,
+    fontSize: FONT_SIZE.xs,
     fontWeight: 'bold',
   },
   attachmentIcon: {
-    fontSize: 12,
+    fontSize: FONT_SIZE.sm,
   },
   postTitle: {
     flex: 1,
-    fontSize: 16,
+    fontSize: FONT_SIZE.lg,
     // color 由主题动态控制
     fontWeight: '500',
-    lineHeight: 22,
+    lineHeight: lineHeight(FONT_SIZE.lg),
   },
   postMeta: {
     flexDirection: 'row',
@@ -2171,7 +2178,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   levelTitle: {
-    fontSize: 11,
+    fontSize: FONT_SIZE.sm,
     // color 由主题动态控制
   },
   postStats: {
@@ -2179,13 +2186,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   metaText: {
-    fontSize: 12,
+    fontSize: FONT_SIZE.sm,
     // color 由主题动态控制
   },
   statsText: {
-    fontSize: 12,
+    fontSize: FONT_SIZE.sm,
     // color 由主题动态控制
-    marginLeft: 12,
+    marginLeft: SPACING.md,
   },
   emptyContainer: {
     flex: 1,
@@ -2217,9 +2224,9 @@ const styles = StyleSheet.create({
   },
   // 频道帖子样式（对齐今日十大）
   channelPostTitle: {
-    fontSize: 16,
+    fontSize: FONT_SIZE.lg,
     // color 由主题动态控制
-    marginBottom: 8,
+    marginBottom: SPACING.sm,
     fontWeight: '500',
   },
   channelPostMeta: {
@@ -2227,9 +2234,9 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   channelMetaText: {
-    fontSize: 12,
+    fontSize: FONT_SIZE.sm,
     // color 由主题动态控制
-    marginRight: 12,
+    marginRight: SPACING.md,
   },
   channelBoardLink: {
     // color 由主题动态控制
@@ -2238,13 +2245,13 @@ const styles = StyleSheet.create({
   // 图览频道专用样式
   albumPostItem: {
     backgroundColor: 'transparent',
-    padding: 16,
-    marginBottom: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'transparent',
+    padding: SPACING.lg,
+    marginHorizontal: SPACING.md,
+    marginVertical: SPACING.xs,
+    borderRadius: BORDER_RADIUS.lg,
   },
   albumPostHeader: {
-    marginBottom: 12,
+    marginBottom: SPACING.md,
   },
   albumUserInfo: {
     flexDirection: 'row',
@@ -2265,12 +2272,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   albumAvatarText: {
-    fontSize: 16,
+    fontSize: FONT_SIZE.lg,
     fontWeight: '600',
     color: '#fff',
   },
   albumUserDetails: {
-    marginLeft: 12,
+    marginLeft: SPACING.md,
     flex: 1,
   },
   albumUserName: {
@@ -2280,24 +2287,24 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   albumPostTime: {
-    fontSize: 12,
+    fontSize: FONT_SIZE.sm,
     // color 由主题动态控制
   },
   albumPostTitle: {
-    fontSize: 16,
+    fontSize: FONT_SIZE.lg,
     // color 由主题动态控制
-    lineHeight: 22,
-    marginBottom: 12,
+    lineHeight: lineHeight(FONT_SIZE.lg),
+    marginBottom: SPACING.md,
   },
   albumImagesGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 4,
-    marginBottom: 12,
+    gap: SPACING.xs,
+    marginBottom: SPACING.md,
   },
   albumImageWrapper: {
     position: 'relative',
-    borderRadius: 8,
+    borderRadius: BORDER_RADIUS.md,
     overflow: 'hidden',
     backgroundColor: 'transparent',
   },
@@ -2312,17 +2319,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   albumImageOverlayText: {
-    fontSize: 24,
+    fontSize: FONT_SIZE.xxxl,
     fontWeight: 'bold',
     color: '#fff',
   },
   albumPostFooter: {
-    paddingTop: 8,
+    paddingTop: SPACING.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: 'transparent',
   },
   albumBoardName: {
-    fontSize: 12,
+    fontSize: FONT_SIZE.sm,
     color: 'transparent',
   },
   headerTitleContainer: {
@@ -2405,12 +2412,12 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   sectionGroup: {
-    marginBottom: 8,
+    marginBottom: SPACING.sm,
   },
   sectionHeader: {
     backgroundColor: 'transparent',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+    paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.lg,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: 'transparent',
   },
@@ -2420,7 +2427,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   sectionHeaderText: {
-    fontSize: 12,
+    fontSize: FONT_SIZE.sm,
     fontWeight: 'bold',
     // color 由主题动态控制
     textTransform: 'uppercase',
@@ -2428,13 +2435,11 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   sectionExpandArrow: {
-    fontSize: 10,
-    // color 由主题动态控制
-    marginLeft: 8,
+    marginLeft: SPACING.sm,
   },
   boardItem: {
-    paddingVertical: 10,
-    paddingRight: 12,
+    paddingVertical: SPACING.md,
+    paddingRight: SPACING.md,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: 'transparent',
   },
@@ -2469,7 +2474,7 @@ const styles = StyleSheet.create({
   },
   boardName: {
     flex: 1,
-    fontSize: 14,
+    fontSize: FONT_SIZE.md,
     // color 由主题动态控制
   },
   rootBoardName: {
@@ -2481,9 +2486,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   expandArrow: {
-    fontSize: 10,
-    // color 由主题动态控制
-    marginLeft: 4,
+    marginLeft: SPACING.xs,
   },
   subBoardsContainer: {
     // backgroundColor 由主题动态控制

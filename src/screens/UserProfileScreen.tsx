@@ -23,14 +23,16 @@ import {SafeAreaView} from 'react-native-safe-area-context';
 import Clipboard from '@react-native-clipboard/clipboard';
 import ImageCropPicker from 'react-native-image-crop-picker';
 import QRCode from 'react-native-qrcode-svg';
-import Svg, { Path, Circle, Rect } from 'react-native-svg';
-import {SearchIcon, CameraIcon, StarIcon, MapPinIcon, CheckIcon, MailIcon, ImageIcon, TrashIcon, FlashlightIcon, LightbulbIcon, ArrowLeftIcon, MoreVerticalIcon} from '../components/SvgIcons';
+import Svg, { Path, Circle, Rect, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
+import {SearchIcon, CameraIcon, StarIcon, MapPinIcon, CheckIcon, MailIcon, ImageIcon, TrashIcon, FlashlightIcon, LightbulbIcon, ArrowLeftIcon, MoreVerticalIcon, ChevronDownIcon} from '../components/SvgIcons';
 import {Camera, useCameraDevice, useCodeScanner} from 'react-native-vision-camera';
 import {useRoute, useNavigation} from '@react-navigation/native';
 import {getUserInfo, fetchUserInfo, sendMessage, addBlack, removeBlack, addFriend, removeFriend, checkIsHerBlack, getFriendsList, getBlackList} from '../services/api';
 import {User} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
+import {useTheme, useThemedStyles} from '../components/ThemedComponents';
+import {getCardElevation, ThemeColors} from '../utils/theme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import RNFetchBlob from 'rn-fetch-blob';
 import {setCache, getCacheWithTimestamp} from '../services/cacheManager';
@@ -92,9 +94,19 @@ const isNicknameTooLong = (nickname: string): boolean => {
   return getStringLength(nickname) > 8;
 };
 
+// 辅助函数：格式化粉丝数（小于1万显示原始数字，否则显示"x.x万"）
+const formatFollowerCount = (count: number): string => {
+  if (!count || count < 10000) {
+    return String(count || 0);
+  }
+  return `${Math.floor(count / 1000) / 10}万`;
+};
+
 const UserProfileScreen: React.FC = () => {
   const route = useRoute();
   const navigation = useNavigation();
+  const theme = useTheme();
+  const styles = useThemedStyles(createStyles);
   const {username} = route.params as {username?: string};
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -957,7 +969,7 @@ const UserProfileScreen: React.FC = () => {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
+          <ActivityIndicator size="large" color={theme.primary} />
         </View>
       </SafeAreaView>
     );
@@ -982,8 +994,8 @@ const UserProfileScreen: React.FC = () => {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            colors={['#007AFF']}
-            tintColor="#007AFF"
+            colors={[theme.primary]}
+            tintColor={theme.primary}
           />
         }
       >
@@ -998,12 +1010,23 @@ const UserProfileScreen: React.FC = () => {
           }}
           disabled={!isCurrentUser}
         >
-          {backgroundImage && (
+          {backgroundImage ? (
             <ImageBackground
               source={{uri: backgroundImage}}
               style={StyleSheet.absoluteFill}
               imageStyle={styles.headerBackgroundImage}
             />
+          ) : (
+            // 无封面图：主题色柔和渐变默认背景，向下淡出融入页面，避免突兀的灰色背景条
+            <Svg pointerEvents="none" style={StyleSheet.absoluteFill} width="100%" height="100%">
+              <Defs>
+                <SvgLinearGradient id="profileHeaderBg" x1="0" y1="0" x2="0" y2="1">
+                  <Stop offset="0" stopColor={theme.primary} stopOpacity={0.22} />
+                  <Stop offset="1" stopColor={theme.primary} stopOpacity={0.04} />
+                </SvgLinearGradient>
+              </Defs>
+              <Rect x="0" y="0" width="100%" height="100%" fill="url(#profileHeaderBg)" />
+            </Svg>
           )}
           {/* 返回按钮和更多按钮 */}
           <View style={styles.headerTopBar}>
@@ -1011,21 +1034,21 @@ const UserProfileScreen: React.FC = () => {
               style={styles.topBarButton}
               onPress={() => navigation.goBack()}
             >
-              <ArrowLeftIcon size={scaleModerate(20)} color="#333" />
+              <ArrowLeftIcon size={scaleModerate(20)} color="#fff" />
             </TouchableOpacity>
             <View style={styles.topBarActions}>
               <TouchableOpacity 
                 style={styles.topBarButton}
                 onPress={() => navigation.navigate('SearchInput' as never)}
               >
-                <SearchIcon size={scaleModerate(20)} color="#333" />
+                <SearchIcon size={scaleModerate(20)} color="#fff" />
               </TouchableOpacity>
               <View style={styles.topBarSpacer} />
               <TouchableOpacity 
                 style={styles.topBarButton}
                 onPress={handleOpenScanner}
               >
-                <CameraIcon size={scaleModerate(20)} color="#333" />
+                <CameraIcon size={scaleModerate(20)} color="#fff" />
               </TouchableOpacity>
               <View style={styles.topBarSpacer} />
               <TouchableOpacity 
@@ -1085,7 +1108,7 @@ const UserProfileScreen: React.FC = () => {
                   }
                 }}
               >
-                <MoreVerticalIcon size={scaleModerate(20)} color="#333" />
+                <MoreVerticalIcon size={scaleModerate(20)} color="#fff" />
               </TouchableOpacity>
             </View>
           </View>
@@ -1206,7 +1229,7 @@ const UserProfileScreen: React.FC = () => {
           {/* IP属地 */}
           {user?.city && (
             <View style={{flexDirection: 'row', alignItems: 'center'}}>
-              <MapPinIcon size={scaleModerate(14)} color="#999" />
+              <MapPinIcon size={scaleModerate(14)} color={theme.secondaryText} />
               <Text style={[styles.locationText, {marginLeft: 2}]}>IP属地: {user.city}</Text>
             </View>
           )}
@@ -1215,7 +1238,7 @@ const UserProfileScreen: React.FC = () => {
         {/* 统计数据行 */}
         <View style={styles.statsSection}>
           <View style={styles.statItem}>
-            <Text style={styles.statNumber}>{Math.floor((user?.fansCount || 0) / 1000) / 10}万</Text>
+            <Text style={styles.statNumber}>{formatFollowerCount(user?.fansCount || 0)}</Text>
             <Text style={styles.statLabel}>粉丝</Text>
           </View>
           <View style={styles.statDivider} />
@@ -1233,13 +1256,17 @@ const UserProfileScreen: React.FC = () => {
         {/* 二维码展示区域（仅主人态显示） */}
         {isCurrentUser && (
           <View style={styles.qrcodeSection}>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.qrcodeToggleButton}
               onPress={() => setShowQRCode(!showQRCode)}
+              activeOpacity={0.7}
             >
               <Text style={styles.qrcodeToggleText}>
-                {showQRCode ? '▲ 收起二维码' : '▼ 展开我的二维码'}
+                {showQRCode ? '收起二维码' : '展开我的二维码'}
               </Text>
+              <View style={{transform: [{rotate: showQRCode ? '180deg' : '0deg'}], marginLeft: 4}}>
+                <ChevronDownIcon size={16} color={theme.primary} />
+              </View>
             </TouchableOpacity>
             {showQRCode && (
               <View style={styles.qrcodeContainer}>
@@ -1276,10 +1303,10 @@ const UserProfileScreen: React.FC = () => {
                 disabled={followingLoading}
               >
                 {followingLoading ? (
-                  <ActivityIndicator size="small" color={isFollowing ? '#007AFF' : '#fff'} />
+                  <ActivityIndicator size="small" color={isFollowing ? theme.primary : '#fff'} />
                 ) : isFollowing ? (
                   <View style={{flexDirection: 'row', alignItems: 'center'}}>
-                    <CheckIcon size={14} color="#007AFF" />
+                    <CheckIcon size={14} color={theme.primary} />
                     <Text style={[styles.primaryButtonText, styles.primaryButtonTextFollowed]}> 已关注</Text>
                   </View>
                 ) : (
@@ -1291,7 +1318,7 @@ const UserProfileScreen: React.FC = () => {
                 onPress={() => setShowMessageModal(true)}
               >
                 <View style={{flexDirection: 'row', alignItems: 'center'}}>
-                  <MailIcon size={scaleModerate(14)} color="#007AFF" />
+                  <MailIcon size={scaleModerate(14)} color={theme.primary} />
                   <Text style={[styles.secondaryButtonText, {marginLeft: 4}]}>发消息</Text>
                 </View>
               </TouchableOpacity>
@@ -1438,7 +1465,7 @@ const UserProfileScreen: React.FC = () => {
                 <TextInput
                   style={styles.modalSubjectInput}
                   placeholder="主题"
-                  placeholderTextColor="#999"
+                  placeholderTextColor={theme.secondaryText}
                   value={messageSubject}
                   onChangeText={setMessageSubject}
                   maxLength={100}
@@ -1450,7 +1477,7 @@ const UserProfileScreen: React.FC = () => {
                 <TextInput
                   style={styles.modalBodyInput}
                   placeholder="请输入消息内容"
-                  placeholderTextColor="#999"
+                  placeholderTextColor={theme.secondaryText}
                   value={messageBody}
                   onChangeText={setMessageBody}
                   multiline
@@ -1497,7 +1524,7 @@ const UserProfileScreen: React.FC = () => {
                 onPress={handleTakePhoto}
               >
                 <View style={{flexDirection: 'row', alignItems: 'center'}}>
-                  <CameraIcon size={20} color="#333" />
+                  <CameraIcon size={20} color={theme.text} />
                   <Text style={[styles.imageSourceButtonText, {marginLeft: 6}]}>拍照</Text>
                 </View>
               </TouchableOpacity>
@@ -1506,7 +1533,7 @@ const UserProfileScreen: React.FC = () => {
                 onPress={handleSelectFromGallery}
               >
                 <View style={{flexDirection: 'row', alignItems: 'center'}}>
-                  <ImageIcon size={20} color="#333" />
+                  <ImageIcon size={20} color={theme.text} />
                   <Text style={[styles.imageSourceButtonText, {marginLeft: 6}]}>从相册选择</Text>
                 </View>
               </TouchableOpacity>
@@ -1629,10 +1656,10 @@ const UserProfileScreen: React.FC = () => {
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: ThemeColors) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: theme.background,
   },
   loadingContainer: {
     flex: 1,
@@ -1647,12 +1674,12 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 16,
-    color: '#666',
+    color: theme.text,
     marginBottom: 8,
   },
   errorHint: {
     fontSize: 14,
-    color: '#999',
+    color: theme.secondaryText,
   },
   content: {
     flex: 1,
@@ -1661,7 +1688,7 @@ const styles = StyleSheet.create({
   headerBackground: {
     width: SCREEN_WIDTH,
     height: HEADER_HEIGHT,
-    backgroundColor: '#E8F4FF', // 淡蓝色背景，与项目主题一致
+    backgroundColor: theme.background, // 基础色用页面背景；无封面图时叠加主题色渐变
   },
   headerBackgroundImage: {
     resizeMode: 'cover',
@@ -1679,14 +1706,9 @@ const styles = StyleSheet.create({
     width: scaleModerate(40),
     height: scaleModerate(40),
     borderRadius: scaleModerate(20),
-    backgroundColor: 'rgba(255, 255, 255, 0.9)', // 更不透明的白色背景
+    backgroundColor: 'rgba(0, 0, 0, 0.22)', // 轻度半透明，浮于封面/默认背景上不形成"栏"，白色图标仍清晰
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
   },
   topBarIcon: {
     fontSize: FONT_SIZE.xl,
@@ -1711,19 +1733,28 @@ const styles = StyleSheet.create({
   },
   avatarWrapper: {
     position: 'relative',
+    borderRadius: responsiveSize(40, 50, 55, 60),
+    backgroundColor: theme.cardBackground,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.18,
+    shadowRadius: 6,
+    elevation: 4,
   },
   avatar: {
     width: responsiveSize(80, 100, 110, 120),
     height: responsiveSize(80, 100, 110, 120),
     borderRadius: responsiveSize(40, 50, 55, 60),
+    overflow: 'hidden', // 裁剪头像图片为圆形
   },
   avatarPlaceholder: {
     width: responsiveSize(80, 100, 110, 120),
     height: responsiveSize(80, 100, 110, 120),
     borderRadius: responsiveSize(40, 50, 55, 60),
-    backgroundColor: '#007AFF',
+    backgroundColor: theme.primary,
     justifyContent: 'center',
     alignItems: 'center',
+    overflow: 'hidden',
   },
   avatarText: {
     fontSize: responsiveSize(32, 40, 44, 48),
@@ -1737,14 +1768,14 @@ const styles = StyleSheet.create({
   nicknameOnHeader: {
     fontSize: responsiveSize(20, 24, 26, 28),
     fontWeight: 'bold',
-    color: '#000',
-    textShadowColor: 'rgba(255, 255, 255, 0.8)',
-    textShadowOffset: {width: 0, height: 0},
-    textShadowRadius: 8,
+    color: '#fff',
+    textShadowColor: 'rgba(0, 0, 0, 0.6)',
+    textShadowOffset: {width: 0, height: 1},
+    textShadowRadius: 6,
   },
   // 用户信息区域
   userInfoSection: {
-    backgroundColor: '#fff',
+    backgroundColor: theme.cardBackground,
     padding: SPACING.xl,
     paddingTop: SPACING.lg,
   },
@@ -1756,7 +1787,7 @@ const styles = StyleSheet.create({
   username: {
     fontSize: FONT_SIZE.xxl,
     fontWeight: 'bold',
-    color: '#000',
+    color: theme.text,
     marginRight: SPACING.sm,
   },
   genderIcon: {
@@ -1777,7 +1808,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   levelBadge: {
-    backgroundColor: '#E8F4FF', // 淡蓝色背景
+    backgroundColor: theme.background, // 跟随主题的浅底
     paddingHorizontal: SPACING.sm,
     paddingVertical: SPACING.xs,
     borderRadius: BORDER_RADIUS.sm,
@@ -1786,7 +1817,7 @@ const styles = StyleSheet.create({
   },
   levelText: {
     fontSize: FONT_SIZE.xs,
-    color: '#007AFF', // 蓝色文字
+    color: theme.primary, // 主色文字
     fontWeight: '600',
   },
   titleText: {
@@ -1829,7 +1860,7 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
   registerTimeBadge: {
-    backgroundColor: '#F5F5F5',
+    backgroundColor: theme.background,
     paddingHorizontal: SPACING.sm + 2,
     paddingVertical: SPACING.xs,
     borderRadius: BORDER_RADIUS.md,
@@ -1838,46 +1869,46 @@ const styles = StyleSheet.create({
   },
   registerTimeText: {
     fontSize: FONT_SIZE.xs,
-    color: '#666',
+    color: theme.secondaryText,
     fontWeight: '500',
   },
   longNickname: {
     fontSize: FONT_SIZE.md,
-    color: '#666',
+    color: theme.secondaryText,
     lineHeight: FONT_SIZE.xl,
     marginTop: SPACING.sm,
     marginBottom: SPACING.sm,
   },
   loginTimeText: {
     fontSize: FONT_SIZE.sm,
-    color: '#666',
+    color: theme.secondaryText,
     marginBottom: SPACING.sm,
   },
   postLocationText: {
     fontSize: 13,
-    color: '#007AFF',
+    color: theme.primary,
     fontWeight: '500',
   },
   signatureText: {
     fontSize: FONT_SIZE.md,
-    color: '#666',
+    color: theme.secondaryText,
     lineHeight: FONT_SIZE.xl,
     marginBottom: SPACING.sm,
   },
   locationText: {
     fontSize: FONT_SIZE.sm,
-    color: '#999',
+    color: theme.secondaryText,
   },
   // 统计数据区域
   statsSection: {
     flexDirection: 'row',
-    backgroundColor: '#fff',
+    backgroundColor: theme.cardBackground,
     paddingVertical: SPACING.lg,
     paddingHorizontal: SPACING.xxxl + 8,
     justifyContent: 'space-around',
     alignItems: 'center',
-    borderTopWidth: 1,
-    borderTopColor: '#f0f0f0',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.border,
   },
   statItem: {
     alignItems: 'center',
@@ -1885,28 +1916,28 @@ const styles = StyleSheet.create({
   statNumber: {
     fontSize: FONT_SIZE.xl,
     fontWeight: 'bold',
-    color: '#000',
+    color: theme.text,
     marginBottom: SPACING.xs,
   },
   statLabel: {
     fontSize: FONT_SIZE.sm,
-    color: '#666',
+    color: theme.secondaryText,
   },
   statDivider: {
-    width: 1,
+    width: StyleSheet.hairlineWidth,
     height: scaleModerate(30),
-    backgroundColor: '#e0e0e0',
+    backgroundColor: theme.border,
   },
   // 操作按钮区域
   actionButtonsRow: {
     flexDirection: 'row',
-    backgroundColor: '#fff',
+    backgroundColor: theme.cardBackground,
     paddingHorizontal: SPACING.xl,
     paddingVertical: SPACING.lg,
   },
   primaryButton: {
     flex: 1,
-    backgroundColor: '#007AFF', // 蓝色主按钮
+    backgroundColor: theme.primary, // 主色按钮
     paddingVertical: SPACING.md,
     borderRadius: BORDER_RADIUS.md,
     alignItems: 'center',
@@ -1919,37 +1950,37 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   primaryButtonFollowed: {
-    backgroundColor: '#E8F4FF',
+    backgroundColor: theme.background,
     borderWidth: 1,
-    borderColor: '#007AFF',
+    borderColor: theme.primary,
   },
   primaryButtonTextFollowed: {
-    color: '#007AFF',
+    color: theme.primary,
   },
   secondaryButton: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: theme.cardBackground,
     paddingVertical: SPACING.md,
     borderRadius: BORDER_RADIUS.md,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#007AFF', // 蓝色边框
+    borderColor: theme.primary, // 主色边框
   },
   secondaryButtonText: {
     fontSize: FONT_SIZE.lg,
     fontWeight: '600',
-    color: '#007AFF', // 蓝色文字
+    color: theme.primary, // 主色文字
   },
   fullWidthButton: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: theme.cardBackground,
     paddingVertical: SPACING.md,
     borderRadius: BORDER_RADIUS.md,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#007AFF',
+    borderColor: theme.primary,
   },
   section: {
     marginTop: SPACING.xl,
@@ -1958,19 +1989,14 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: FONT_SIZE.sm,
     fontWeight: '600',
-    color: '#8E8E93',
+    color: theme.secondaryText,
     marginBottom: SPACING.sm,
-    textTransform: 'uppercase',
   },
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: theme.cardBackground,
     borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.lg,
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 1},
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
+    ...getCardElevation(theme),
   },
   infoRow: {
     flexDirection: 'row',
@@ -1980,18 +2006,18 @@ const styles = StyleSheet.create({
   },
   infoLabel: {
     fontSize: FONT_SIZE.lg,
-    color: '#000',
+    color: theme.text,
   },
   infoValue: {
     fontSize: FONT_SIZE.lg,
-    color: '#666',
+    color: theme.secondaryText,
     textAlign: 'right',
     flex: 1,
     marginLeft: SPACING.lg,
   },
   divider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: '#f0f0f0',
+    backgroundColor: theme.border,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -2001,8 +2027,8 @@ const styles = StyleSheet.create({
   },
   postCountBadge: {
     fontSize: FONT_SIZE.sm,
-    color: '#666',
-    backgroundColor: '#f0f0f0',
+    color: theme.secondaryText,
+    backgroundColor: theme.background,
     paddingHorizontal: SPACING.sm + 2,
     paddingVertical: SPACING.xs,
     borderRadius: BORDER_RADIUS.md,
@@ -2013,12 +2039,12 @@ const styles = StyleSheet.create({
   },
   emptyPostsText: {
     fontSize: FONT_SIZE.lg,
-    color: '#999',
+    color: theme.secondaryText,
     marginBottom: SPACING.sm,
   },
   emptyPostsHint: {
     fontSize: FONT_SIZE.sm,
-    color: '#ccc',
+    color: theme.secondaryText,
   },
   postItem: {
     paddingVertical: SPACING.md,
@@ -2026,13 +2052,13 @@ const styles = StyleSheet.create({
   postSubject: {
     fontSize: FONT_SIZE.lg,
     fontWeight: '500',
-    color: '#333',
+    color: theme.text,
     marginBottom: SPACING.xs + 2,
     lineHeight: FONT_SIZE.xl,
   },
   postBody: {
     fontSize: FONT_SIZE.md,
-    color: '#666',
+    color: theme.secondaryText,
     lineHeight: FONT_SIZE.xl,
     marginBottom: SPACING.sm,
   },
@@ -2043,17 +2069,17 @@ const styles = StyleSheet.create({
   },
   postBoard: {
     fontSize: FONT_SIZE.sm,
-    color: '#007AFF',
+    color: theme.primary,
     marginRight: SPACING.md,
   },
   postTime: {
     fontSize: FONT_SIZE.sm,
-    color: '#999',
+    color: theme.secondaryText,
     marginRight: SPACING.md,
   },
   postReplyCount: {
     fontSize: FONT_SIZE.sm,
-    color: '#999',
+    color: theme.secondaryText,
   },
   // 发消息弹窗样式
   modalOverlay: {
@@ -2068,7 +2094,7 @@ const styles = StyleSheet.create({
   modalContainer: {
     width: SCREEN_WIDTH * 0.9,
     maxWidth: responsiveSize(400, 500, 550, 600),
-    backgroundColor: '#fff',
+    backgroundColor: theme.cardBackground,
     borderRadius: BORDER_RADIUS.xl,
     overflow: 'hidden',
     maxHeight: '80%',
@@ -2080,7 +2106,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.lg,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#e0e0e0',
+    borderBottomColor: theme.border,
   },
   modalCloseButton: {
     paddingVertical: SPACING.xs,
@@ -2088,12 +2114,12 @@ const styles = StyleSheet.create({
   },
   modalCloseText: {
     fontSize: FONT_SIZE.lg,
-    color: '#007AFF',
+    color: theme.primary,
   },
   modalTitle: {
     fontSize: FONT_SIZE.xl,
     fontWeight: '600',
-    color: '#000',
+    color: theme.text,
   },
   modalPlaceholder: {
     width: scaleModerate(50),
@@ -2103,15 +2129,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.md,
-    backgroundColor: '#f8f8f8',
+    backgroundColor: theme.background,
   },
   modalRecipientLabel: {
     fontSize: FONT_SIZE.lg,
-    color: '#666',
+    color: theme.secondaryText,
   },
   modalRecipientName: {
     fontSize: FONT_SIZE.lg,
-    color: '#000',
+    color: theme.text,
     fontWeight: '500',
   },
   modalInputContainer: {
@@ -2120,13 +2146,13 @@ const styles = StyleSheet.create({
   },
   modalSubjectInput: {
     fontSize: FONT_SIZE.lg,
-    color: '#000',
+    color: theme.text,
     paddingVertical: SPACING.md,
     paddingHorizontal: SPACING.md,
-    backgroundColor: '#f8f8f8',
+    backgroundColor: theme.background,
     borderRadius: BORDER_RADIUS.md,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: theme.border,
   },
   modalBodyContainer: {
     paddingHorizontal: SPACING.lg,
@@ -2136,13 +2162,13 @@ const styles = StyleSheet.create({
   },
   modalBodyInput: {
     fontSize: FONT_SIZE.lg,
-    color: '#000',
+    color: theme.text,
     paddingVertical: SPACING.md,
     paddingHorizontal: SPACING.md,
-    backgroundColor: '#f8f8f8',
+    backgroundColor: theme.background,
     borderRadius: BORDER_RADIUS.md,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: theme.border,
     minHeight: responsiveSize(130, 150, 170, 200),
     maxHeight: responsiveSize(250, 300, 350, 400),
   },
@@ -2150,7 +2176,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: SPACING.xxl + 8,
     bottom: SPACING.xxl + 8,
-    backgroundColor: '#007AFF',
+    backgroundColor: theme.primary,
     paddingHorizontal: SPACING.xl,
     paddingVertical: SPACING.sm + 2,
     borderRadius: BORDER_RADIUS.md,
@@ -2164,7 +2190,7 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   modalSendButtonDisabled: {
-    backgroundColor: '#ccc',
+    backgroundColor: theme.secondaryText,
     opacity: 0.6,
   },
   modalSendButtonText: {
@@ -2179,7 +2205,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   imageSourceModal: {
-    backgroundColor: '#fff',
+    backgroundColor: theme.cardBackground,
     borderTopLeftRadius: BORDER_RADIUS.xl,
     borderTopRightRadius: BORDER_RADIUS.xl,
     paddingBottom: RESPONSIVE.BOTTOM_SAFE_AREA_HEIGHT + SPACING.lg,
@@ -2188,39 +2214,41 @@ const styles = StyleSheet.create({
     paddingVertical: SPACING.lg,
     paddingHorizontal: SPACING.xl,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#e0e0e0',
+    borderBottomColor: theme.border,
     alignItems: 'center',
   },
   imageSourceButtonText: {
     fontSize: FONT_SIZE.xl,
-    color: '#007AFF',
+    color: theme.primary,
     fontWeight: '500',
   },
   imageSourceCancelButton: {
     borderBottomWidth: 0,
     marginTop: SPACING.sm,
-    backgroundColor: '#f8f8f8',
+    backgroundColor: theme.background,
   },
   imageSourceCancelText: {
-    color: '#666',
+    color: theme.secondaryText,
   },
   imageSourceDeleteText: {
-    color: '#FF3B30',
+    color: theme.error,
   },
   // 二维码区域样式
   qrcodeSection: {
-    backgroundColor: '#fff',
+    backgroundColor: theme.cardBackground,
     marginTop: SPACING.md,
     paddingHorizontal: SPACING.xl,
     paddingVertical: SPACING.md,
   },
   qrcodeToggleButton: {
+    flexDirection: 'row',
     paddingVertical: SPACING.md,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   qrcodeToggleText: {
     fontSize: FONT_SIZE.md,
-    color: '#007AFF',
+    color: theme.primary,
     fontWeight: '500',
   },
   qrcodeContainer: {
@@ -2231,16 +2259,12 @@ const styles = StyleSheet.create({
     padding: SPACING.lg,
     backgroundColor: '#fff',
     borderRadius: BORDER_RADIUS.lg,
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 5,
+    ...getCardElevation(theme),
   },
   qrcodeHint: {
     marginTop: SPACING.lg,
     fontSize: FONT_SIZE.md,
-    color: '#666',
+    color: theme.secondaryText,
     textAlign: 'center',
   },
   // 扫一扫相机样式
@@ -2376,7 +2400,7 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.xl,
   },
   scannerErrorButton: {
-    backgroundColor: '#007AFF',
+    backgroundColor: theme.primary,
     paddingHorizontal: SPACING.xxxl,
     paddingVertical: SPACING.md,
     borderRadius: BORDER_RADIUS.md,

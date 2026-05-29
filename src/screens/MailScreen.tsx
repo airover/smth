@@ -6,7 +6,6 @@ import {
   FlatList,
   TouchableOpacity,
   RefreshControl,
-  ActivityIndicator,
   Alert,
   InteractionManager,
 } from 'react-native';
@@ -16,7 +15,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {getMessages} from '../services/api';
 import {Mail} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
-import {useTheme} from '../components/ThemedComponents';
+import {useTheme, SkeletonList, EmptyState} from '../components/ThemedComponents';
+import {MailIcon} from '../components/SvgIcons';
 import {
   SPACING,
   FONT_SIZE,
@@ -148,6 +148,7 @@ const MailScreen: React.FC = () => {
     
     return (
       <TouchableOpacity
+        activeOpacity={0.7}
         style={[
           styles.mailItem,
           {backgroundColor: theme.cardBackground},
@@ -184,9 +185,7 @@ const MailScreen: React.FC = () => {
   if (loading) {
     return (
       <SafeAreaView edges={['bottom']} style={[styles.container, {backgroundColor: theme.background}]}>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={theme.primary} />
-        </View>
+        <SkeletonList count={6} showAvatar />
       </SafeAreaView>
     );
   }
@@ -221,9 +220,11 @@ const MailScreen: React.FC = () => {
         }
         ListEmptyComponent={
           dataLoaded ? (
-            <View style={styles.emptyContainer}>
-              <Text style={[styles.emptyText, {color: theme.secondaryText}]}>暂无邮件</Text>
-            </View>
+            <EmptyState
+              icon={<MailIcon size={48} color={theme.secondaryText} />}
+              title="暂无站内信"
+              subtitle="新消息会出现在这里"
+            />
           ) : null
         }
         contentContainerStyle={styles.content}
@@ -237,22 +238,17 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    padding: SPACING.lg,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+    padding: SPACING.md,
   },
   mailItem: {
-    borderRadius: BORDER_RADIUS.md,
+    borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.lg,
     marginBottom: SPACING.md,
     shadowColor: '#000',
-    shadowOffset: {width: 0, height: 1},
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 2,
   },
   unreadMail: {
     borderLeftWidth: 3,

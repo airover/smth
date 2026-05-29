@@ -304,10 +304,10 @@ const styles = StyleSheet.create({
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
-      height: 1,
+      height: 2,
     },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
     elevation: 2,
   },
   avatar: {

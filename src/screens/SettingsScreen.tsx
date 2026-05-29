@@ -26,6 +26,7 @@ import {
   BanIcon,
   MailIcon,
   SettingsIcon,
+  ChevronRightIcon,
 } from '../components/SvgIcons';
 import {
   SPACING,
@@ -252,7 +253,7 @@ const SettingsScreen: React.FC = () => {
                 )}
               </View>
             </View>
-            <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
+            <ChevronRightIcon size={18} color={theme.chevron} />
           </TouchableOpacity>
         </View>
 
@@ -261,6 +262,7 @@ const SettingsScreen: React.FC = () => {
           <View style={[styles.card, {backgroundColor: theme.cardBackground}]}>
             <TouchableOpacity 
               style={styles.menuItem}
+              activeOpacity={0.7}
               onPress={() => navigation.navigate('BrowsingHistory')}>
               <View style={styles.menuItemLeft}>
               <View style={styles.menuIcon}>
@@ -268,11 +270,12 @@ const SettingsScreen: React.FC = () => {
               </View>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>浏览历史</Text>
               </View>
-              <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
+              <ChevronRightIcon size={18} color={theme.chevron} />
             </TouchableOpacity>
             <View style={[styles.divider, {backgroundColor: theme.border}]} />
             <TouchableOpacity 
               style={styles.menuItem}
+              activeOpacity={0.7}
               onPress={() => navigation.navigate('Favorites')}>
               <View style={styles.menuItemLeft}>
               <View style={styles.menuIcon}>
@@ -280,11 +283,12 @@ const SettingsScreen: React.FC = () => {
               </View>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>我的收藏</Text>
               </View>
-              <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
+              <ChevronRightIcon size={18} color={theme.chevron} />
             </TouchableOpacity>
             <View style={[styles.divider, {backgroundColor: theme.border}]} />
             <TouchableOpacity 
               style={styles.menuItem}
+              activeOpacity={0.7}
               onPress={() => navigation.navigate('MyArticles')}>
               <View style={styles.menuItemLeft}>
               <View style={styles.menuIcon}>
@@ -292,7 +296,7 @@ const SettingsScreen: React.FC = () => {
               </View>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>我的文章</Text>
               </View>
-              <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
+              <ChevronRightIcon size={18} color={theme.chevron} />
             </TouchableOpacity>
           </View>
         </View>
@@ -302,6 +306,7 @@ const SettingsScreen: React.FC = () => {
           <View style={[styles.card, {backgroundColor: theme.cardBackground}]}>
             <TouchableOpacity 
               style={styles.menuItem}
+              activeOpacity={0.7}
               onPress={() => navigation.navigate('MyFollowing')}>
               <View style={styles.menuItemLeft}>
               <View style={styles.menuIcon}>
@@ -309,11 +314,12 @@ const SettingsScreen: React.FC = () => {
               </View>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>我的关注</Text>
               </View>
-              <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
+              <ChevronRightIcon size={18} color={theme.chevron} />
             </TouchableOpacity>
             <View style={[styles.divider, {backgroundColor: theme.border}]} />
             <TouchableOpacity 
               style={styles.menuItem}
+              activeOpacity={0.7}
               onPress={() => navigation.navigate('MyFans')}>
               <View style={styles.menuItemLeft}>
               <View style={styles.menuIcon}>
@@ -321,11 +327,12 @@ const SettingsScreen: React.FC = () => {
               </View>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>我的粉丝</Text>
               </View>
-              <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
+              <ChevronRightIcon size={18} color={theme.chevron} />
             </TouchableOpacity>
             <View style={[styles.divider, {backgroundColor: theme.border}]} />
             <TouchableOpacity 
               style={styles.menuItem}
+              activeOpacity={0.7}
               onPress={() => navigation.navigate('Blacklist')}>
               <View style={styles.menuItemLeft}>
               <View style={styles.menuIcon}>
@@ -333,7 +340,7 @@ const SettingsScreen: React.FC = () => {
               </View>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>黑名单</Text>
               </View>
-              <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
+              <ChevronRightIcon size={18} color={theme.chevron} />
             </TouchableOpacity>
           </View>
         </View>
@@ -343,6 +350,7 @@ const SettingsScreen: React.FC = () => {
           <View style={[styles.card, {backgroundColor: theme.cardBackground}]}>
             <TouchableOpacity 
               style={styles.menuItem}
+              activeOpacity={0.7}
               onPress={() => navigation.navigate('Mail')}>
               <View style={styles.menuItemLeft}>
               <View style={styles.menuIcon}>
@@ -357,7 +365,7 @@ const SettingsScreen: React.FC = () => {
                   </View>
                 )}
               </View>
-              <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
+              <ChevronRightIcon size={18} color={theme.chevron} />
             </TouchableOpacity>
           </View>
         </View>
@@ -367,6 +375,7 @@ const SettingsScreen: React.FC = () => {
           <View style={[styles.card, {backgroundColor: theme.cardBackground}]}>
             <TouchableOpacity 
               style={styles.menuItem}
+              activeOpacity={0.7}
               onPress={() => navigation.navigate('SettingsDetail')}>
               <View style={styles.menuItemLeft}>
               <View style={styles.menuIcon}>
@@ -374,7 +383,7 @@ const SettingsScreen: React.FC = () => {
               </View>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>设置</Text>
               </View>
-              <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
+              <ChevronRightIcon size={18} color={theme.chevron} />
             </TouchableOpacity>
           </View>
         </View>
@@ -495,11 +504,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: FONT_SIZE.xs,
     fontWeight: 'bold',
-  },
-  chevron: {
-    fontSize: FONT_SIZE.xl,
-    // color 由主题动态控制
-    fontWeight: '300',
   },
   divider: {
     height: StyleSheet.hairlineWidth,

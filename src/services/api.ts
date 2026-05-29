@@ -2,6 +2,7 @@
 // 职责：认证（登录/登出）、用户信息、搜索、帖子操作（删帖/收藏/点赞）
 // 缓存：getUserInfo 使用 cacheManager 统一管理
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import CookieManager from '@react-native-cookies/cookies';
 import {
   fetchWithRetry,
   DEFAULT_TIMEOUT,
@@ -360,9 +361,15 @@ export const loginMSite = async (
 
     if (setCookie) {
       console.log('[M站登录] 从响应头获取到 Set-Cookie:', setCookie.substring(0, 200));
-      await storeMSiteCookies(setCookie);
-      resetMSiteBackoff();
-      return { success: true, message: '登录成功' };
+      const stored = await storeMSiteCookies(setCookie);
+      if (stored) {
+        resetMSiteBackoff();
+        return { success: true, message: '登录成功' };
+      } else {
+        console.log('[M站登录] Set-Cookie 中 UTMPUSERID 为 guest，登录实际失败');
+        // 不 reset 退避，让后续重试有间隔
+        return { success: false, message: '登录失败，请重试' };
+      }
     }
 
     // 如果是 302/301 重定向（redirect: manual 生效了），跟随重定向
@@ -385,9 +392,14 @@ export const loginMSite = async (
         const redirectSetCookie = redirectResponse.headers.get('set-cookie');
         if (redirectSetCookie) {
           console.log('[M站登录] 从重定向响应获取到 Set-Cookie');
-          await storeMSiteCookies(redirectSetCookie);
-          resetMSiteBackoff();
-          return { success: true, message: '登录成功' };
+          const stored = await storeMSiteCookies(redirectSetCookie);
+          if (stored) {
+            resetMSiteBackoff();
+            return { success: true, message: '登录成功' };
+          } else {
+            console.log('[M站登录] 重定向 Set-Cookie 中 UTMPUSERID 为 guest，登录实际失败');
+            return { success: false, message: '登录失败，请重试' };
+          }
         }
         // 检查重定向后的页面内容来判断是否登录成功
         const redirectText = await redirectResponse.text();
@@ -412,8 +424,14 @@ export const loginMSite = async (
       
       // 检查是否有错误提示
       if (text.includes('验证码错误') || text.includes('密码错误') || text.includes('用户不存在')) {
-        console.log('[M站登录] 检测到错误提示');
-        return { success: false, message: '登录失败：验证码或密码错误' };
+        const errorDetail = text.includes('验证码错误') ? '验证码错误' : text.includes('密码错误') ? '密码错误' : '用户不存在';
+        console.log('[M站登录] 检测到错误提示:', errorDetail);
+        // 尝试提取更多错误上下文
+        const errorMatch = text.match(/class="error[^"]*"[^>]*>([^<]+)/i) || text.match(/class="sp"[^>]*>([^<]*(?:错误|失败)[^<]*)/i);
+        if (errorMatch) {
+          console.log('[M站登录] 错误详情:', errorMatch[1].trim());
+        }
+        return { success: false, message: `登录失败：${errorDetail}` };
       }
       
       // 检查是否在登录页面（说明登录失败）

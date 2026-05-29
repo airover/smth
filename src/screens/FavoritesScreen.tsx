@@ -14,7 +14,13 @@ import {getFavoriteTopics, getFavoriteBoards} from '../services/dataFetcher';
 import {markFavoriteTopicRead, removeFavoriteTopic} from '../services/api';
 import {Board} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
-import {useTheme} from '../components/ThemedComponents';
+import {
+  useTheme,
+  SkeletonList,
+  EmptyState,
+} from '../components/ThemedComponents';
+import {StarIcon, BoardIcon} from '../components/SvgIcons';
+import {getCardElevation} from '../utils/theme';
 import {
   SPACING,
   FONT_SIZE,
@@ -36,11 +42,7 @@ const FavoritesScreen: React.FC = () => {
       marginBottom: SPACING.md,
       borderRadius: BORDER_RADIUS.lg,
       backgroundColor: theme.cardBackground,
-      shadowColor: theme.text,
-      shadowOffset: {width: 0, height: 1},
-      shadowOpacity: 0.1,
-      shadowRadius: 2,
-      elevation: 2,
+      ...getCardElevation(theme),
     },
     boardItem: {
       flexDirection: 'row' as const,
@@ -51,11 +53,7 @@ const FavoritesScreen: React.FC = () => {
       marginBottom: SPACING.md,
       borderRadius: BORDER_RADIUS.lg,
       backgroundColor: theme.cardBackground,
-      shadowColor: theme.text,
-      shadowOffset: {width: 0, height: 1},
-      shadowOpacity: 0.1,
-      shadowRadius: 2,
-      elevation: 2,
+      ...getCardElevation(theme),
     },
     rowBack: {
       alignItems: 'flex-end' as const,
@@ -327,7 +325,7 @@ const FavoritesScreen: React.FC = () => {
   const renderHiddenItem = ({item}: {item: any}) => (
     <View style={themedCardStyles.rowBack}>
       <TouchableOpacity
-        style={styles.deleteButton}
+        style={[styles.deleteButton, {backgroundColor: theme.error}]}
         onPress={() => handleRemoveFavorite(item)}
       >
         <Text style={styles.deleteButtonText}>取消收藏</Text>
@@ -384,13 +382,29 @@ const FavoritesScreen: React.FC = () => {
     if (loading) {
       return null;
     }
-    
+
+    if (activeTab === 'topics') {
+      return (
+        <EmptyState
+          icon={<StarIcon size={48} color={theme.secondaryText} />}
+          title="还没有收藏"
+          subtitle="收藏的文章会出现在这里"
+          actionLabel="去逛逛"
+          onAction={() =>
+            navigation.navigate('MainTabs', {screen: 'Home'})
+          }
+        />
+      );
+    }
+
     return (
-      <View style={styles.emptyContainer}>
-        <Text style={[styles.emptyText, {color: theme.secondaryText}]}>
-          {activeTab === 'topics' ? '暂无收藏的文章' : '暂无收藏的版面'}
-        </Text>
-      </View>
+      <EmptyState
+        icon={<BoardIcon size={48} color={theme.secondaryText} />}
+        title="还没有收藏"
+        subtitle="收藏的版面会出现在这里"
+        actionLabel="去逛逛"
+        onAction={() => navigation.navigate('MainTabs', {screen: 'Board'})}
+      />
     );
   };
 
@@ -398,9 +412,7 @@ const FavoritesScreen: React.FC = () => {
     return (
       <View style={[styles.container, {backgroundColor: theme.background}]}>
         {renderTabs()}
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={theme.primary} />
-        </View>
+        <SkeletonList count={6} lines={2} />
       </View>
     );
   }
@@ -467,11 +479,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
   // Tab切换 - 横向胶囊样式
   tabContainer: {
     flexDirection: 'row',
@@ -497,7 +504,6 @@ const styles = StyleSheet.create({
   },
   // 滑动删除相关样式（rowBack已移至themedCardStyles）
   deleteButton: {
-    backgroundColor: '#FF3B30',
     justifyContent: 'center',
     alignItems: 'center',
     width: 100,
@@ -581,17 +587,8 @@ const styles = StyleSheet.create({
     marginLeft: SPACING.sm,
   },
   // 空状态
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: SPACING.xxxl,
-  },
   emptyList: {
     flex: 1,
-  },
-  emptyText: {
-    fontSize: FONT_SIZE.lg,
   },
 });
 

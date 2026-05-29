@@ -7,12 +7,10 @@ import {
   StyleSheet,
   Alert,
   ActivityIndicator,
-  Image,
   Switch,
   Modal,
   Keyboard,
   StatusBar,
-  useColorScheme,
 } from 'react-native';
 import {WebView} from 'react-native-webview';
 // 以下工具函数用于 WebView 登录流程
@@ -35,6 +33,7 @@ import {
   scaleModerate,
   responsiveSize,
 } from '../utils/responsive';
+import {useTheme} from '../components/ThemedComponents';
 import CaptchaScreen from './CaptchaScreen';
 
 interface LoginScreenProps {
@@ -48,8 +47,8 @@ interface LoginScreenProps {
 
 const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredentials}) => {
   const navigation = useNavigation<any>();
-  const colorScheme = useColorScheme();
-  const isDarkMode = colorScheme === 'dark';
+  const theme = useTheme();
+  const isDarkMode = theme.background !== '#f8f9fa' && theme.background !== '#FFF8F0';
   // 使用预加载的凭据作为初始值，避免异步加载导致闪烁
   const [username, setUsername] = useState(initialCredentials?.username || '');
   const [password, setPassword] = useState(initialCredentials?.password || '');
@@ -223,9 +222,6 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredent
       return;
     }
 
-    // 保存账号密码（如果用户选择了记住密码）
-    await handleSaveCredentials();
-
     // 重置重试计数
     setLoginRetryCount(0);
     setLoading(true);
@@ -269,6 +265,9 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredent
       if (result.success) {
         // 登录成功
         console.log('登录成功!', result.data);
+        
+        // 登录成功后才保存账号密码
+        await handleSaveCredentials();
         
         // 调用成功回调或导航返回
         if (onLoginSuccess) {
@@ -1022,21 +1021,21 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredent
 
   // 不再需要 WebView 界面，直接使用主登录界面和 API 登录
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, {backgroundColor: theme.background}]}>
       <StatusBar
         barStyle={isDarkMode ? 'light-content' : 'dark-content'}
-        backgroundColor={isDarkMode ? '#000' : '#fff'}
+        backgroundColor={theme.background}
       />
       {renderCaptchaModal()}
       <View style={styles.content}>
-        <Text style={styles.title}>水木社区</Text>
-        <Text style={styles.subtitle}>登录</Text>
+        <Text style={[styles.title, {color: theme.text}]}>水木社区</Text>
+        <Text style={[styles.subtitle, {color: theme.secondaryText}]}>登录</Text>
 
         <View style={styles.inputContainer}>
           <TextInput
-            style={styles.input}
+            style={[styles.input, {backgroundColor: theme.placeholderBackground, borderColor: theme.border, color: theme.text}]}
             placeholder="用户名"
-            placeholderTextColor="#999"
+            placeholderTextColor={theme.secondaryText}
             value={username}
             onChangeText={setUsername}
             autoCapitalize="none"
@@ -1046,9 +1045,9 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredent
 
         <View style={styles.inputContainer}>
           <TextInput
-            style={styles.input}
+            style={[styles.input, {backgroundColor: theme.placeholderBackground, borderColor: theme.border, color: theme.text}]}
             placeholder="密码"
-            placeholderTextColor="#999"
+            placeholderTextColor={theme.secondaryText}
             value={password}
             onChangeText={setPassword}
             secureTextEntry
@@ -1059,22 +1058,23 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredent
 
         <View style={styles.inputContainer}>
           <TouchableOpacity
+            activeOpacity={0.7}
             style={[
               styles.input,
               {
                 flexDirection: 'row',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                backgroundColor: captchaVerified ? '#f0fff0' : '#f9f9f9',
-                borderColor: captchaVerified ? '#34C759' : '#ddd',
+                backgroundColor: captchaVerified ? (isDarkMode ? '#1a3a1a' : '#f0fff0') : theme.placeholderBackground,
+                borderColor: captchaVerified ? '#34C759' : theme.border,
               }
             ]}
             onPress={() => setShowCaptchaScreen(true)}
           >
-            <Text style={{ fontSize: 16, color: captchaVerified ? '#34C759' : '#666' }}>
+            <Text style={{ fontSize: 16, color: captchaVerified ? '#34C759' : theme.secondaryText }}>
               {captchaVerified ? '✅ 验证码已验证' : '点击进行人机验证'}
             </Text>
-            {!captchaVerified && <Text style={{ fontSize: 14, color: '#007AFF' }}>去验证</Text>}
+            {!captchaVerified && <Text style={{ fontSize: 14, color: theme.primary }}>去验证</Text>}
           </TouchableOpacity>
         </View>
 
@@ -1084,14 +1084,15 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredent
           <Switch
             value={rememberPassword}
             onValueChange={setRememberPassword}
-            trackColor={{false: '#ddd', true: '#007AFF'}}
+            trackColor={{false: theme.border, true: theme.primary}}
             thumbColor={rememberPassword ? '#fff' : '#f4f3f4'}
           />
-          <Text style={styles.rememberText}>记住密码</Text>
+          <Text style={[styles.rememberText, {color: theme.secondaryText}]}>记住密码</Text>
         </View>
 
         <TouchableOpacity
-          style={[styles.button, loading && styles.buttonDisabled]}
+          activeOpacity={0.7}
+          style={[styles.button, {backgroundColor: theme.primary}, loading && styles.buttonDisabled]}
           onPress={handleLogin}
           disabled={loading}>
           {loading ? (
@@ -1108,7 +1109,6 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredent
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
   },
   content: {
     flex: 1,
@@ -1118,13 +1118,11 @@ const styles = StyleSheet.create({
   title: {
     fontSize: responsiveSize(28, 32, 36, 40),
     fontWeight: 'bold',
-    color: '#000',
     textAlign: 'center',
     marginBottom: SPACING.sm,
   },
   subtitle: {
     fontSize: FONT_SIZE.xl,
-    color: '#666',
     textAlign: 'center',
     marginBottom: SPACING.xxxl + 8,
   },
@@ -1133,19 +1131,16 @@ const styles = StyleSheet.create({
   },
   input: {
     height: responsiveSize(46, 50, 54, 58),
-    borderWidth: 1,
-    borderColor: '#ddd',
+    borderWidth: StyleSheet.hairlineWidth,
     borderRadius: BORDER_RADIUS.md,
     paddingHorizontal: SPACING.lg,
     fontSize: FONT_SIZE.lg,
-    backgroundColor: '#f9f9f9',
   },
   captchaContainer: {
     marginBottom: SPACING.lg,
   },
   captchaLabel: {
     fontSize: FONT_SIZE.md,
-    color: '#666',
     marginBottom: SPACING.sm,
   },
   captchaRow: {
@@ -1156,30 +1151,24 @@ const styles = StyleSheet.create({
   captchaImage: {
     width: scaleModerate(120),
     height: responsiveSize(46, 50, 54, 58),
-    borderWidth: 1,
-    borderColor: '#ddd',
+    borderWidth: StyleSheet.hairlineWidth,
     borderRadius: BORDER_RADIUS.sm,
-    backgroundColor: '#f9f9f9',
   },
   refreshButton: {
     marginLeft: SPACING.md,
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.sm,
-    backgroundColor: '#f0f0f0',
     borderRadius: BORDER_RADIUS.sm,
   },
   refreshText: {
     fontSize: FONT_SIZE.md,
-    color: '#007AFF',
   },
   captchaInput: {
     height: responsiveSize(46, 50, 54, 58),
-    borderWidth: 1,
-    borderColor: '#ddd',
+    borderWidth: StyleSheet.hairlineWidth,
     borderRadius: BORDER_RADIUS.md,
     paddingHorizontal: SPACING.lg,
     fontSize: FONT_SIZE.lg,
-    backgroundColor: '#f9f9f9',
   },
   recognizingContainer: {
     flexDirection: 'row',
@@ -1189,7 +1178,6 @@ const styles = StyleSheet.create({
   },
   recognizingText: {
     fontSize: FONT_SIZE.sm,
-    color: '#007AFF',
     marginLeft: SPACING.sm,
   },
   captchaStatusContainer: {
@@ -1198,12 +1186,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginTop: SPACING.sm,
     padding: SPACING.md,
-    backgroundColor: '#f9f9f9',
     borderRadius: BORDER_RADIUS.md,
   },
   captchaStatusText: {
     fontSize: FONT_SIZE.md,
-    color: '#666',
     flex: 1,
   },
   rememberContainer: {
@@ -1213,12 +1199,10 @@ const styles = StyleSheet.create({
   },
   rememberText: {
     fontSize: FONT_SIZE.md,
-    color: '#666',
     marginLeft: SPACING.sm,
   },
   button: {
     height: responsiveSize(46, 50, 54, 58),
-    backgroundColor: '#007AFF',
     borderRadius: BORDER_RADIUS.md,
     justifyContent: 'center',
     alignItems: 'center',
@@ -1243,7 +1227,6 @@ const styles = StyleSheet.create({
     bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#fff',
   },
   overlay: {
     position: 'absolute',
@@ -1258,7 +1241,6 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: SPACING.md,
     fontSize: FONT_SIZE.lg,
-    color: '#666',
   },
   modalOverlay: {
     flex: 1,

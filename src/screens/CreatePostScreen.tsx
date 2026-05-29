@@ -15,6 +15,8 @@ import {
   Keyboard,
   InputAccessoryView,
   ActionSheetIOS,
+  LayoutAnimation,
+  UIManager,
 } from 'react-native';
 import ImageCropPicker from 'react-native-image-crop-picker';
 import {useNavigation, useRoute} from '@react-navigation/native';
@@ -28,7 +30,16 @@ import {
   responsiveSize,
 } from '../utils/responsive';
 import {ThemedHeaderButton, useFloatingHeader} from '../components/ThemeHeader';
-import {CameraIcon, ImageIcon, CheckCircleIcon, CheckIcon, LightbulbIcon} from '../components/SvgIcons';
+import {CameraIcon, ImageIcon, CheckCircleIcon, CheckIcon, LightbulbIcon, TrashIcon} from '../components/SvgIcons';
+import {notifySuccess, impactLight} from '../utils/haptics';
+
+// 在 Android 上启用 LayoutAnimation（仅需启用一次）
+if (
+  Platform.OS === 'android' &&
+  UIManager.setLayoutAnimationEnabledExperimental
+) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 interface RouteParams {
   boardId: string; // 版面ID (hash格式)
@@ -222,6 +233,7 @@ const CreatePostScreen: React.FC = () => {
       }
 
       const successMsg = isEditMode ? '保存成功' : (isReplyMode ? '回复成功' : '发帖成功');
+      notifySuccess();
       Alert.alert('成功', successMsg, [
         {
           text: '确定',
@@ -327,8 +339,10 @@ const CreatePostScreen: React.FC = () => {
           height: image.height,
         }));
         const newImages = [...selectedImages, ...newAssets];
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+        impactLight();
         setSelectedImages(newImages);
-        
+
         // 清除之前的上传状态
         setUploadToken(null);
       }
@@ -370,8 +384,10 @@ const CreatePostScreen: React.FC = () => {
           height: image.height,
         };
         const newImages = [...selectedImages, newAsset];
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+        impactLight();
         setSelectedImages(newImages);
-        
+
         // 清除之前的上传状态
         setUploadToken(null);
       }
@@ -390,6 +406,8 @@ const CreatePostScreen: React.FC = () => {
       return;
     }
     const newImages = selectedImages.filter((_, i) => i !== index);
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    impactLight();
     setSelectedImages(newImages);
     // 如果删除了所有图片，清除token和上传状态
     if (newImages.length === 0) {
@@ -631,7 +649,7 @@ const CreatePostScreen: React.FC = () => {
                       style={styles.removeImageButton}
                       onPress={() => handleRemoveImage(index)}
                       disabled={uploading}>
-                      <Text style={styles.removeImageText}>×</Text>
+                      <TrashIcon size={14} color="#fff" />
                     </TouchableOpacity>
                     {uploadToken && (
                       <View style={styles.uploadedBadge}>

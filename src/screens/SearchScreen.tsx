@@ -14,7 +14,8 @@ import {searchArticles, searchBoards, searchAccounts} from '../services/api';
 import {formatRelativeTime} from '../utils/timeFormat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
-import {useTheme} from '../components/ThemedComponents';
+import {useTheme, EmptyState} from '../components/ThemedComponents';
+import {SearchIcon} from '../components/SvgIcons';
 import {
   SPACING,
   FONT_SIZE,
@@ -131,6 +132,21 @@ const SearchScreen: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const {isRead, markAsRead} = useReadPosts();
   const [searched, setSearched] = useState(false); // 是否已执行过搜索
+  const [searchHistory, setSearchHistory] = useState<string[]>([]); // 搜索历史
+
+  useEffect(() => {
+    // 加载搜索历史，用于未搜索时展示最近搜索词
+    (async () => {
+      try {
+        const history = await AsyncStorage.getItem(SEARCH_HISTORY_KEY);
+        if (history) {
+          setSearchHistory(JSON.parse(history));
+        }
+      } catch (error) {
+        console.error('Load search history error:', error);
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     // 如果有初始关键词，自动搜索
@@ -152,7 +168,7 @@ const SearchScreen: React.FC = () => {
             value={keyword}
             onChangeText={setKeyword}
             returnKeyType="search"
-            onSubmitEditing={handleSearch}
+            onSubmitEditing={() => handleSearch()}
             autoFocus={!params?.keyword} // 如果没有初始关键词，自动聚焦
           />
         </View>
@@ -175,6 +191,7 @@ const SearchScreen: React.FC = () => {
       ].slice(0, MAX_HISTORY_COUNT);
       
       await AsyncStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(searchHistory));
+      setSearchHistory(searchHistory);
     } catch (error) {
       console.error('Save search history error:', error);
     }
@@ -182,14 +199,16 @@ const SearchScreen: React.FC = () => {
 
 
 
-  const handleSearch = async () => {
-    if (!keyword.trim()) {
+  const handleSearch = async (overrideTerm?: string) => {
+    // 点击历史词时传入 overrideTerm（setKeyword 是异步的，不能直接读 state）
+    const term = (typeof overrideTerm === 'string' ? overrideTerm : keyword).trim();
+    if (!term) {
       return;
     }
-    
+
     // 保存搜索历史
-    await saveSearchHistory(keyword.trim());
-    
+    await saveSearchHistory(term);
+
     // 重置所有状态
     setArticles([]);
     setBoards([]);
@@ -200,29 +219,29 @@ const SearchScreen: React.FC = () => {
     setAccountHasMore(true);
     setLoading(true);
     setSearched(true);
-    
+
     try {
       // 根据搜索类型参数决定调用哪些接口
       const shouldSearchArticle = params?.searchArticle !== false;
       const shouldSearchBoard = params?.searchBoard !== false;
       const shouldSearchUser = params?.searchUser !== false;
-      
+
       const promises: Promise<any>[] = [];
-      
+
       if (shouldSearchArticle) {
-        promises.push(searchArticles(keyword.trim(), DEFAULT_PAGE, DEFAULT_PAGE_SIZE));
+        promises.push(searchArticles(term, DEFAULT_PAGE, DEFAULT_PAGE_SIZE));
       } else {
         promises.push(Promise.resolve({ articles: [], total: 0, hasMore: false }));
       }
-      
+
       if (shouldSearchBoard) {
-        promises.push(searchBoards(keyword.trim()));
+        promises.push(searchBoards(term));
       } else {
         promises.push(Promise.resolve([]));
       }
-      
+
       if (shouldSearchUser) {
-        promises.push(searchAccounts(keyword.trim(), DEFAULT_PAGE, DEFAULT_PAGE_SIZE));
+        promises.push(searchAccounts(term, DEFAULT_PAGE, DEFAULT_PAGE_SIZE));
       } else {
         promises.push(Promise.resolve({ accounts: [], total: 0, hasMore: false }));
       }
@@ -361,7 +380,7 @@ const SearchScreen: React.FC = () => {
         </View>
         
         {/* 版面信息 */}
-        <View style={styles.articleBoard}>
+        <View style={[styles.articleBoard, {borderTopColor: theme.border}]}>
           <TouchableOpacity
             onPress={(e) => {
               e.stopPropagation();
@@ -430,7 +449,7 @@ const SearchScreen: React.FC = () => {
           {item.avatarUrl ? (
             <ImageWithPlaceholder
               uri={item.avatarUrl}
-              style={styles.accountAvatar}
+              style={[styles.accountAvatar, {backgroundColor: theme.placeholderBackground}]}
               resizeMode="cover"
               isAvatar={true}
             />
@@ -493,9 +512,28 @@ const SearchScreen: React.FC = () => {
     
     if (!searched) {
       return (
-        <View style={styles.emptyContainer}>
-          <Text style={[styles.emptyText, {color: theme.secondaryText}]}>请输入关键词进行搜索</Text>
-          <Text style={[styles.hintText, {color: theme.secondaryText}]}>支持搜索文章、版面和用户</Text>
+        <View style={styles.preSearchContainer}>
+          <EmptyState
+            icon={<SearchIcon size={48} color={theme.secondaryText} />}
+            title="搜索帖子与版面"
+          />
+          {searchHistory.length > 0 && (
+            <View style={styles.historyChips}>
+              {searchHistory.map((term, index) => (
+                <TouchableOpacity
+                  key={`history-${index}`}
+                  style={[styles.historyChip, {backgroundColor: theme.placeholderBackground}]}
+                  onPress={() => {
+                    setKeyword(term);
+                    handleSearch(term);
+                  }}>
+                  <Text style={[styles.historyChipText, {color: theme.text}]} numberOfLines={1}>
+                    {term}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
         </View>
       );
     }
@@ -555,7 +593,7 @@ const SearchScreen: React.FC = () => {
               onEndReached={loadMore}
               onEndReachedThreshold={LOAD_MORE_THRESHOLD}
               refreshControl={
-                <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+                <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.primary} colors={[theme.primary]} />
               }
               ListEmptyComponent={renderEmptyComponent}
               ListFooterComponent={renderFooter}
@@ -568,7 +606,7 @@ const SearchScreen: React.FC = () => {
               renderItem={renderBoardItem}
               keyExtractor={(item, index) => `board-${item.id}-${index}`}
               refreshControl={
-                <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+                <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.primary} colors={[theme.primary]} />
               }
               ListEmptyComponent={renderEmptyComponent}
             />
@@ -582,7 +620,7 @@ const SearchScreen: React.FC = () => {
               onEndReached={loadMore}
               onEndReachedThreshold={LOAD_MORE_THRESHOLD}
               refreshControl={
-                <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+                <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.primary} colors={[theme.primary]} />
               }
               ListEmptyComponent={renderEmptyComponent}
               ListFooterComponent={renderFooter}
@@ -680,7 +718,6 @@ const styles = StyleSheet.create({
   articleBoard: {
     paddingTop: SPACING.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#f0f0f0',
   },
   boardNameText: {
     fontSize: FONT_SIZE.sm,
@@ -723,7 +760,6 @@ const styles = StyleSheet.create({
     height: scaleModerate(50),
     borderRadius: scaleModerate(25),
     marginRight: SPACING.md,
-    backgroundColor: '#f0f0f0',
   },
   accountAvatarPlaceholder: {
     width: scaleModerate(50),
@@ -777,6 +813,28 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingTop: scaleModerate(100),
+  },
+  preSearchContainer: {
+    paddingTop: scaleModerate(60),
+    alignItems: 'center',
+  },
+  historyChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    paddingHorizontal: SPACING.xl,
+    marginTop: SPACING.md,
+  },
+  historyChip: {
+    maxWidth: scaleModerate(160),
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm,
+    borderRadius: BORDER_RADIUS.round,
+    marginRight: SPACING.sm,
+    marginBottom: SPACING.sm,
+  },
+  historyChipText: {
+    fontSize: FONT_SIZE.sm,
   },
   emptyText: {
     fontSize: FONT_SIZE.lg,

@@ -238,10 +238,11 @@ export const extractAndStoreMSiteCookiesFromJar = async (): Promise<boolean> => 
       cookieParts.push(`${name}=${cookie.value}`);
     }
 
-    // 检查是否有 M 站登录相关的 cookie
-    const hasLoginCookie = cookieParts.some(
-      c => c.startsWith('main[UTMPUSERID]') || c.startsWith('main[UTMPKEY]')
-    );
+    // 检查是否有 M 站登录相关的 cookie（且不是 guest）
+    const utmpUserIdCookie = cookieParts.find(c => c.startsWith('main[UTMPUSERID]='));
+    const hasLoginCookie = utmpUserIdCookie 
+      && !utmpUserIdCookie.includes('=guest')
+      && cookieParts.some(c => c.startsWith('main[UTMPKEY]'));
 
     if (hasLoginCookie) {
       const cookieStr = cookieParts.join('; ');
@@ -335,9 +336,9 @@ export const clearMSiteCookieJar = async (): Promise<void> => {
  * 从 Set-Cookie 响应头中解析出 main[UTMPUSERID]、main[UTMPKEY]、main[UTMPNUM] 等 cookie
  * @param setCookieHeader Set-Cookie 响应头的值（可能包含多个 cookie）
  */
-export const storeMSiteCookies = async (setCookieHeader: string): Promise<void> => {
+export const storeMSiteCookies = async (setCookieHeader: string): Promise<boolean> => {
   try {
-    if (!setCookieHeader) return;
+    if (!setCookieHeader) return false;
 
     // 解析 Set-Cookie 中的关键 cookie
     const cookieParts: string[] = [];
@@ -345,6 +346,11 @@ export const storeMSiteCookies = async (setCookieHeader: string): Promise<void> 
     // 提取 main[UTMPUSERID]
     const utmpUserIdMatch = setCookieHeader.match(/main\[UTMPUSERID\]=([^;,\s]+)/);
     if (utmpUserIdMatch) {
+      // 检查是否为 guest 身份，guest 表示登录失败
+      if (utmpUserIdMatch[1] === 'guest') {
+        console.log('M站登录响应返回 guest 身份，登录实际失败');
+        return false;
+      }
       cookieParts.push(`main[UTMPUSERID]=${utmpUserIdMatch[1]}`);
     }
 
@@ -364,20 +370,23 @@ export const storeMSiteCookies = async (setCookieHeader: string): Promise<void> 
       const mSiteCookies = cookieParts.join('; ');
       await AsyncStorage.setItem(STORAGE_KEYS.M_SITE_COOKIES, mSiteCookies);
       console.log('M站Cookie已保存:', cookieParts.map(c => c.split('=')[0]).join(', '));
+      return true;
     } else {
       console.log('M站登录响应中未找到有效Cookie');
+      return false;
     }
   } catch (error) {
     console.error('Store M site cookies error:', error);
+    return false;
   }
 };
 
 // ==================== M 站心跳保活 ====================
 
-const M_SITE_KEEPALIVE_INTERVAL = 5 * 60 * 1000; // 5分钟（M站session有效期通常≥30分钟，5分钟足够保活）
-const M_SITE_FIRST_HEARTBEAT_DELAY = 3 * 60 * 1000; // 首次心跳延迟3分钟（刚登录完不需要马上检查）
-const M_SITE_BACKOFF_BASE = 5 * 60 * 1000; // 退避基数5分钟
-const M_SITE_BACKOFF_MAX = 30 * 60 * 1000; // 最大退避30分钟
+const M_SITE_KEEPALIVE_INTERVAL = 1 * 60 * 1000; // 1分钟心跳间隔
+const M_SITE_FIRST_HEARTBEAT_DELAY = 1 * 60 * 1000; // 首次心跳延迟1分钟
+const M_SITE_BACKOFF_BASE = 1 * 60 * 1000; // 退避基数1分钟
+const M_SITE_BACKOFF_MAX = 8 * 60 * 1000; // 最大退避8分钟
 let mSiteKeepAliveTimer: ReturnType<typeof setInterval> | null = null;
 let mSiteFirstHeartbeatTimer: ReturnType<typeof setTimeout> | null = null;
 let mSiteConsecutiveFailures = 0; // 连续静默登录失败次数
@@ -552,6 +561,12 @@ export const triggerSilentMSiteReLogin = async (): Promise<void> => {
   // 先检查全局开关
   const enabled = await isMSiteEnabled();
   if (!enabled) return;
+  // 如果本地还有 cookie，说明只是回前台的常规检查，跳过重登录，等心跳自然验证
+  const cookies = await getMSiteCookies();
+  if (cookies) {
+    console.log('[M站静默登录] 本地 Cookie 仍存在，跳过重登录，等待心跳验证');
+    return;
+  }
   await silentMSiteReLogin();
 };
 

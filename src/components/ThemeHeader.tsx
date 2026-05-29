@@ -1,5 +1,5 @@
 import React, {createContext, useContext, useState, useCallback} from 'react';
-import {View, Text, ImageBackground, StyleSheet, TouchableOpacity} from 'react-native';
+import {View, Text, ImageBackground, StatusBar, StyleSheet, TouchableOpacity, Platform} from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useNavigation} from '@react-navigation/native';
 import {ArrowLeftIcon} from './SvgIcons';
@@ -146,11 +146,13 @@ const ThemeHeader: React.FC<ThemeHeaderProps> = ({
   const defaultBackButton = canGoBack ? (
     <TouchableOpacity
       onPress={onGoBack}
+      activeOpacity={0.6}
+      hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
       style={hasBackgroundImage ? styles.themedButton : styles.normalBackButton}
     >
       <ArrowLeftIcon
-        size={hasBackgroundImage ? 22 : 28}
-        color={hasBackgroundImage ? '#FFFFFF' : theme.tabBarInactive}
+        size={24}
+        color={hasBackgroundImage ? '#FFFFFF' : theme.headerTint}
       />
     </TouchableOpacity>
   ) : null;
@@ -187,10 +189,19 @@ const ThemeHeader: React.FC<ThemeHeaderProps> = ({
     </>
   );
 
+  const themedStatusBar = (
+    <StatusBar
+      barStyle={theme.statusBarStyle === 'light' ? 'light-content' : 'dark-content'}
+      backgroundColor={theme.headerBackground}
+      translucent
+    />
+  );
+
   if (hasBackgroundImage) {
     const totalHeight = statusBarHeight + NAV_BAR_HEIGHT;
     return (
       <View style={{width: '100%', height: totalHeight}}>
+        {themedStatusBar}
         <ImageBackground
           source={theme.headerBackgroundImage!}
           style={{width: '100%', height: totalHeight}}
@@ -203,7 +214,14 @@ const ThemeHeader: React.FC<ThemeHeaderProps> = ({
   }
 
   return (
-    <View style={{backgroundColor: theme.headerBackground}}>
+    <View
+      style={[
+        {backgroundColor: theme.headerBackground},
+        styles.solidHeaderEdge,
+        {borderBottomColor: theme.border},
+      ]}
+    >
+      {themedStatusBar}
       <View style={{height: statusBarHeight}} />
       <View style={styles.navBar}>
         <View style={styles.navBarLeft}>
@@ -262,11 +280,29 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  // 无背景图时的普通返回按钮
+  // 无背景图时的普通返回按钮（44pt 触控区，光学对齐左移）
   normalBackButton: {
-    marginLeft: -4,
-    padding: 4,
-    paddingRight: 12,
+    width: 44,
+    height: 44,
+    marginLeft: -8,
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+  },
+  // 纯色 header 底部 hairline + 微阴影，与下方滚动内容分离
+  solidHeaderEdge: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: {width: 0, height: 1},
+        shadowOpacity: 0.05,
+        shadowRadius: 3,
+        zIndex: 1,
+      },
+      android: {
+        elevation: 3,
+      },
+    }),
   },
   // 导出用的圆角按钮行容器
   themedButtonRow: {

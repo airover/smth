@@ -20,6 +20,8 @@ import {
   ActionSheetIOS,
   AppState,
   InteractionManager,
+  LayoutAnimation,
+  UIManager,
 } from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {useRoute, useNavigation} from '@react-navigation/native';
@@ -35,15 +37,20 @@ import {cacheManager} from '../services/cacheManager';
 import {saveBrowsingHistory} from './BrowsingHistoryScreen';
 import {sendMessage} from '../services/dataFetcher';
 import {useSettings} from '../context/SettingsContext';
-import {getTheme, getFontSizes} from '../utils/theme';
+import {getTheme, getFontSizes, getCardElevation} from '../utils/theme';
 import {ThemedHeaderButton, useFloatingHeader} from '../components/ThemeHeader';
 import {
   ThumbsUpIcon,
   EggIcon,
   MessageIcon,
   MoreVerticalIcon,
+  TrashIcon,
+  BanIcon,
+  PaperclipIcon,
+  ChevronDownIcon,
 } from '../components/SvgIcons';
 import {normalizeImageUrl, isImageAttachment, isVideoAttachment} from '../utils/imageUtils';
+import {impactLight, impactMedium, notifySuccess} from '../utils/haptics';
 import {
   SPACING,
   FONT_SIZE,
@@ -79,6 +86,11 @@ const POST_DETAIL_CACHE_MAX_STALE_AGE = 8 * 60 * 60 * 1000;
 
 // 点赞/扔鸡蛋专用的 Captcha ID
 const LIKE_CAPTCHA_ID = '3a6990c763f90e33fa62a97faad3a05f';
+
+// Android 上启用 LayoutAnimation（仅需执行一次）
+if (Platform.OS === 'android') {
+  UIManager.setLayoutAnimationEnabledExperimental?.(true);
+}
 
 const PostDetailScreen: React.FC = () => {
   const route = useRoute();
@@ -625,6 +637,7 @@ const PostDetailScreen: React.FC = () => {
           try {
             await deleteArticle(reply.id);
             // 删除成功后从列表中移除
+            LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
             setReplies(prev => prev.filter(r => r.id !== reply.id));
             Alert.alert('成功', '回复已删除');
           } catch (error: any) {
@@ -766,7 +779,8 @@ const PostDetailScreen: React.FC = () => {
     //   );
     //   return;
     // }
-    
+
+    impactLight();
     setRatingType('like');
     setRatingScore(null); // 默认不选择评分
     setRatingComment('');
@@ -793,11 +807,13 @@ const PostDetailScreen: React.FC = () => {
     if (eggButtonRef.current) {
       eggButtonRef.current.measureInWindow((x: number, y: number, width: number, height: number) => {
         setEggButtonLayout({x, y});
+        impactMedium();
         // 播放扔鸡蛋动画，直接传递坐标值
         playThrowEggAnimation(x, y);
       });
     } else {
       // 如果ref不可用，使用默认位置播放动画
+      impactMedium();
       playThrowEggAnimation(eggButtonLayout.x, eggButtonLayout.y);
     }
     
@@ -881,6 +897,7 @@ const PostDetailScreen: React.FC = () => {
       // 鸡蛋消失后播放爆炸动画
       setThrowingEgg(false);
       setExploding(true);
+      impactMedium();
       
       // 20个方向的蛋清/蛋黄飞溅粒子
       const splashAnimations = splashParticles.map((particle, index) => {
@@ -1075,6 +1092,7 @@ const PostDetailScreen: React.FC = () => {
       
       if (result.success) {
         closeModal();
+        notifySuccess();
         Alert.alert('成功', result.message || '评价成功');
         // 刷新帖子详情以显示新的点评
         await loadPostDetail(1, true);
@@ -1439,25 +1457,29 @@ const PostDetailScreen: React.FC = () => {
           if (isImage(item)) {
             const imageSize = imageSizes[url];
             const dynamicHeight = calculateImageHeight(url, imageSize);
-            
+            const isFailed = failedImages.has(url);
+
             return (
-              <TouchableOpacity 
-                key={index} 
-                style={styles.imageContainer}
-                onPress={() => handleImagePress(url)}
-                activeOpacity={0.9}
-                disabled={failedImages.has(url)} // 加载失败的图片禁止点击
+              <TouchableOpacity
+                key={index}
+                style={[styles.imageContainer, !isFailed && {backgroundColor: theme.placeholderBackground}, isFailed && styles.imageContainerFailed]}
+                onPress={() => !isFailed && handleImagePress(url)}
+                activeOpacity={isFailed ? 1 : 0.9}
               >
                 <ImageWithPlaceholder
                   uri={url}
                   style={[
                     styles.attachmentImage,
-                    { height: dynamicHeight }
+                    {backgroundColor: theme.placeholderBackground},
+                    isFailed
+                      ? styles.failedAttachmentImage
+                      : {height: dynamicHeight},
                   ]}
                   resizeMode="contain"
+                  placeholderText="图片加载失败"
                   showLoadingIndicator={true}
-                  onImageLoad={(imageSize) => {
-                    handleImageLoad(url, imageSize);
+                  onImageLoad={(loadedImageSize) => {
+                    handleImageLoad(url, loadedImageSize);
                   }}
                   onLoadError={() => {
                     handleImageLoadError(url);
@@ -1520,7 +1542,7 @@ const PostDetailScreen: React.FC = () => {
                   {like.avatar ? (
                     <ImageWithPlaceholder
                       uri={like.avatar}
-                      style={styles.likeAvatar}
+                      style={[styles.likeAvatar, {borderWidth: StyleSheet.hairlineWidth, borderColor: theme.border}]}
                       resizeMode="cover"
                       isAvatar={true}
                     />
@@ -1538,7 +1560,7 @@ const PostDetailScreen: React.FC = () => {
                       {like.author}
                     </Text>
                     {like.score !== undefined && like.score !== null && like.score !== 0 && (
-                      <Text style={[styles.likeScore, {color: theme.error}]}>
+                      <Text style={[styles.likeScore, {color: like.score > 0 ? theme.likePositive : theme.error}]}>
                         {' '}[{like.score > 0 ? '+' : ''}{like.score}分]
                       </Text>
                     )}
@@ -1562,7 +1584,10 @@ const PostDetailScreen: React.FC = () => {
         {showCollapse && (
           <TouchableOpacity
             style={[styles.likesExpandButton, {borderTopColor: theme.border}]}
-            onPress={() => setLikesExpanded(!likesExpanded)}>
+            onPress={() => {
+              LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+              setLikesExpanded(!likesExpanded);
+            }}>
             <Text style={[styles.likesExpandText, {color: theme.primary}]}>
               {likesExpanded ? '收起更多点评' : `查看更多 ${likes.length - 5} 条点评...`}
             </Text>
@@ -1584,7 +1609,7 @@ const PostDetailScreen: React.FC = () => {
     const isAuthor = post && item.author === post.author;
     
     return (
-    <View style={[styles.replyContainer, {backgroundColor: theme.cardBackground}]}>
+    <View style={[styles.replyContainer, {backgroundColor: theme.cardBackground}, getCardElevation(theme)]}>
       <View style={styles.replyHeader}>
         <View style={styles.replyAuthorInfo}>
           <TouchableOpacity
@@ -1596,7 +1621,7 @@ const PostDetailScreen: React.FC = () => {
             {item.avatar ? (
               <ImageWithPlaceholder
                 uri={item.avatar}
-                style={styles.avatar}
+                style={[styles.avatar, {borderWidth: StyleSheet.hairlineWidth, borderColor: theme.border}]}
                 resizeMode="cover"
                 isAvatar={true}
               />
@@ -1628,6 +1653,11 @@ const PostDetailScreen: React.FC = () => {
                     <Text style={[styles.location, {color: theme.secondaryText}]}>{item.city || item.location}</Text>
                   </>
                 )}
+                {item.attachments && item.attachments.length > 0 && (
+                  <View style={{marginLeft: SPACING.xs}}>
+                    <PaperclipIcon size={FONT_SIZE.xs} color={theme.secondaryText} />
+                  </View>
+                )}
               </View>
           </View>
         </View>
@@ -1651,7 +1681,7 @@ const PostDetailScreen: React.FC = () => {
               onPress={() => handleDeleteReply(item)}
               activeOpacity={0.7}
             >
-              <Text style={styles.deleteReplyButtonText}>❌</Text>
+              <TrashIcon size={FONT_SIZE.md} color={theme.error} />
             </TouchableOpacity>
           )}
           {currentUsername && item.author !== currentUsername && (
@@ -1660,7 +1690,7 @@ const PostDetailScreen: React.FC = () => {
               onPress={() => handleReport(item.author, item.id)}
               activeOpacity={0.7}
             >
-              <Text style={[styles.reportReplyButtonText, {color: theme.secondaryText}]}>⚠️</Text>
+              <BanIcon size={FONT_SIZE.md} color={theme.secondaryText} />
             </TouchableOpacity>
           )}
           <TouchableOpacity
@@ -1723,7 +1753,7 @@ const PostDetailScreen: React.FC = () => {
         refreshing={refreshing}
         onRefresh={handleRefresh}
         ListHeaderComponent={
-          <View style={[styles.postContainer, {backgroundColor: theme.cardBackground}]}>
+          <View style={[styles.postContainer, {backgroundColor: theme.cardBackground}, getCardElevation(theme)]}>
             <Text style={[styles.postTitle, {color: theme.text}]}>{post.title}</Text>
             <View style={styles.postMeta}>
               <TouchableOpacity
@@ -1740,7 +1770,7 @@ const PostDetailScreen: React.FC = () => {
                 hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
                 activeOpacity={0.7}
               >
-                <Text style={[styles.metaText, {color: theme.secondaryText}]}>{post.boardName || post.board}</Text>
+                <Text style={[styles.metaText, {color: theme.primary}]}>{post.boardName || post.board}</Text>
               </TouchableOpacity>
               <Text style={[styles.metaText, {color: theme.secondaryText}]}>回复: {post.replyCount}</Text>
               <Text style={[styles.metaText, {color: theme.secondaryText}]}>{formatDateTime(post.postTime)}</Text>
@@ -1821,9 +1851,9 @@ const PostDetailScreen: React.FC = () => {
                   onPress={toggleSortOrder}
                   activeOpacity={0.7}
                 >
-                  <Text style={[styles.sortTriangleIcon, {color: theme.text}]}>
-                    {sortOrder === 'asc' ? '▲' : '▼'}
-                  </Text>
+                  <View style={{transform: [{rotate: sortOrder === 'asc' ? '180deg' : '0deg'}]}}>
+                    <ChevronDownIcon size={20} color={theme.text} />
+                  </View>
                 </TouchableOpacity>
               </View>
             </View>
@@ -2235,13 +2265,23 @@ const styles = StyleSheet.create({
     marginHorizontal: -SPACING.lg,
     borderRadius: 0,
     overflow: 'hidden',
-    backgroundColor: '#000',
     alignItems: 'center',
+  },
+  imageContainerFailed: {
+    backgroundColor: 'transparent',
+    marginHorizontal: 0,
+    borderRadius: 0,
+    borderWidth: 0,
   },
   attachmentImage: {
     width: SCREEN_WIDTH - SPACING.lg * 2,
     minHeight: responsiveSize(180, 200, 220, 250),
-    backgroundColor: '#eee',
+  },
+  failedAttachmentImage: {
+    width: 128,
+    height: 64,
+    minHeight: 64,
+    borderRadius: BORDER_RADIUS.sm,
   },
   videoContainer: {
     width: SCREEN_WIDTH - scaleModerate(64),
@@ -2402,14 +2442,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#f8f9fa',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
   },
   actionIconEmoji: {
     fontSize: responsiveSize(18, 20, 22, 24),
@@ -2422,14 +2454,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#f8f9fa',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
   },
   sortTriangleIcon: {
     fontSize: responsiveSize(16, 18, 20, 22),
@@ -2437,15 +2461,15 @@ const styles = StyleSheet.create({
   },
   replyContainer: {
     backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: BORDER_RADIUS.md,
+    padding: SPACING.lg,
+    marginBottom: SPACING.md,
   },
   replyHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 12,
+    marginBottom: SPACING.md,
   },
   replyAuthorInfo: {
     flexDirection: 'row',
@@ -2456,7 +2480,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    marginRight: 12,
+    marginRight: SPACING.md,
   },
   authorText: {
     flex: 1,
@@ -2467,76 +2491,76 @@ const styles = StyleSheet.create({
   },
   authorBadge: {
     backgroundColor: '#FF6B6B',
-    paddingHorizontal: 6,
+    paddingHorizontal: SPACING.xs + 2,
     paddingVertical: 2,
-    borderRadius: 3,
-    marginLeft: 6,
+    borderRadius: BORDER_RADIUS.xs,
+    marginLeft: SPACING.xs + 2,
   },
   authorBadgeText: {
-    fontSize: 10,
+    fontSize: FONT_SIZE.xs,
     color: '#fff',
     fontWeight: '600',
   },
   replyTime: {
-    fontSize: 10,
+    fontSize: FONT_SIZE.xs,
     color: '#999',
-    marginTop: 8,
+    marginTop: SPACING.sm,
     textAlign: 'right',
   },
   replyFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 8,
+    marginTop: SPACING.sm,
   },
   deleteReplyButton: {
-    paddingHorizontal: 12,
+    paddingHorizontal: SPACING.md,
     height: 28,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: 4,
+    borderRadius: BORDER_RADIUS.sm,
     borderWidth: 1,
     borderColor: '#e0e0e0',
   },
   deleteReplyButtonText: {
-    fontSize: 12,
+    fontSize: FONT_SIZE.sm,
     color: '#FF3B30',
     fontWeight: '500',
   },
   quoteReplyButton: {
-    paddingHorizontal: 16,
+    paddingHorizontal: SPACING.lg,
     height: 28,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: 4,
+    borderRadius: BORDER_RADIUS.sm,
     borderWidth: 1,
     borderColor: '#e0e0e0',
   },
   quoteReplyButtonText: {
-    fontSize: 12,
+    fontSize: FONT_SIZE.sm,
     color: '#007AFF',
     fontWeight: '500',
   },
   reportReplyButton: {
-    paddingHorizontal: 12,
+    paddingHorizontal: SPACING.md,
     height: 28,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: 4,
+    borderRadius: BORDER_RADIUS.sm,
     borderWidth: 1,
     borderColor: '#e0e0e0',
   },
   reportReplyButtonText: {
-    fontSize: 12,
+    fontSize: FONT_SIZE.sm,
     color: '#999',
     fontWeight: '500',
   },
   location: {
-    fontSize: 10,
+    fontSize: FONT_SIZE.xs,
     color: '#666',
   },
   floor: {
-    fontSize: 12,
+    fontSize: FONT_SIZE.sm,
     color: '#999',
     fontWeight: '400',
   },

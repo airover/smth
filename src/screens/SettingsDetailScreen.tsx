@@ -517,7 +517,7 @@ const subject = encodeURIComponent('海月水母用户反馈');
           {label: '日间模式', value: 'light', current: settings.themeMode === 'light'},
           {label: '夜间模式', value: 'dark', current: settings.themeMode === 'dark'},
           {label: '跟随系统', value: 'auto', current: settings.themeMode === 'auto'},
-          {label: '🐴 马年新春', value: 'spring', current: settings.themeMode === 'spring'},
+          // 🐴 马年新春主题入口已下线（主题代码与 getTheme 分支保留，老用户仍可正常显示）
         ],
         async (value) => {
           await updateSettings({themeMode: value});

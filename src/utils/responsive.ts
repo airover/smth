@@ -166,3 +166,12 @@ export const BORDER_RADIUS = {
   xl: scaleModerate(16),
   round: 9999,
 };
+
+/**
+ * 根据字号计算统一的行高（全 app 共用同一比例，保证排版节奏一致）
+ * @param fontSize 字号
+ * @param ratio 行高倍数，默认 1.4
+ */
+export const lineHeight = (fontSize: number, ratio: number = 1.4): number => {
+  return Math.round(fontSize * ratio);
+};

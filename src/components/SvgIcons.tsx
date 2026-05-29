@@ -427,3 +427,23 @@ export const MenuIcon: React.FC<IconProps> = ({
     <Line x1="3" y1="18" x2="21" y2="18" />
   </SvgIcon>
 );
+
+/** 右向箭头（列表「可进入」指示，替代 unicode ›） */
+export const ChevronRightIcon: React.FC<IconProps> = ({
+  size = 24,
+  color = '#C7C7CC',
+}) => (
+  <SvgIcon size={size} color={color}>
+    <Polyline points="9 18 15 12 9 6" />
+  </SvgIcon>
+);
+
+/** 下向箭头（展开/收起指示，替代 unicode ▼，可旋转） */
+export const ChevronDownIcon: React.FC<IconProps> = ({
+  size = 24,
+  color = '#C7C7CC',
+}) => (
+  <SvgIcon size={size} color={color}>
+    <Polyline points="6 9 12 15 18 9" />
+  </SvgIcon>
+);
