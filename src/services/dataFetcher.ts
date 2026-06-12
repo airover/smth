@@ -2862,7 +2862,7 @@ export const getFavoriteTopics = async (
       throw new Error('NOT_LOGGED_IN');
     }
     
-    const url = `${WAP_BASE_URL}/wap/api/profile/favTopic/asc/${page}/${pageSize}`;
+    const url = `${WAP_BASE_URL}/wap/api/profile/favTopic/desc/${page}/${pageSize}`;
     
     console.log('Fetching favorite topics from API:', url);
     

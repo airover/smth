@@ -1,4 +1,4 @@
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useCallback, useRef} from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   RefreshControl,
   ActivityIndicator,
+  Animated,
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
 import {getTopTen, getHotPosts, getHotBoards} from '../services/api';
@@ -20,8 +21,14 @@ import {
   SPACING,
   FONT_SIZE,
   BORDER_RADIUS,
+  getStatusBarHeight,
 } from '../utils/responsive';
 import {useReadPosts} from '../context/ReadPostsContext';
+import {
+  PullDownFavoritesOverlay,
+  usePullDownFavorites,
+} from '../components/PullDownFavoritesOverlay';
+import FavoritesDrawer from '../components/FavoritesDrawer';
 
 
 // 缓存配置常量
@@ -118,6 +125,32 @@ const HomeScreen: React.FC = () => {
   const [hasMoreHotPosts, setHasMoreHotPosts] = useState(true);
   const [loadingMoreHotPosts, setLoadingMoreHotPosts] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
+
+  // 下拉进入收藏抽屉
+  const [drawerVisible, setDrawerVisible] = useState(false);
+  const contentTranslateY = useRef(new Animated.Value(0)).current;
+  const onRefreshRef = useRef<() => void>(() => {});
+
+  const handleOpenDrawer = useCallback(() => {
+    setDrawerVisible(true);
+  }, []);
+
+  const handleCloseDrawer = useCallback(() => {
+    setDrawerVisible(false);
+  }, []);
+
+  const handlePullRefresh = useCallback(() => {
+    onRefreshRef.current();
+  }, []);
+
+  const {
+    pullOffset,
+    state: pullDownState,
+    onScroll: pullDownOnScroll,
+    onScrollEndDrag: pullDownOnScrollEndDrag,
+    setRefreshing: setPullDownRefreshing,
+    isTriggered: isPullDownTriggered,
+  } = usePullDownFavorites(handleOpenDrawer, handlePullRefresh);
 
   useEffect(() => {
     loadData();
@@ -300,8 +333,9 @@ const HomeScreen: React.FC = () => {
     }
   };
 
-  const onRefresh = async () => {
+  const onRefreshInternal = async () => {
     setRefreshing(true);
+    setPullDownRefreshing(true);
     try {
       console.log('[Refresh] Clearing all hotPosts page caches');
       
@@ -323,7 +357,16 @@ const HomeScreen: React.FC = () => {
       console.error('Refresh error:', error);
     } finally {
       setRefreshing(false);
+      setPullDownRefreshing(false);
     }
+  };
+
+  // 绑定 ref 供 handlePullRefresh 调用
+  onRefreshRef.current = onRefreshInternal;
+
+  const onRefresh = async () => {
+    if (isPullDownTriggered) return;
+    onRefreshInternal();
   };
 
 
@@ -423,10 +466,29 @@ const HomeScreen: React.FC = () => {
 
   return (
     <View style={[styles.container, {backgroundColor: theme.background}]}>
-      <FlatList
-        data={[{type: 'content'}]} // 使用单个项目来包装所有内容
-        contentContainerStyle={[styles.content, headerHeight > 0 && {paddingTop: headerHeight}]}
-        renderItem={() => (
+      {/* 收藏抽屉面板（绝对定位在顶部） */}
+      <FavoritesDrawer visible={drawerVisible} onClose={handleCloseDrawer} contentTranslateY={contentTranslateY} />
+
+      {/* 首页内容（被抽屉推下） */}
+      <Animated.View style={[styles.mainContent, {transform: [{translateY: contentTranslateY}]}]}>
+        {/* 自绘 Header */}
+        {headerHeight === 0 && (
+          <View style={[styles.homeHeader, {backgroundColor: theme.headerBackground}]}>
+            <Text style={[styles.homeHeaderTitle, {color: theme.headerText}]}>首页</Text>
+          </View>
+        )}
+        {/* 下拉进入收藏的浮层提示 */}
+        <PullDownFavoritesOverlay
+          pullOffset={pullOffset}
+          state={pullDownState}
+        />
+        <FlatList
+          data={[{type: 'content'}]}
+          contentContainerStyle={[styles.content, headerHeight > 0 && {paddingTop: headerHeight}]}
+          scrollEventThrottle={16}
+          onScroll={pullDownOnScroll}
+          onScrollEndDrag={pullDownOnScrollEndDrag}
+          renderItem={() => (
           <View>
             <View style={[styles.section, {backgroundColor: theme.cardBackground}, getCardElevation(theme)]}>
               <Text style={[styles.sectionTitle, {color: theme.text}]}>今日十大</Text>
@@ -494,6 +556,7 @@ const HomeScreen: React.FC = () => {
           />
         }
       />
+      </Animated.View>
     </View>
   );
 };
@@ -501,6 +564,20 @@ const HomeScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    overflow: 'hidden',
+  },
+  mainContent: {
+    flex: 1,
+  },
+  homeHeader: {
+    paddingTop: getStatusBarHeight() + 10,
+    paddingBottom: 12,
+    paddingHorizontal: SPACING.lg,
+    alignItems: 'center',
+  },
+  homeHeaderTitle: {
+    fontSize: FONT_SIZE.lg,
+    fontWeight: '600',
   },
   content: {
     padding: SPACING.lg,

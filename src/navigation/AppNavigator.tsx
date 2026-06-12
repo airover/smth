@@ -76,7 +76,7 @@ const MainTabs = () => {
         name="Home"
         options={{
           title: '首页',
-          headerShown: !hasBackgroundImage,
+          headerShown: false,
           tabBarIcon: ({color}) => (
             <HomeIcon size={24} color={color} />
           ),

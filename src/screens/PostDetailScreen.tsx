@@ -26,6 +26,7 @@ import {
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {useRoute, useNavigation} from '@react-navigation/native';
 import {WebView} from 'react-native-webview';
+import {Linking} from 'react-native';
 import {getPostDetail, getTopicReplies, deletePost, getUserInfo, addFavoriteTopic, addLike, removeLike, getPostPermissions, PostPermissions} from '../services/api';
 import PostCaptchaScreen from './PostCaptchaScreen';
 import {deleteArticle} from '../services/postApi';
@@ -1252,6 +1253,13 @@ const PostDetailScreen: React.FC = () => {
     return isVideoAttachment(attachment);
   };
 
+  // 将纯文本 URL 转为可点击的 <a> 标签（样式与普通文字一致）
+  const linkifyUrls = (text: string): string => {
+    // 匹配 http:// 或 https:// 开头的 URL，直到遇到空白、引号、尖括号或行尾
+    const urlRegex = /(https?:\/\/[^\s<>"]+)/gi;
+    return text.replace(urlRegex, '<a href="$1" style="color:inherit;text-decoration:none;">$1</a>');
+  };
+
   // 生成 WebView 的 HTML 内容
   const generateSelectableHtml = (content: string) => {
     const lines = content.split('\n');
@@ -1265,10 +1273,13 @@ const PostDetailScreen: React.FC = () => {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
       
+      // 在转义后的文本中链接化 URL
+      const linkedLine = linkifyUrls(escapedLine);
+      
       if (isQuote) {
-        htmlContent += `<p class="quote">${escapedLine}</p>`;
+        htmlContent += `<p class="quote">${linkedLine}</p>`;
       } else if (line.trim()) {
-        htmlContent += `<p>${escapedLine}</p>`;
+        htmlContent += `<p>${linkedLine}</p>`;
       }
     });
     
@@ -1325,6 +1336,10 @@ const PostDetailScreen: React.FC = () => {
           .quote:only-of-type {
             border-radius: 4px;
           }
+          a {
+            color: inherit;
+            text-decoration: none;
+          }
         </style>
       </head>
       <body>${htmlContent}</body>
@@ -1348,7 +1363,10 @@ const PostDetailScreen: React.FC = () => {
     if (!cleanedContent) return null;
 
     const key = contentKey || content.substring(0, 50);
-    const height = contentHeights[key] || 100;
+    // 根据内容行数估算初始高度，避免长内容被截断
+    const lineCount = content.split('\n').filter(l => l.trim()).length;
+    const estimatedHeight = Math.max(100, lineCount * (fontSizes.lineHeight + 8));
+    const height = contentHeights[key] || estimatedHeight;
     const html = generateSelectableHtml(content);
 
     return (
@@ -1360,10 +1378,28 @@ const PostDetailScreen: React.FC = () => {
         showsVerticalScrollIndicator={false}
         showsHorizontalScrollIndicator={false}
         originWhitelist={['*']}
+        onShouldStartLoadWithRequest={(request) => {
+          // 拦截链接点击，在外部浏览器打开
+          if (request.url.startsWith('http://') || request.url.startsWith('https://')) {
+            // 排除初始加载的 about:blank 和本地 HTML
+            if (request.url !== 'about:blank' && request.navigationType === 'click') {
+              Linking.openURL(request.url);
+              return false;
+            }
+          }
+          return true;
+        }}
         onMessage={(event) => {
           const newHeight = parseInt(event.nativeEvent.data, 10);
-          if (newHeight && newHeight > 0 && newHeight !== contentHeights[key]) {
-            setContentHeights(prev => ({ ...prev, [key]: newHeight }));
+          if (newHeight && newHeight > 0) {
+            setContentHeights(prev => {
+              const oldHeight = prev[key] || 0;
+              // 只在高度变化时更新，允许高度增大或显著缩小（避免抖动）
+              if (newHeight !== oldHeight && (newHeight > oldHeight || newHeight < oldHeight * 0.8)) {
+                return { ...prev, [key]: newHeight };
+              }
+              return prev;
+            });
           }
         }}
         onContentProcessDidTerminate={() => {
@@ -1379,24 +1415,39 @@ const PostDetailScreen: React.FC = () => {
         }}
         injectedJavaScript={`
           (function() {
+            var lastHeight = 0;
             function sendHeight() {
-              const height = document.body.scrollHeight;
-              if (height > 0) {
+              var height = Math.max(
+                document.body.scrollHeight,
+                document.body.offsetHeight,
+                document.documentElement.scrollHeight,
+                document.documentElement.offsetHeight
+              );
+              if (height > 0 && height !== lastHeight) {
+                lastHeight = height;
                 window.ReactNativeWebView.postMessage(String(height));
               }
             }
-            // 立即执行一次
+            // 多次延迟执行，确保DOM和字体完全渲染
             sendHeight();
-            // 延迟执行，确保DOM完全渲染
-            setTimeout(sendHeight, 100);
+            setTimeout(sendHeight, 50);
+            setTimeout(sendHeight, 150);
             setTimeout(sendHeight, 300);
+            setTimeout(sendHeight, 600);
+            setTimeout(sendHeight, 1200);
             // 监听内容变化
-            const observer = new MutationObserver(sendHeight);
-            observer.observe(document.body, { childList: true, subtree: true });
+            var observer = new MutationObserver(sendHeight);
+            observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+            // 监听字体加载完成
+            if (document.fonts && document.fonts.ready) {
+              document.fonts.ready.then(sendHeight);
+            }
             // 图片加载完成后重新计算
-            document.querySelectorAll('img').forEach(img => {
+            document.querySelectorAll('img').forEach(function(img) {
               img.onload = sendHeight;
             });
+            // resize 事件兜底
+            window.addEventListener('resize', sendHeight);
           })();
           true;
         `}
