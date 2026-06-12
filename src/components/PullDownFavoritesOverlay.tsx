@@ -87,7 +87,7 @@ export function usePullDownFavorites(
   const velocityRef = useRef(0);
 
   // 速度阈值：超过此速度视为“快速下拉”，只触发刷新
-  const FAST_VELOCITY = 1.5;
+  const FAST_VELOCITY = 1.1;
 
   const reset = useCallback(() => {
     setState('idle');

@@ -174,9 +174,9 @@ const PostDetailScreen: React.FC = () => {
 
   // 监听应用前后台切换，解决WebView内容丢失问题
   // 分档策略：
-  //  - 后台 < 30s：不做任何处理（避免不必要的闪烁和卡顿）
-  //  - 后台 30s ~ 5min：仅重置高度缓存，让 WebView 通过 injectedJavaScript 重新上报高度
-  //  - 后台 > 5min：强制重建 WebView（此时 WKWebView 内容进程大概率已被系统回收）
+  //  - 后台 < 5min：不做任何处理（避免不必要的闪烁和卡顿）
+  //  - 后台 5min ~ 10min：仅重置高度缓存，让 WebView 通过 injectedJavaScript 重新上报高度
+  //  - 后台 >= 10min：强制重建 WebView（此时 WKWebView 内容进程可能已被系统回收）
   const backgroundAtRef = useRef<number | null>(null);
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextAppState) => {
@@ -191,18 +191,15 @@ const PostDetailScreen: React.FC = () => {
         backgroundAtRef.current = null;
         console.log(`[PostDetail] App从后台切回前台，后台时长: ${bgDuration}ms`);
 
-        if (bgDuration < 30 * 1000) {
-          // 档位1：短时间切换，不处理，避免卡顿
-          console.log('[PostDetail] 后台时长 < 30s，不做恢复处理');
-        } else if (bgDuration < 5 * 60 * 1000) {
-          // 档位2：中等时长，仅重置高度让 WebView 重新上报
-          console.log('[PostDetail] 后台时长 30s~5min，重置高度缓存');
+        if (bgDuration < 5 * 60 * 1000) {
+          console.log('[PostDetail] 后台时长 < 5min，保留现有 WebView 内容');
+        } else if (bgDuration < 10 * 60 * 1000) {
+          console.log('[PostDetail] 后台时长 5~10min，重置高度缓存');
           InteractionManager.runAfterInteractions(() => {
             setContentHeights({});
           });
         } else {
-          // 档位3：长时间后台，WebView 进程大概率已回收，强制重建
-          console.log('[PostDetail] 后台时长 > 5min，强制重建 WebView');
+          console.log('[PostDetail] 后台时长 >= 10min，强制重建 WebView');
           InteractionManager.runAfterInteractions(() => {
             setContentHeights({});
             setWebViewKey(k => k + 1);
@@ -1342,7 +1339,7 @@ const PostDetailScreen: React.FC = () => {
           }
         </style>
       </head>
-      <body>${htmlContent}</body>
+      <body><div id="content-root">${htmlContent}</div></body>
       </html>
     `;
   };
@@ -1365,7 +1362,7 @@ const PostDetailScreen: React.FC = () => {
     const key = contentKey || content.substring(0, 50);
     // 根据内容行数估算初始高度，避免长内容被截断
     const lineCount = content.split('\n').filter(l => l.trim()).length;
-    const estimatedHeight = Math.max(100, lineCount * (fontSizes.lineHeight + 8));
+    const estimatedHeight = Math.max(fontSizes.lineHeight, lineCount * (fontSizes.lineHeight + 8));
     const height = contentHeights[key] || estimatedHeight;
     const html = generateSelectableHtml(content);
 
@@ -1417,7 +1414,9 @@ const PostDetailScreen: React.FC = () => {
           (function() {
             var lastHeight = 0;
             function sendHeight() {
-              var height = Math.max(
+              var root = document.getElementById('content-root');
+              var rect = root ? root.getBoundingClientRect() : null;
+              var height = rect ? Math.ceil(rect.height) : Math.max(
                 document.body.scrollHeight,
                 document.body.offsetHeight,
                 document.documentElement.scrollHeight,
@@ -1437,7 +1436,7 @@ const PostDetailScreen: React.FC = () => {
             setTimeout(sendHeight, 1200);
             // 监听内容变化
             var observer = new MutationObserver(sendHeight);
-            observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+            observer.observe(document.getElementById('content-root') || document.body, { childList: true, subtree: true, attributes: true });
             // 监听字体加载完成
             if (document.fonts && document.fonts.ready) {
               document.fonts.ready.then(sendHeight);
