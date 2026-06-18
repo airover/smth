@@ -8,8 +8,10 @@ import {
   RefreshControl,
   ActivityIndicator,
   Animated,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
 } from 'react-native';
-import {useNavigation} from '@react-navigation/native';
+import {useFocusEffect, useNavigation} from '@react-navigation/native';
 import {getTopTen, getHotPosts, getHotBoards} from '../services/api';
 import {TopTenItem, Board} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
@@ -29,7 +31,9 @@ import {
   usePullDownFavorites,
 } from '../components/PullDownFavoritesOverlay';
 import FavoritesDrawer from '../components/FavoritesDrawer';
+import {useOnAppResume} from '../context/AppStateContext';
 
+const AUTO_REFRESH_CHECK_INTERVAL = 60 * 1000;
 
 // 缓存配置常量
 const CACHE_CONFIG = {
@@ -125,6 +129,13 @@ const HomeScreen: React.FC = () => {
   const [hasMoreHotPosts, setHasMoreHotPosts] = useState(true);
   const [loadingMoreHotPosts, setLoadingMoreHotPosts] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
+  const hasHandledInitialFocusRef = useRef(false);
+  const isSilentRefreshingRef = useRef(false);
+  const isRefreshInProgressRef = useRef(false);
+  const scrollOffsetYRef = useRef(0);
+  const isDraggingRef = useRef(false);
+  const hasPendingSilentUpdateRef = useRef(false);
+  const hasDisplayableDataRef = useRef(false);
 
   // 下拉进入收藏抽屉
   const [drawerVisible, setDrawerVisible] = useState(false);
@@ -152,91 +163,11 @@ const HomeScreen: React.FC = () => {
     isTriggered: isPullDownTriggered,
   } = usePullDownFavorites(handleOpenDrawer, handlePullRefresh);
 
-  useEffect(() => {
-    loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  const canApplySilentRefreshToUI = useCallback(() => {
+    return scrollOffsetYRef.current >= 0 && scrollOffsetYRef.current <= 8 && !isDraggingRef.current;
   }, []);
 
-  const loadData = async (forceRefresh = false) => {
-    try {
-      console.log('Loading home data...', forceRefresh ? '(force refresh)' : '');
-      
-      // 1. 尝试从AsyncStorage获取持久化缓存
-      if (!forceRefresh) {
-        try {
-          // 并行加载所有缓存
-          const [topTenResult, hotBoardsResult, hotPostsResult] = await Promise.all([
-            loadCacheData<TopTenItem[]>('topTen_cache', CACHE_CONFIG.TOP_TEN.MAX_AGE, CACHE_CONFIG.TOP_TEN.VERSION),
-            loadCacheData<Board[]>('hotBoards_cache', CACHE_CONFIG.HOT_BOARDS.MAX_AGE, CACHE_CONFIG.HOT_BOARDS.VERSION),
-            loadCacheData<{topics: TopTenItem[], totalPages: number}>('hotPosts_page1_cache', CACHE_CONFIG.HOT_POSTS.MAX_AGE, CACHE_CONFIG.HOT_POSTS.VERSION),
-          ]);
-          
-          let hasValidCache = false;
-          let needsRefresh = false;
-          
-          // 处理今日十大缓存 - 即使过期也使用
-          if (topTenResult && topTenResult.data && topTenResult.data.length > 0) {
-            setTopTen(topTenResult.data);
-            hasValidCache = true;
-            
-            // 过期或超过刷新阈值，标记需要后台刷新
-            if (topTenResult.isExpired || topTenResult.age > CACHE_CONFIG.TOP_TEN.REFRESH_THRESHOLD) {
-              console.log('[Cache] topTen needs background refresh');
-              needsRefresh = true;
-            }
-          }
-          
-          // 处理热门版面缓存 - 即使过期也使用
-          if (hotBoardsResult && hotBoardsResult.data && hotBoardsResult.data.length > 0) {
-            setHotBoards(hotBoardsResult.data);
-            
-            if (hotBoardsResult.isExpired) {
-              needsRefresh = true;
-            }
-          }
-          
-          // 处理热帖缓存 - 即使过期也使用
-          if (hotPostsResult && hotPostsResult.data) {
-            setHotPosts(hotPostsResult.data.topics);
-            setHotPostsPage(1);
-            setHasMoreHotPosts(hotPostsResult.data.totalPages > 1);
-            
-            // 过期或超过刷新阈值，标记需要后台刷新
-            if (hotPostsResult.isExpired || hotPostsResult.age > CACHE_CONFIG.HOT_POSTS.REFRESH_THRESHOLD) {
-              console.log('[Cache] hotPosts needs background refresh');
-              needsRefresh = true;
-            }
-          }
-          
-          // 如果有有效缓存（包括过期的），先显示缓存
-          if (hasValidCache) {
-            setLoading(false);
-            setDataLoaded(true);
-            
-            // 如果需要刷新，后台异步更新
-            if (needsRefresh) {
-              console.log('[Cache] Background refresh triggered');
-              loadDataFromAPI(true);
-            }
-            
-            return;
-          }
-        } catch (e) {
-          console.error('[Cache] Failed to load persistent cache:', e);
-        }
-      }
-      
-      // 2. 没有缓存或强制刷新，同步加载
-      setLoading(true);
-      await loadDataFromAPI(false);
-    } catch (error) {
-      console.error('Load data error:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-  
-  const loadDataFromAPI = async (isBackground = false) => {
+  const loadDataFromAPI = useCallback(async (isBackground = false, applyToState = true) => {
     try {
       console.log('Loading data from API...', isBackground ? '(background)' : '');
       const [topTenData, hotPostsResult, hotBoardsData] = await Promise.all([
@@ -254,7 +185,9 @@ const HomeScreen: React.FC = () => {
       
       // 只有在数据非空时才更新缓存和状态
       if (topTenData !== null && topTenData.length > 0) {
-        setTopTen(topTenData);
+        if (applyToState) {
+          setTopTen(topTenData);
+        }
         saveCacheData('topTen_cache', topTenData, CACHE_CONFIG.TOP_TEN.VERSION);
       } else {
         console.log('[Cache] topTen返回空数据，保留本地缓存');
@@ -262,29 +195,222 @@ const HomeScreen: React.FC = () => {
       
       // 热门版面和热帖：只有在有数据时才更新
       if (hotBoardsData && hotBoardsData.length > 0) {
-        setHotBoards(hotBoardsData);
+        if (applyToState) {
+          setHotBoards(hotBoardsData);
+        }
         saveCacheData('hotBoards_cache', hotBoardsData, CACHE_CONFIG.HOT_BOARDS.VERSION);
       } else {
         console.log('[Cache] hotBoards返回空数据，保留本地缓存');
       }
       
       if (hotPostsResult.topics && hotPostsResult.topics.length > 0) {
-        setHotPosts(hotPostsResult.topics);
-        setHotPostsPage(1);
-        setHasMoreHotPosts(hotPostsResult.totalPages > 1);
+        if (applyToState) {
+          setHotPosts(hotPostsResult.topics);
+          setHotPostsPage(1);
+          setHasMoreHotPosts(hotPostsResult.totalPages > 1);
+        }
         saveCacheData('hotPosts_page1_cache', hotPostsResult, CACHE_CONFIG.HOT_POSTS.VERSION);
       } else {
         console.log('[Cache] hotPosts返回空数据，保留本地缓存');
       }
       
-      setDataLoaded(true);
+      if (applyToState) {
+        setDataLoaded(true);
+      } else {
+        hasPendingSilentUpdateRef.current = true;
+      }
     } catch (error) {
       console.error('Load data from API error:', error);
       if (!isBackground) {
         throw error; // 如果不是后台刷新，抛出错误
       }
     }
-  };
+  }, []);
+
+  const loadData = useCallback(async (forceRefresh = false, silent = false) => {
+    try {
+      console.log('Loading home data...', forceRefresh ? '(force refresh)' : '');
+      const applyToState = !silent || canApplySilentRefreshToUI();
+      
+      // 1. 尝试从AsyncStorage获取持久化缓存
+      if (!forceRefresh) {
+        try {
+          // 并行加载所有缓存
+          const [topTenResult, hotBoardsResult, hotPostsResult] = await Promise.all([
+            loadCacheData<TopTenItem[]>('topTen_cache', CACHE_CONFIG.TOP_TEN.MAX_AGE, CACHE_CONFIG.TOP_TEN.VERSION),
+            loadCacheData<Board[]>('hotBoards_cache', CACHE_CONFIG.HOT_BOARDS.MAX_AGE, CACHE_CONFIG.HOT_BOARDS.VERSION),
+            loadCacheData<{topics: TopTenItem[], totalPages: number}>('hotPosts_page1_cache', CACHE_CONFIG.HOT_POSTS.MAX_AGE, CACHE_CONFIG.HOT_POSTS.VERSION),
+          ]);
+          
+          let hasValidCache = false;
+          let needsRefresh = false;
+          
+          // 处理今日十大缓存 - 即使过期也使用
+          if (topTenResult && topTenResult.data && topTenResult.data.length > 0) {
+            if (applyToState) {
+              setTopTen(topTenResult.data);
+            }
+            hasValidCache = true;
+            
+            // 过期或超过刷新阈值，标记需要后台刷新
+            if (topTenResult.isExpired || topTenResult.age > CACHE_CONFIG.TOP_TEN.REFRESH_THRESHOLD) {
+              console.log('[Cache] topTen needs background refresh');
+              needsRefresh = true;
+            }
+          }
+          
+          // 处理热门版面缓存 - 即使过期也使用
+          if (hotBoardsResult && hotBoardsResult.data && hotBoardsResult.data.length > 0) {
+            if (applyToState) {
+              setHotBoards(hotBoardsResult.data);
+            }
+            hasValidCache = true;
+            
+            if (hotBoardsResult.isExpired) {
+              needsRefresh = true;
+            }
+          }
+          
+          // 处理热帖缓存 - 即使过期也使用
+          if (hotPostsResult && hotPostsResult.data && hotPostsResult.data.topics.length > 0) {
+            if (applyToState) {
+              setHotPosts(hotPostsResult.data.topics);
+              setHotPostsPage(1);
+              setHasMoreHotPosts(hotPostsResult.data.totalPages > 1);
+            }
+            hasValidCache = true;
+            
+            // 过期或超过刷新阈值，标记需要后台刷新
+            if (hotPostsResult.isExpired || hotPostsResult.age > CACHE_CONFIG.HOT_POSTS.REFRESH_THRESHOLD) {
+              console.log('[Cache] hotPosts needs background refresh');
+              needsRefresh = true;
+            }
+          }
+          
+          // 如果有有效缓存（包括过期的），先显示缓存
+          if (hasValidCache) {
+            if (applyToState && !silent) {
+              setLoading(false);
+            }
+            if (applyToState) {
+              setDataLoaded(true);
+            } else {
+              hasPendingSilentUpdateRef.current = true;
+            }
+            
+            // 如果需要刷新，后台异步更新
+            if (needsRefresh) {
+              console.log('[Cache] Background refresh triggered');
+              loadDataFromAPI(true, applyToState);
+            }
+            
+            return;
+          }
+        } catch (e) {
+          console.error('[Cache] Failed to load persistent cache:', e);
+        }
+      }
+      
+      if (silent) {
+        if (!hasDisplayableDataRef.current) {
+          console.log('[Cache] Silent refresh has no displayable cache, retrying API in background');
+          await loadDataFromAPI(true, applyToState);
+          return;
+        }
+
+        console.log('[Cache] Silent refresh skipped: no displayable cache');
+        return;
+      }
+
+      // 2. 没有缓存或强制刷新，同步加载
+      setLoading(true);
+      await loadDataFromAPI(false);
+    } catch (error) {
+      console.error('Load data error:', error);
+    } finally {
+      if (!silent) {
+        setLoading(false);
+      }
+    }
+  }, [canApplySilentRefreshToUI, loadDataFromAPI]);
+
+  const loadDataSilently = useCallback(async () => {
+    if (isSilentRefreshingRef.current) {
+      return;
+    }
+
+    isSilentRefreshingRef.current = true;
+    try {
+      await loadData(false, true);
+    } catch (error) {
+      console.error('[Cache] Silent refresh failed, ignored:', error);
+    } finally {
+      isSilentRefreshingRef.current = false;
+    }
+  }, [loadData]);
+
+  const applyPendingSilentUpdate = useCallback(() => {
+    if (!hasPendingSilentUpdateRef.current || !canApplySilentRefreshToUI()) {
+      return;
+    }
+
+    hasPendingSilentUpdateRef.current = false;
+    loadData(false, true);
+  }, [canApplySilentRefreshToUI, loadData]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  useEffect(() => {
+    hasDisplayableDataRef.current = dataLoaded || topTen.length > 0 || hotBoards.length > 0 || hotPosts.length > 0;
+  }, [dataLoaded, hotBoards.length, hotPosts.length, topTen.length]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (hasHandledInitialFocusRef.current) {
+        loadDataSilently();
+      } else {
+        hasHandledInitialFocusRef.current = true;
+      }
+
+      const refreshTimer = setInterval(() => {
+        loadDataSilently();
+      }, AUTO_REFRESH_CHECK_INTERVAL);
+
+      return () => {
+        clearInterval(refreshTimer);
+      };
+    }, [loadDataSilently])
+  );
+
+  useOnAppResume(() => {
+    if (navigation.isFocused()) {
+      loadDataSilently();
+    }
+  }, [navigation, loadDataSilently]);
+
+  const handleListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    scrollOffsetYRef.current = event.nativeEvent.contentOffset.y;
+    pullDownOnScroll(event);
+  }, [pullDownOnScroll]);
+
+  const handleScrollBeginDrag = useCallback(() => {
+    isDraggingRef.current = true;
+  }, []);
+
+  const handleScrollEndDrag = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    isDraggingRef.current = false;
+    scrollOffsetYRef.current = event.nativeEvent.contentOffset.y;
+    pullDownOnScrollEndDrag(event);
+    applyPendingSilentUpdate();
+  }, [applyPendingSilentUpdate, pullDownOnScrollEndDrag]);
+
+  const handleMomentumScrollEnd = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    isDraggingRef.current = false;
+    scrollOffsetYRef.current = event.nativeEvent.contentOffset.y;
+    applyPendingSilentUpdate();
+  }, [applyPendingSilentUpdate]);
 
   const loadMoreHotPosts = async () => {
     if (loadingMoreHotPosts || !hasMoreHotPosts) return;
@@ -334,6 +460,11 @@ const HomeScreen: React.FC = () => {
   };
 
   const onRefreshInternal = async () => {
+    if (isRefreshInProgressRef.current) {
+      return;
+    }
+
+    isRefreshInProgressRef.current = true;
     setRefreshing(true);
     setPullDownRefreshing(true);
     try {
@@ -356,6 +487,7 @@ const HomeScreen: React.FC = () => {
     } catch (error) {
       console.error('Refresh error:', error);
     } finally {
+      isRefreshInProgressRef.current = false;
       setRefreshing(false);
       setPullDownRefreshing(false);
     }
@@ -486,8 +618,10 @@ const HomeScreen: React.FC = () => {
           data={[{type: 'content'}]}
           contentContainerStyle={[styles.content, headerHeight > 0 && {paddingTop: headerHeight}]}
           scrollEventThrottle={16}
-          onScroll={pullDownOnScroll}
-          onScrollEndDrag={pullDownOnScrollEndDrag}
+          onScroll={handleListScroll}
+          onScrollBeginDrag={handleScrollBeginDrag}
+          onScrollEndDrag={handleScrollEndDrag}
+          onMomentumScrollEnd={handleMomentumScrollEnd}
           renderItem={() => (
           <View>
             <View style={[styles.section, {backgroundColor: theme.cardBackground}, getCardElevation(theme)]}>
