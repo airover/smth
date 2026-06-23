@@ -103,6 +103,7 @@ const PostDetailScreen: React.FC = () => {
   const [post, setPost] = useState<Post | null>(null);
   const [replies, setReplies] = useState<Reply[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [likesExpanded, setLikesExpanded] = useState(false);
@@ -321,6 +322,27 @@ const PostDetailScreen: React.FC = () => {
     }
   };
 
+  const getPostDetailLoadErrorMessage = (error: any): string => {
+    const message = String(error?.message || error || '');
+    if (message === 'LOGIN_EXPIRED' || message === 'NOT_LOGGED_IN') {
+      return '登录态已过期，请重新登录后重试';
+    }
+    if (message.includes('网络') || message.includes('超时')) {
+      return message;
+    }
+    return '获取帖子失败，请稍后重试';
+  };
+
+  const settleRequest = async <T,>(promise: Promise<T>): Promise<
+    {status: 'fulfilled'; value: T} | {status: 'rejected'; reason: any}
+  > => {
+    try {
+      return {status: 'fulfilled', value: await promise};
+    } catch (reason) {
+      return {status: 'rejected', reason};
+    }
+  };
+
   const getStaleCache = <T,>(category: 'postDetail' | 'topicReplies', key: string): {data: T; age: number} | null => {
     const cached = cacheManager.getWithTimestamp<T>(category, key);
     if (!cached) {
@@ -343,6 +365,7 @@ const PostDetailScreen: React.FC = () => {
       }
       
       if (pageNum === 1) {
+        setLoadError(null);
         // 第一页：检查缓存并获取主题详情和回复列表
         const postCacheKey = `${board}-${postId}`;
         const repliesCacheKey = `${postId}-1`;
@@ -390,47 +413,48 @@ const PostDetailScreen: React.FC = () => {
         // 如果缓存中没有数据或强制刷新，则从API获取
         if (!detailData || !repliesData || forceRefresh || shouldRefreshDetail || shouldRefreshReplies) {
           console.log(`[PostDetail] ${forceRefresh ? 'Force refresh' : shouldRefreshDetail || shouldRefreshReplies ? 'Stale cache' : 'Cache miss'}, fetching from API`);
-          
-          try {
-            const [apiDetailData, apiRepliesData] = await Promise.all([
-              detailData && !shouldRefreshDetail && !forceRefresh ? Promise.resolve(detailData) : getPostDetail(board, postId, 1, mSitePostId),
-              repliesData && !shouldRefreshReplies && !forceRefresh ? Promise.resolve(repliesData) : getTopicReplies(postId, 1)
-            ]);
-            
-            // ✅ 修复：只有成功获取且数据有效时才缓存和更新
-            if (apiDetailData && apiDetailData !== null) {
-              cacheManager.set('postDetail', postCacheKey, apiDetailData);
-              detailData = apiDetailData;
-            } else if (!detailData && oldDetailData) {
-              // API失败时使用旧缓存降级
-              console.log('[PostDetail] API failed, using old cache for detail');
-              detailData = oldDetailData;
-            }
-            
-            if (apiRepliesData && (apiRepliesData as {replies: any[], totalItems: number}).totalItems !== -1) {
-              // ✅ 修复：检查 totalItems !== -1 来判断是否成功
-              cacheManager.set('topicReplies', repliesCacheKey, apiRepliesData);
-              repliesData = apiRepliesData;
-            } else if (!repliesData && oldRepliesData) {
-              // API失败时使用旧缓存降级
-              console.log('[PostDetail] API failed, using old cache for replies');
-              repliesData = oldRepliesData;
-            }
-          } catch (error: any) {
-            console.error('[PostDetail] Failed to fetch data:', error.message);
-            // 失败时使用旧缓存降级
-            if (!detailData && oldDetailData) {
-              detailData = oldDetailData;
-            }
-            if (!repliesData && oldRepliesData) {
-              repliesData = oldRepliesData;
-            }
+
+          const [detailResult, repliesResult] = await Promise.all([
+            settleRequest(detailData && !shouldRefreshDetail && !forceRefresh ? Promise.resolve(detailData) : getPostDetail(board, postId, 1, mSitePostId)),
+            settleRequest(repliesData && !shouldRefreshReplies && !forceRefresh ? Promise.resolve(repliesData) : getTopicReplies(postId, 1))
+          ]);
+
+          let detailError: any = null;
+
+          // ✅ 修复：只有成功获取且数据有效时才缓存和更新
+          if (detailResult.status === 'fulfilled' && detailResult.value) {
+            cacheManager.set('postDetail', postCacheKey, detailResult.value);
+            detailData = detailResult.value;
+          } else if (detailResult.status === 'rejected') {
+            detailError = detailResult.reason;
+            console.error('[PostDetail] Failed to fetch detail:', detailError?.message || detailError);
+          }
+
+          if (repliesResult.status === 'fulfilled' && repliesResult.value && (repliesResult.value as {replies: any[], totalItems: number}).totalItems !== -1) {
+            // ✅ 修复：检查 totalItems !== -1 来判断是否成功
+            cacheManager.set('topicReplies', repliesCacheKey, repliesResult.value);
+            repliesData = repliesResult.value;
+          } else if (repliesResult.status === 'rejected') {
+            console.error('[PostDetail] Failed to fetch replies:', repliesResult.reason?.message || repliesResult.reason);
+          }
+
+          if (!detailData && oldDetailData) {
+            detailData = oldDetailData;
+          }
+          if (!repliesData && oldRepliesData) {
+            repliesData = oldRepliesData;
+          }
+          if (!detailData && detailError) {
+            setLoadError(getPostDetailLoadErrorMessage(detailError));
+          } else if (!detailData && detailResult.status === 'fulfilled' && detailResult.value === null) {
+            setLoadError('帖子不存在或已被删除');
           }
         } else {
           console.log('[PostDetail] Cache hit, using cached data');
         }
 
         if (detailData) {
+          setLoadError(null);
           setPost(detailData as any);
           
           // 保存到浏览历史
@@ -506,6 +530,9 @@ const PostDetailScreen: React.FC = () => {
       }
     } catch (error) {
       console.error('Load post detail error:', error);
+      if (pageNum === 1 && !post) {
+        setLoadError(getPostDetailLoadErrorMessage(error));
+      }
     } finally {
       if (pageNum === 1) {
         setLoading(false);
@@ -1770,7 +1797,18 @@ const PostDetailScreen: React.FC = () => {
     return (
     <SafeAreaView edges={['bottom']} style={[styles.container, {backgroundColor: theme.background}]}>
         <View style={styles.emptyContainer}>
-          <Text style={[styles.emptyText, {color: theme.secondaryText}]}>帖子不存在</Text>
+          <Text style={[styles.emptyText, {color: theme.secondaryText}]}>
+            {loadError || '帖子不存在'}
+          </Text>
+          {loadError ? (
+            <TouchableOpacity
+              style={[styles.emptyRetryButton, {backgroundColor: theme.primary}]}
+              onPress={() => loadPostDetail(1, true)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.emptyRetryText}>重试</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       </SafeAreaView>
     );
@@ -2618,10 +2656,23 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    paddingHorizontal: SPACING.lg,
   },
   emptyText: {
     fontSize: 14,
     color: '#999',
+    textAlign: 'center',
+  },
+  emptyRetryButton: {
+    marginTop: SPACING.md,
+    paddingHorizontal: SPACING.xl,
+    paddingVertical: SPACING.sm,
+    borderRadius: BORDER_RADIUS.md,
+  },
+  emptyRetryText: {
+    fontSize: 14,
+    color: '#fff',
+    fontWeight: '600',
   },
   footerContainer: {
     paddingVertical: 20,

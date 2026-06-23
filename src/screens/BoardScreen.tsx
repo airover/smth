@@ -1182,6 +1182,7 @@ const BoardScreen: React.FC = () => {
 
 
   const loadPosts = async (boardId: string, pageNum: number, orderByFlushTime: number = 0, forceRefresh: boolean = false) => {
+    let hasCachedFallback = false;
     try {
       let shouldUseCache = false;
       const cacheKey = `${boardId}_${orderByFlushTime}`;
@@ -1200,6 +1201,7 @@ const BoardScreen: React.FC = () => {
                 setPage(1);
                 setHasMore(true);
                 setPostsDataLoaded(true);
+                hasCachedFallback = true;
               
                 if (age < LIST_CACHE_FRESH_AGE) {
                   return;
@@ -1257,8 +1259,11 @@ const BoardScreen: React.FC = () => {
       console.error('版面ID:', boardId, '页码:', pageNum);
       // 接口失败时不设置postsDataLoaded
       // 如果是第一页且没有缓存数据，显示错误提示
-      if (pageNum === 1 && posts.length === 0) {
-        Alert.alert('加载失败', error.message || '无法加载帖子列表，请稍后重试');
+      if (pageNum === 1 && !hasCachedFallback && posts.length === 0) {
+        const message = error.message === 'LOGIN_EXPIRED'
+          ? '登录态已过期，请重新登录后重试'
+          : (error.message || '无法加载帖子列表，请稍后重试');
+        Alert.alert('加载失败', message);
       }
     } finally {
       setLoading(false);

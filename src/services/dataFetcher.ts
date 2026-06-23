@@ -45,6 +45,23 @@ const runOnce = async <T,>(key: string, request: () => Promise<T>): Promise<T> =
   return promise;
 };
 
+const isLoginExpiredApiResponse = (json: any): boolean => {
+  const message = String(json?.message || json?.msg || json?.error || '');
+  return (
+    json?.code === 401 ||
+    json?.code === 403 ||
+    json?.kbsCode === 7 ||
+    message.includes('登录') ||
+    message.includes('未登录') ||
+    message.includes('过期')
+  );
+};
+
+const isPostMissingApiResponse = (json: any): boolean => {
+  const message = String(json?.message || json?.msg || json?.error || '');
+  return message.includes('不存在') || message.includes('已删除');
+};
+
 const invalidateFavoriteBoardsCache = async (): Promise<void> => {
   clearCache('favoriteBoards');
   try {
@@ -1221,8 +1238,10 @@ export const getSubBoards = async (sectionId: string): Promise<any[]> => {
   }
 };
 
-// 获取版面帖子列表
-// 使用新的 JSON API 获取
+/**
+ * 获取版面帖子列表。
+ * 失败时会抛错，登录态失效时抛 LOGIN_EXPIRED；空版面返回空数组。
+ */
 export const getBoardPosts = async (
   boardId: string, // 现在传入的是版面 hash ID
   page: number = 1,
@@ -1244,13 +1263,22 @@ export const getBoardPosts = async (
     });
 
     const json = await response.json();
-    console.log('getBoardPosts API response code:', json.code);
+    console.log('getBoardPosts API response code:', json.code, 'kbsCode:', json.kbsCode, 'message:', json.message);
 
-    if (json.code === 1 && json.data) {
-      const topics = json.data.topics || [];
-      const tops = json.data.tops || [];
+    if (json.code !== 1) {
+      console.error('getBoardPosts API returned failure, code:', json.code, 'kbsCode:', json.kbsCode, 'message:', json.message);
+      if (isLoginExpiredApiResponse(json)) {
+        throw new Error('LOGIN_EXPIRED');
+      }
+      throw new Error(json.message || json.msg || `GET_BOARD_POSTS_FAILED_${json.code || 'UNKNOWN'}`);
+    }
+
+    const data = json.data || {};
+    {
+      const topics = data.topics || [];
+      const tops = data.tops || [];
       // API返回的是total表示总页数，不是totalPages
-      const totalPages = json.data.pager?.total || 1;
+      const totalPages = data.pager?.total || 1;
       const boardListMSiteIds = await resolveMSitePostIdsForBoardList(topics, page);
       
       // wapPosition: 页内位置（仅普通帖子有效，置顶帖为-1）
@@ -1345,16 +1373,24 @@ export const getBoardPosts = async (
         totalPages: totalPages
       };
     }
-    
-    return { topics: [], tops: [], totalPages: 0 };
-  } catch (error) {
+  } catch (error: any) {
     console.error('Get board posts error:', error);
-    return { topics: [], tops: [], totalPages: 0 };
+    if (
+      error.message === 'LOGIN_EXPIRED' ||
+      error.message === 'NOT_LOGGED_IN' ||
+      error.message?.includes('HTTP 401') ||
+      error.message?.includes('HTTP 403')
+    ) {
+      throw new Error('LOGIN_EXPIRED');
+    }
+    throw error;
   }
 };
 
-// 获取帖子详情
-// 使用新的 JSON API 获取主题和首贴
+/**
+ * 获取帖子详情。
+ * 失败时会抛错，登录态失效时抛 LOGIN_EXPIRED；帖子确实不存在时返回 null。
+ */
 export const getPostDetail = async (
   _board: string,
   topicId: string, // 现在传入的是 topicId
@@ -1379,7 +1415,18 @@ export const getPostDetail = async (
     const json = await response.json();
     console.log('getPostDetail API response code:', json.code);
 
-    if (json.code === 1 && json.data?.topic) {
+    if (json.code !== 1) {
+      console.error('getPostDetail API returned failure, code:', json.code, 'message:', json.message);
+      if (isLoginExpiredApiResponse(json)) {
+        throw new Error('LOGIN_EXPIRED');
+      }
+      if (isPostMissingApiResponse(json)) {
+        return null;
+      }
+      throw new Error(json.message || json.msg || 'GET_POST_DETAIL_FAILED');
+    }
+
+    if (json.data?.topic) {
       const topic = json.data.topic;
       const article = topic.article;
       
@@ -1553,15 +1600,28 @@ export const getPostDetail = async (
       console.log('getPostDetail success:', post.title, 'by', post.author);
       return post;
     }
-    return null;
-  } catch (error) {
+
+    console.error('getPostDetail API missing topic payload:', json);
+    throw new Error('GET_POST_DETAIL_EMPTY');
+  } catch (error: any) {
     console.error('Get post detail error:', error);
-    return null;
+    if (
+      error.message === 'LOGIN_EXPIRED' ||
+      error.message === 'NOT_LOGGED_IN' ||
+      error.message?.includes('HTTP 401') ||
+      error.message?.includes('HTTP 403')
+    ) {
+      throw new Error('LOGIN_EXPIRED');
+    }
+    throw error;
   }
 };
 
-// 获取主题的回复列表（分页）
-// API: https://wap.newsmth.net/wap/api/topic/loadArticlesByMode/:topicId/:mode/:page/:pageSize
+/**
+ * 获取主题回复列表（分页）。
+ * 失败时会抛错，登录态失效时抛 LOGIN_EXPIRED；无回复返回空数组。
+ * API: https://wap.newsmth.net/wap/api/topic/loadArticlesByMode/:topicId/:mode/:page/:pageSize
+ */
 export const getTopicReplies = async (
   topicId: string,
   page: number = 1,
@@ -1585,9 +1645,17 @@ export const getTopicReplies = async (
     const json = await response.json();
     console.log('getTopicReplies API response code:', json.code);
 
-    if (json.code === 1 && json.data?.articles) {
+    if (json.code !== 1) {
+      console.error('getTopicReplies API returned failure, code:', json.code, 'message:', json.message);
+      if (isLoginExpiredApiResponse(json)) {
+        throw new Error('LOGIN_EXPIRED');
+      }
+      throw new Error(json.message || json.msg || 'GET_TOPIC_REPLIES_FAILED');
+    }
 
-      const articles = json.data.articles;
+    {
+      const data = json.data || {};
+      const articles = data.articles || [];
       const replies: any[] = articles.map((article: any) => {
         // 提取头像，优先使用 k3sUrl/ks3Url（云存储）
         let avatar = article.account?.k3sUrl || article.account?.ks3Url ||
@@ -1651,13 +1719,20 @@ export const getTopicReplies = async (
 
       return {
         replies,
-        totalItems: json.data.pager?.totalItems || 0
+        totalItems: data.pager?.totalItems || 0
       };
     }
-    return { replies: [], totalItems: -1 };
-  } catch (error) {
+  } catch (error: any) {
     console.error('Get topic replies error:', error);
-    return { replies: [], totalItems: -1 };
+    if (
+      error.message === 'LOGIN_EXPIRED' ||
+      error.message === 'NOT_LOGGED_IN' ||
+      error.message?.includes('HTTP 401') ||
+      error.message?.includes('HTTP 403')
+    ) {
+      throw new Error('LOGIN_EXPIRED');
+    }
+    throw error;
   }
 };
 

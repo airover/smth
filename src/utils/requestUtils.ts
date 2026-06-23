@@ -15,10 +15,45 @@ export const SEARCH_TIMEOUT = 20000; // 搜索接口20秒
 export const DEFAULT_RETRY_COUNT = 1; // 默认重试1次
 export const RETRY_DELAY = 1000; // 重试延迟1秒
 
+class FetchHttpError extends Error {
+  status: number;
+  statusText: string;
+  retryAfterMs?: number;
+
+  constructor(response: Response) {
+    super(`HTTP ${response.status}: ${response.statusText}`);
+    this.name = 'FetchHttpError';
+    this.status = response.status;
+    this.statusText = response.statusText;
+
+    const retryAfter = response.headers.get('Retry-After');
+    if (retryAfter) {
+      const seconds = Number(retryAfter);
+      if (!Number.isNaN(seconds)) {
+        this.retryAfterMs = seconds * 1000;
+      } else {
+        const timestamp = Date.parse(retryAfter);
+        if (!Number.isNaN(timestamp)) {
+          this.retryAfterMs = Math.max(0, timestamp - Date.now());
+        }
+      }
+    }
+  }
+}
+
 /**
  * 延迟函数
  */
 const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+
+const getRetryDelay = (attempt: number, baseDelay: number, retryAfterMs?: number): number => {
+  if (retryAfterMs != null) {
+    return Math.min(retryAfterMs, 5000);
+  }
+  const exponentialDelay = baseDelay * Math.pow(2, attempt - 1);
+  const jitter = Math.floor(Math.random() * 250);
+  return Math.min(exponentialDelay + jitter, 5000);
+};
 
 /**
  * 带超时和重试的 fetch 函数
@@ -33,21 +68,25 @@ export const fetchWithRetry = async (
   url: string,
   options: RequestInit = {},
   timeout: number = DEFAULT_TIMEOUT,
-  retryCount: number = DEFAULT_RETRY_COUNT,
+  retryCount?: number,
   retryDelay: number = RETRY_DELAY
 ): Promise<Response> => {
   let lastError: Error | null = null;
+  const method = (options.method || 'GET').toString().toUpperCase();
+  const isIdempotentRequest = method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
+  const effectiveRetryCount = retryCount ?? (isIdempotentRequest ? 2 : DEFAULT_RETRY_COUNT);
   
   // 尝试请求（初次 + 重试）
-  for (let attempt = 0; attempt <= retryCount; attempt++) {
+  for (let attempt = 0; attempt <= effectiveRetryCount; attempt++) {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeout);
-      
       const isRetry = attempt > 0;
       if (isRetry) {
-        await delay(retryDelay);
+        await delay(getRetryDelay(attempt, retryDelay, (lastError as FetchHttpError | null)?.retryAfterMs));
       }
+
+      const controller = new AbortController();
+      timeoutId = setTimeout(() => controller.abort(), timeout);
       
       const response = await fetch(url, {
         ...options,
@@ -58,7 +97,7 @@ export const fetchWithRetry = async (
       
       // 检查 HTTP 状态码
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        throw new FetchHttpError(response);
       }
       
       return response;
@@ -70,16 +109,17 @@ export const fetchWithRetry = async (
       const isTimeout = error.name === 'AbortError';
       const isNetworkError = error.message.includes('Network') || 
                              error.message.includes('Failed to fetch');
-      const isServerError = error.message.includes('HTTP 5');
+      const isRetryableHttpError = error instanceof FetchHttpError &&
+                                   (error.status === 408 || error.status === 429 || error.status >= 500);
       
       // 可重试的错误类型
-      const shouldRetry = (isTimeout || isNetworkError || isServerError) && 
-                          attempt < retryCount;
+      const shouldRetry = (isTimeout || isNetworkError || isRetryableHttpError) &&
+                          attempt < effectiveRetryCount;
       
       if (isTimeout) {
-        console.error(`⏱️ 请求超时 (尝试 ${attempt + 1}/${retryCount + 1}):`, url);
+        console.error(`⏱️ 请求超时 (尝试 ${attempt + 1}/${effectiveRetryCount + 1}):`, url);
       } else {
-        console.error(`❌ 请求失败 (尝试 ${attempt + 1}/${retryCount + 1}):`, url, error.message);
+        console.error(`❌ 请求失败 (尝试 ${attempt + 1}/${effectiveRetryCount + 1}):`, url, error.message);
       }
       
       // 如果不应该重试，直接抛出错误
@@ -93,11 +133,15 @@ export const fetchWithRetry = async (
           throw new Error(`请求失败: ${error.message}`);
         }
       }
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
     }
   }
   
   // 所有重试都失败了
-  throw new Error(`请求失败（已重试${retryCount}次）: ${lastError?.message || '未知错误'}`);
+  throw new Error(`请求失败（已重试${effectiveRetryCount}次）: ${lastError?.message || '未知错误'}`);
 };
 
 /**
