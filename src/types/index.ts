@@ -105,9 +105,9 @@ export interface Reply {
   levelTitle?: string;
   content: string;
   postTime: string;
-  floor?: number;
-  floorNo?: number;
-  topicOrder?: number;
+  topicOrder?: number; // 帖子回复树的先序遍历序号，用于排序
+  replyId?: string; // 所回复的文章 id（父节点），用于按引用树排序
+  displayFloor?: number; // 客户端按引用树+时间排序后生成的展示楼层号
   attachments?: Attachment[];
 }
 

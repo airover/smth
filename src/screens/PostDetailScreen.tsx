@@ -98,31 +98,80 @@ const getReplyTime = (reply: Reply): number => {
   return Number.isFinite(time) ? time : 0;
 };
 
-const getReplyFloorNo = (reply: Reply): number | null => {
-  const floorNo = Number(reply.floorNo);
-  return Number.isFinite(floorNo) ? floorNo : null;
+const getTopicOrder = (reply: Reply): number | null => {
+  const order = Number(reply.topicOrder);
+  return Number.isFinite(order) ? order : null;
 };
 
-const compareRepliesByServerOrder = (a: Reply, b: Reply): number => {
-  const floorA = getReplyFloorNo(a);
-  const floorB = getReplyFloorNo(b);
-
-  if (floorA !== null && floorB !== null && floorA !== floorB) {
-    return floorA - floorB;
-  }
-  if (floorA !== null && floorB === null) {
-    return -1;
-  }
-  if (floorA === null && floorB !== null) {
-    return 1;
-  }
-
+// 基准顺序：发帖时间(postTime)升序；同一时刻用 topicOrder 稳定兜底。
+const compareByPostTime = (a: Reply, b: Reply): number => {
   const timeDiff = getReplyTime(a) - getReplyTime(b);
   if (timeDiff !== 0) {
     return timeDiff;
   }
-
+  const orderA = getTopicOrder(a);
+  const orderB = getTopicOrder(b);
+  if (orderA !== null && orderB !== null) {
+    return orderA - orderB;
+  }
   return 0;
+};
+
+// 按「引用树 + 时间」排序：以 postTime 升序为基准，但用 replyId(父节点指针)约束，
+// 保证任何回复都排在它所回复的对象之后 —— 即使该回复的 postTime 被客户端写坏（偏早）。
+// 做法：拓扑排序，每次从「父节点已排定 / 无父节点」的候选里取 postTime 最小的。
+const orderRepliesByThread = (replies: Reply[]): Reply[] => {
+  const byId = new Map<string, Reply>();
+  replies.forEach(r => byId.set(String(r.id), r));
+
+  const childrenOf = new Map<string, Reply[]>();
+  const roots: Reply[] = [];
+  replies.forEach(r => {
+    const parentId = r.replyId != null ? String(r.replyId) : null;
+    if (parentId && parentId !== String(r.id) && byId.has(parentId)) {
+      const list = childrenOf.get(parentId) || [];
+      list.push(r);
+      childrenOf.set(parentId, list);
+    } else {
+      roots.push(r);
+    }
+  });
+
+  // 保持候选列表按 postTime 升序，取队首即为当前可排定的最早回复。
+  const insertSorted = (list: Reply[], reply: Reply) => {
+    let lo = 0;
+    let hi = list.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (compareByPostTime(list[mid], reply) <= 0) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    list.splice(lo, 0, reply);
+  };
+
+  const available = [...roots].sort(compareByPostTime);
+  const result: Reply[] = [];
+  const placed = new Set<string>();
+  while (available.length > 0) {
+    const node = available.shift() as Reply;
+    const id = String(node.id);
+    if (placed.has(id)) {
+      continue;
+    }
+    placed.add(id);
+    result.push(node);
+    (childrenOf.get(id) || []).forEach(child => insertSorted(available, child));
+  }
+
+  // 兜底：若存在环/异常导致漏排，按时间补在末尾。
+  if (result.length < replies.length) {
+    const missing = replies.filter(r => !placed.has(String(r.id))).sort(compareByPostTime);
+    result.push(...missing);
+  }
+  return result;
 };
 
 type RepliesPageData = {
@@ -134,7 +183,8 @@ type RepliesPageData = {
   start?: number;
 };
 
-const getRepliesMode = (order: 'asc' | 'desc'): number => order === 'desc' ? 2 : 1;
+// 正序按 mode 1(时间升序，从首楼开始）、倒序按 mode 2(从最新开始)从服务端拉取。
+const getRepliesMode = (order: 'asc' | 'desc'): number => (order === 'desc' ? 2 : 1);
 
 const hasMoreReplies = (data: RepliesPageData): boolean => {
   if (data.totalPages != null && data.currentPage != null) {
@@ -169,6 +219,7 @@ const PostDetailScreen: React.FC = () => {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
+  const [repliesTotal, setRepliesTotal] = useState(0); // 服务端返回的回复总数(pager.totalItems)，用于倒序绝对楼号
   const [likesExpanded, setLikesExpanded] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false); // 下拉刷新状态
@@ -473,6 +524,7 @@ const PostDetailScreen: React.FC = () => {
             setReplies(filteredReplies);
             setPage(1);
             setHasMore(hasMoreReplies(repliesPage));
+            setRepliesTotal(repliesPage.totalItems || 0);
           }
         }
         
@@ -542,6 +594,7 @@ const PostDetailScreen: React.FC = () => {
           setReplies(filteredReplies);
           setPage(1);
           setHasMore(hasMoreReplies(repliesPage));
+          setRepliesTotal(repliesPage.totalItems || 0);
         }
       } else {
         // 后续页：检查缓存并获取回复列表
@@ -561,6 +614,7 @@ const PostDetailScreen: React.FC = () => {
             });
             setPage(pageNum);
             setHasMore(hasMoreReplies(repliesPage));
+            setRepliesTotal(repliesPage.totalItems || 0);
           }
         }
         const oldRepliesData = repliesData;
@@ -596,6 +650,7 @@ const PostDetailScreen: React.FC = () => {
           });
           setPage(pageNum);
           setHasMore(hasMoreReplies(repliesPage));
+          setRepliesTotal(repliesPage.totalItems || 0);
         } else {
           setHasMore(false);
         }
@@ -1338,8 +1393,11 @@ const PostDetailScreen: React.FC = () => {
   };
 
   const toggleSortOrder = () => {
+    // 正序按 mode1(从首楼)、倒序按 mode2(从最新)向服务端拉取，
+    // 因此切换时需按新顺序重新拉第一页。
     const nextOrder = sortOrder === 'asc' ? 'desc' : 'asc';
     setSortOrder(nextOrder);
+    setReplies([]);
     setPage(1);
     setHasMore(true);
     loadPostDetail(1, false, nextOrder);
@@ -1750,13 +1808,21 @@ const PostDetailScreen: React.FC = () => {
     );
   };
 
-  // 根据排序顺序处理回复列表
+  // 按「引用树 + 时间」排定顺序（引用者恒在被引用者之后，且不受坏时间戳影响）。
+  // 正序从首楼加载、offset=0，楼号即绝对排名；倒序从最新加载、已加载的是全帖末尾片段，
+  // 用「可见回复总数(repliesTotal-1，减去主楼) - 已加载数」作为偏移，得到稳定的绝对楼号
+  // （上拉加载更旧回复时 offset 减小、排名增大，已显示楼号保持不变、不跳号）。
   const sortedReplies = useMemo(() => {
-    return [...replies].sort((a, b) => sortOrder === 'desc'
-      ? compareRepliesByServerOrder(b, a)
-      : compareRepliesByServerOrder(a, b)
-    );
-  }, [replies, sortOrder]);
+    const ordered = orderRepliesByThread(replies);
+    const offset = sortOrder === 'desc'
+      ? Math.max(0, (repliesTotal - 1) - ordered.length)
+      : 0;
+    const withFloor = ordered.map((reply, index) => ({
+      ...reply,
+      displayFloor: offset + index + 2,
+    }));
+    return sortOrder === 'desc' ? withFloor.reverse() : withFloor;
+  }, [replies, sortOrder, repliesTotal]);
 
   const renderReply = ({item}: {item: Reply}) => {
     const isAuthor = post && item.author === post.author;
@@ -1814,8 +1880,8 @@ const PostDetailScreen: React.FC = () => {
               </View>
           </View>
         </View>
-          {getReplyFloorNo(item) && (
-            <Text style={[styles.floor, {color: theme.secondaryText}]}>#{getReplyFloorNo(item)}</Text>
+          {item.displayFloor != null && (
+            <Text style={[styles.floor, {color: theme.secondaryText}]}>#{item.displayFloor}</Text>
           )}
       </View>
       {item.signature && (
