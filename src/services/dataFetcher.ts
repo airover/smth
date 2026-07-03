@@ -1661,12 +1661,7 @@ export const getTopicReplies = async (
       const resolvedPageSize = pager.pageSize || pageSize;
       const start = pager.start ?? ((currentPage - 1) * resolvedPageSize);
       const totalItems = pager.totalItems || 0;
-      const replies: any[] = articles.map((article: any, index: number) => {
-        const absoluteOffset = start + index;
-        const floorNo = mode === 2
-          ? (totalItems > 0 ? Math.max(1, totalItems - absoluteOffset) : undefined)
-          : absoluteOffset + 1;
-
+      const replies: any[] = articles.map((article: any) => {
         // 提取头像，优先使用 k3sUrl/ks3Url（云存储）
         let avatar = article.account?.k3sUrl || article.account?.ks3Url ||
                      article.user?.k3sUrl || article.user?.ks3Url ||
@@ -1700,8 +1695,8 @@ export const getTopicReplies = async (
           city: article.city || '',
           content: contentText,
           postTime: new Date(article.postTime || Date.now()).toISOString(),
-          floorNo,
           topicOrder: article.topicOrder,
+          replyId: article.replyId, // 所回复的文章 id（父节点），用于按引用树排序
           status: article.status, // 回复状态，0为正常
           attachments: (article.attachments || [])
             .filter((att: any) => att != null) // 过滤掉 null 和 undefined
