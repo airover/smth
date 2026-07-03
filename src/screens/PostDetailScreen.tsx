@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useRef} from 'react';
+import React, {useState, useEffect, useMemo, useRef} from 'react';
 import {
   View,
   Text,
@@ -92,6 +92,69 @@ const LIKE_CAPTCHA_ID = '3a6990c763f90e33fa62a97faad3a05f';
 if (Platform.OS === 'android') {
   UIManager.setLayoutAnimationEnabledExperimental?.(true);
 }
+
+const getReplyTime = (reply: Reply): number => {
+  const time = new Date(reply.postTime).getTime();
+  return Number.isFinite(time) ? time : 0;
+};
+
+const getReplyFloorNo = (reply: Reply): number | null => {
+  const floorNo = Number(reply.floorNo);
+  return Number.isFinite(floorNo) ? floorNo : null;
+};
+
+const compareRepliesByServerOrder = (a: Reply, b: Reply): number => {
+  const floorA = getReplyFloorNo(a);
+  const floorB = getReplyFloorNo(b);
+
+  if (floorA !== null && floorB !== null && floorA !== floorB) {
+    return floorA - floorB;
+  }
+  if (floorA !== null && floorB === null) {
+    return -1;
+  }
+  if (floorA === null && floorB !== null) {
+    return 1;
+  }
+
+  const timeDiff = getReplyTime(a) - getReplyTime(b);
+  if (timeDiff !== 0) {
+    return timeDiff;
+  }
+
+  return 0;
+};
+
+type RepliesPageData = {
+  replies: any[];
+  totalItems: number;
+  totalPages?: number;
+  currentPage?: number;
+  pageSize?: number;
+  start?: number;
+};
+
+const getRepliesMode = (order: 'asc' | 'desc'): number => order === 'desc' ? 2 : 1;
+
+const hasMoreReplies = (data: RepliesPageData): boolean => {
+  if (data.totalPages != null && data.currentPage != null) {
+    return data.currentPage < data.totalPages;
+  }
+
+  return data.replies.length >= (data.pageSize || 20);
+};
+
+const isVisibleReply = (reply: Reply, mainArticleId?: string | number | null): boolean => {
+  if ((reply as any).status != null && (reply as any).status !== 0) {
+    return false;
+  }
+
+  if (mainArticleId != null && String(reply.id) === String(mainArticleId)) {
+    return false;
+  }
+
+  return true;
+};
 
 const PostDetailScreen: React.FC = () => {
   const route = useRoute();
@@ -358,8 +421,9 @@ const PostDetailScreen: React.FC = () => {
     return null;
   };
 
-  const loadPostDetail = async (pageNum: number, forceRefresh: boolean = false) => {
+  const loadPostDetail = async (pageNum: number, forceRefresh: boolean = false, order: 'asc' | 'desc' = sortOrder) => {
     try {
+      const repliesMode = getRepliesMode(order);
       if (pageNum > 1) {
         setLoadingMore(true);
       }
@@ -368,7 +432,7 @@ const PostDetailScreen: React.FC = () => {
         setLoadError(null);
         // 第一页：检查缓存并获取主题详情和回复列表
         const postCacheKey = `${board}-${postId}`;
-        const repliesCacheKey = `${postId}-1`;
+        const repliesCacheKey = `${postId}-${repliesMode}-1`;
         
         // 尝试从缓存获取数据（下拉刷新时跳过缓存）
         let detailData = forceRefresh ? null : cacheManager.get('postDetail', postCacheKey, POST_DETAIL_CACHE_FRESH_AGE);
@@ -403,10 +467,12 @@ const PostDetailScreen: React.FC = () => {
           }
 
           if (repliesData) {
-            const filteredReplies = (repliesData as {replies: any[], totalItems: number}).replies.filter((r: any) => r.floor !== 1 && (r.status == null || r.status === 0));
+            const mainArticleId = (detailData as any)?.articleId || (post as any)?.articleId;
+            const repliesPage = repliesData as RepliesPageData;
+            const filteredReplies = repliesPage.replies.filter((r: any) => isVisibleReply(r, mainArticleId));
             setReplies(filteredReplies);
             setPage(1);
-            setHasMore((repliesData as {replies: any[], totalItems: number}).replies.length >= 20);
+            setHasMore(hasMoreReplies(repliesPage));
           }
         }
         
@@ -416,7 +482,7 @@ const PostDetailScreen: React.FC = () => {
 
           const [detailResult, repliesResult] = await Promise.all([
             settleRequest(detailData && !shouldRefreshDetail && !forceRefresh ? Promise.resolve(detailData) : getPostDetail(board, postId, 1, mSitePostId)),
-            settleRequest(repliesData && !shouldRefreshReplies && !forceRefresh ? Promise.resolve(repliesData) : getTopicReplies(postId, 1))
+            settleRequest(repliesData && !shouldRefreshReplies && !forceRefresh ? Promise.resolve(repliesData) : getTopicReplies(postId, 1, 20, repliesMode))
           ]);
 
           let detailError: any = null;
@@ -430,7 +496,7 @@ const PostDetailScreen: React.FC = () => {
             console.error('[PostDetail] Failed to fetch detail:', detailError?.message || detailError);
           }
 
-          if (repliesResult.status === 'fulfilled' && repliesResult.value && (repliesResult.value as {replies: any[], totalItems: number}).totalItems !== -1) {
+          if (repliesResult.status === 'fulfilled' && repliesResult.value && (repliesResult.value as RepliesPageData).totalItems !== -1) {
             // ✅ 修复：检查 totalItems !== -1 来判断是否成功
             cacheManager.set('topicReplies', repliesCacheKey, repliesResult.value);
             repliesData = repliesResult.value;
@@ -470,27 +536,31 @@ const PostDetailScreen: React.FC = () => {
 
         if (repliesData) {
           // 过滤掉第一层（主贴）和status非0的回复（status=0为正常，status=1为已删除等异常状态，status不存在时视为正常）
-          const filteredReplies = (repliesData as {replies: any[], totalItems: number}).replies.filter((r: any) => r.floor !== 1 && (r.status == null || r.status === 0));
+          const mainArticleId = (detailData as any)?.articleId || (post as any)?.articleId;
+          const repliesPage = repliesData as RepliesPageData;
+          const filteredReplies = repliesPage.replies.filter((r: any) => isVisibleReply(r, mainArticleId));
           setReplies(filteredReplies);
           setPage(1);
-          setHasMore((repliesData as {replies: any[], totalItems: number}).replies.length >= 20); // 假设 pageSize 为 20
+          setHasMore(hasMoreReplies(repliesPage));
         }
       } else {
         // 后续页：检查缓存并获取回复列表
-        const repliesCacheKey = `${postId}-${pageNum}`;
+        const repliesCacheKey = `${postId}-${repliesMode}-${pageNum}`;
         let repliesData = cacheManager.get('topicReplies', repliesCacheKey, POST_DETAIL_CACHE_FRESH_AGE);
         const staleRepliesCache = repliesData ? null : getStaleCache<any>('topicReplies', repliesCacheKey);
         const shouldRefreshReplies = !repliesData && staleRepliesCache;
         if (staleRepliesCache) {
           repliesData = staleRepliesCache.data;
-          if ((repliesData as {replies: any[], totalItems: number}).replies.length > 0) {
+          const repliesPage = repliesData as RepliesPageData;
+          if (repliesPage.replies.length > 0) {
             setReplies(prev => {
               const existingIds = new Set(prev.map(r => r.id));
-              const newReplies = (repliesData as {replies: any[], totalItems: number}).replies.filter((r: any) => !existingIds.has(r.id) && (r.status == null || r.status === 0));
+              const mainArticleId = post?.articleId || post?.id;
+              const newReplies = repliesPage.replies.filter((r: any) => !existingIds.has(r.id) && isVisibleReply(r, mainArticleId));
               return [...prev, ...newReplies];
             });
             setPage(pageNum);
-            setHasMore((repliesData as {replies: any[], totalItems: number}).replies.length >= 20);
+            setHasMore(hasMoreReplies(repliesPage));
           }
         }
         const oldRepliesData = repliesData;
@@ -498,9 +568,9 @@ const PostDetailScreen: React.FC = () => {
         if (!repliesData || shouldRefreshReplies) {
           console.log(`[PostDetail] ${shouldRefreshReplies ? 'Stale cache' : 'Cache miss'} for page ${pageNum}, fetching from API`);
           try {
-            repliesData = await getTopicReplies(postId, pageNum);
+            repliesData = await getTopicReplies(postId, pageNum, 20, repliesMode);
             // ✅ 修复：只有成功获取且数据有效时才缓存（totalItems !== -1）
-            if (repliesData && (repliesData as {replies: any[], totalItems: number}).totalItems !== -1) {
+            if (repliesData && (repliesData as RepliesPageData).totalItems !== -1) {
               cacheManager.set('topicReplies', repliesCacheKey, repliesData);
             } else {
               // API返回失败，不更新数据
@@ -515,15 +585,17 @@ const PostDetailScreen: React.FC = () => {
           console.log(`[PostDetail] Cache hit for page ${pageNum}, using cached data`);
         }
         
-        if (repliesData && (repliesData as {replies: any[], totalItems: number}).replies.length > 0) {
+        if (repliesData && (repliesData as RepliesPageData).replies.length > 0) {
+          const repliesPage = repliesData as RepliesPageData;
           // 使用Set来去重，确保不会有重复的id
           setReplies(prev => {
             const existingIds = new Set(prev.map(r => r.id));
-            const newReplies = (repliesData as {replies: any[], totalItems: number}).replies.filter((r: any) => !existingIds.has(r.id) && (r.status == null || r.status === 0));
+            const mainArticleId = post?.articleId || post?.id;
+            const newReplies = repliesPage.replies.filter((r: any) => !existingIds.has(r.id) && isVisibleReply(r, mainArticleId));
             return [...prev, ...newReplies];
           });
           setPage(pageNum);
-          setHasMore((repliesData as {replies: any[], totalItems: number}).replies.length >= 20);
+          setHasMore(hasMoreReplies(repliesPage));
         } else {
           setHasMore(false);
         }
@@ -1266,7 +1338,11 @@ const PostDetailScreen: React.FC = () => {
   };
 
   const toggleSortOrder = () => {
-    setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+    const nextOrder = sortOrder === 'asc' ? 'desc' : 'asc';
+    setSortOrder(nextOrder);
+    setPage(1);
+    setHasMore(true);
+    loadPostDetail(1, false, nextOrder);
   };
 
   const isImage = (attachment: any) => {
@@ -1675,12 +1751,12 @@ const PostDetailScreen: React.FC = () => {
   };
 
   // 根据排序顺序处理回复列表
-  const getSortedReplies = () => {
-    if (sortOrder === 'desc') {
-      return [...replies].reverse();
-    }
-    return replies;
-  };
+  const sortedReplies = useMemo(() => {
+    return [...replies].sort((a, b) => sortOrder === 'desc'
+      ? compareRepliesByServerOrder(b, a)
+      : compareRepliesByServerOrder(a, b)
+    );
+  }, [replies, sortOrder]);
 
   const renderReply = ({item}: {item: Reply}) => {
     const isAuthor = post && item.author === post.author;
@@ -1738,8 +1814,8 @@ const PostDetailScreen: React.FC = () => {
               </View>
           </View>
         </View>
-          {item.floor && (
-            <Text style={[styles.floor, {color: theme.secondaryText}]}>#{item.floor}</Text>
+          {getReplyFloorNo(item) && (
+            <Text style={[styles.floor, {color: theme.secondaryText}]}>#{getReplyFloorNo(item)}</Text>
           )}
       </View>
       {item.signature && (
@@ -1835,7 +1911,7 @@ const PostDetailScreen: React.FC = () => {
   return (
     <SafeAreaView edges={['bottom']} style={[styles.container, {backgroundColor: theme.background}]}>
       <FlatList
-        data={getSortedReplies()}
+        data={sortedReplies}
         renderItem={renderReply}
         keyExtractor={(item, index) => `${item.id}-${index}`}
         refreshing={refreshing}
