@@ -106,6 +106,8 @@ export interface Reply {
   content: string;
   postTime: string;
   floor?: number;
+  floorNo?: number;
+  topicOrder?: number;
   attachments?: Attachment[];
 }
 
