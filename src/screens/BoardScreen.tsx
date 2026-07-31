@@ -154,6 +154,9 @@ const BoardScreen: React.FC = () => {
   // 基于主题的动态样式 — 确保真机上主题切换时样式完全重建
   const themedStyles = useMemo(() => ({
     searchBarContainer: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: SPACING.sm,
       backgroundColor: 'transparent',
       paddingHorizontal: SPACING.lg,
       paddingVertical: SPACING.sm,
@@ -161,6 +164,9 @@ const BoardScreen: React.FC = () => {
       borderBottomColor: 'transparent',
     } as const,
     searchInput: {
+      flex: 1,
+      flexBasis: 0,
+      minWidth: 0,
       height: 36,
       backgroundColor: theme.placeholderBackground,
       borderRadius: BORDER_RADIUS.round,
@@ -232,6 +238,7 @@ const BoardScreen: React.FC = () => {
   const [postsDataLoaded, setPostsDataLoaded] = useState(false);
   const [channelPostsDataLoaded, setChannelPostsDataLoaded] = useState(false);
   const [sortByReplyTime, setSortByReplyTime] = useState(settings.defaultBoardSort === 'reply'); // 从全局配置初始化
+  const [postMode, setPostMode] = useState<'all' | 'essence'>('all');
   const [showFabMenu, setShowFabMenu] = useState(false); // 浮动按钮菜单显示状态
   const [sortRefreshing, setSortRefreshing] = useState(false); // 排序刷新状态
   const [isBoardFavorited, setIsBoardFavorited] = useState(false); // 当前版面是否已收藏
@@ -244,6 +251,7 @@ const BoardScreen: React.FC = () => {
   const selectedChannelRef = useRef(selectedChannel);
   const channelsRef = useRef(channels);
   const channelsListRef = useRef<FlatList>(null);
+  const loadingMoreRef = useRef(false);
 
   useEffect(() => {
     selectedBoardRef.current = selectedBoard;
@@ -489,8 +497,9 @@ const BoardScreen: React.FC = () => {
       // 重置排序为默认配置
       const defaultSort = settings.defaultBoardSort === 'reply';
       setSortByReplyTime(defaultSort);
+      setPostMode('all');
       
-      loadPosts(selectedBoard.id, 1, defaultSort ? 1 : 0);
+      loadPosts(selectedBoard.id, 1, defaultSort ? 1 : 0, false, false);
       
       setShowChannels(false); // 选择版面后隐藏频道列表
       // 检查版面是否已收藏
@@ -506,10 +515,35 @@ const BoardScreen: React.FC = () => {
       setPosts([]);
       setSortRefreshing(true); // 使用独立的排序刷新状态
       setPostsDataLoaded(false);
-      loadPosts(selectedBoard.id, 1, sortByReplyTime ? 1 : 0);
+      loadPosts(
+        selectedBoard.id,
+        1,
+        sortByReplyTime ? 1 : 0,
+        false,
+        postMode === 'essence',
+      );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sortByReplyTime]);
+
+  // 精华/全部模式切换时重新加载对应列表
+  useEffect(() => {
+    if (selectedBoard) {
+      setPage(1);
+      setHasMore(true);
+      setPosts([]);
+      setSortRefreshing(true);
+      setPostsDataLoaded(false);
+      loadPosts(
+        selectedBoard.id,
+        1,
+        sortByReplyTime ? 1 : 0,
+        false,
+        postMode === 'essence',
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [postMode]);
 
   // 浮动菜单动画
   useEffect(() => {
@@ -1181,11 +1215,17 @@ const BoardScreen: React.FC = () => {
 
 
 
-  const loadPosts = async (boardId: string, pageNum: number, orderByFlushTime: number = 0, forceRefresh: boolean = false) => {
+  const loadPosts = async (
+    boardId: string,
+    pageNum: number,
+    orderByFlushTime: number = 0,
+    forceRefresh: boolean = false,
+    isEssence: boolean = false,
+  ) => {
     let hasCachedFallback = false;
     try {
       let shouldUseCache = false;
-      const cacheKey = `${boardId}_${orderByFlushTime}`;
+      const cacheKey = `${boardId}_${orderByFlushTime}_${isEssence ? 'essence_v2' : 'all'}`;
 
       if (pageNum === 1 && !forceRefresh) {
         try {
@@ -1215,14 +1255,17 @@ const BoardScreen: React.FC = () => {
         }
       }
 
-      if (pageNum > 1) {
-        setLoadingMore(true);
-      } else if (!sortRefreshing && !shouldUseCache && !forceRefresh) {
+      if (pageNum <= 1 && !sortRefreshing && !shouldUseCache && !forceRefresh) {
         // 只有非排序刷新时才设置loading
         setLoading(true);
       }
       
-      const {topics, tops, totalPages} = await getBoardPosts(boardId, pageNum, orderByFlushTime);
+      const {topics, tops, totalPages} = await getBoardPosts(
+        boardId,
+        pageNum,
+        orderByFlushTime,
+        isEssence,
+      );
       
       if (pageNum === 1) {
         // 第一页时，如果有置顶帖且不是加载更多，则合并
@@ -1269,6 +1312,7 @@ const BoardScreen: React.FC = () => {
       setLoading(false);
       setSortRefreshing(false); // 清除排序刷新状态
       if (pageNum > 1) {
+        loadingMoreRef.current = false;
         setLoadingMore(false);
       }
     }
@@ -1289,10 +1333,13 @@ const BoardScreen: React.FC = () => {
       }
     } else if (selectedBoard) {
       // 版面帖子加载更多
-      if (hasMore && !loadingMore) {
+      if (hasMore && !loadingMoreRef.current) {
+        // Ref 同步上锁，避免 onEndReached 在 state 更新生效前重复触发。
+        loadingMoreRef.current = true;
+        setLoadingMore(true);
         const nextPage = page + 1;
         setPage(nextPage);
-        loadPosts(selectedBoard.id, nextPage, sortByReplyTime ? 1 : 0);
+        loadPosts(selectedBoard.id, nextPage, sortByReplyTime ? 1 : 0, false, postMode === 'essence');
       }
     }
   };
@@ -1312,7 +1359,7 @@ const BoardScreen: React.FC = () => {
       } else if (selectedBoard) {
         setPage(1);
         setHasMore(true);
-        await loadPosts(selectedBoard.id, 1, sortByReplyTime ? 1 : 0, true);
+        await loadPosts(selectedBoard.id, 1, sortByReplyTime ? 1 : 0, true, postMode === 'essence');
       } else {
         await loadChannels();
       }
@@ -1369,15 +1416,49 @@ const BoardScreen: React.FC = () => {
   // 渲染搜索框
   const renderSearchBar = () => {
     return (
-      <View style={themedStyles.searchBarContainer}>
-        <TouchableOpacity
-          style={themedStyles.searchInput}
-          onPress={() => {
-            navigation.navigate('SearchInput');
-          }}
-          activeOpacity={0.7}>
-<View style={{flexDirection: 'row', alignItems: 'center'}}><SearchIcon size={16} color={theme.secondaryText} /><Text style={[themedStyles.searchPlaceholder, {marginLeft: 6}]}>搜索文章/版面/用户</Text></View>
-        </TouchableOpacity>
+      <View style={[styles.postToolbar, themedStyles.searchBarContainer]}>
+        {selectedBoard ? (
+          <>
+            <View style={[styles.postModeSwitch, {backgroundColor: theme.placeholderBackground}]}>
+              <TouchableOpacity
+                style={[
+                  styles.postModeButton,
+                  postMode === 'all' && {backgroundColor: theme.primary},
+                ]}
+                onPress={() => setPostMode('all')}
+                activeOpacity={0.8}>
+                <Text style={[styles.postModeText, {color: postMode === 'all' ? '#fff' : theme.secondaryText}]}>全部</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.postModeButton,
+                  postMode === 'essence' && {backgroundColor: theme.primary},
+                ]}
+                onPress={() => setPostMode('essence')}
+                activeOpacity={0.8}>
+                <Text style={[styles.postModeText, {color: postMode === 'essence' ? '#fff' : theme.secondaryText}]}>精华</Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              style={[styles.searchIconButton, {backgroundColor: theme.placeholderBackground}]}
+              onPress={() => navigation.navigate('SearchInput')}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="搜索文章、版面或用户">
+              <SearchIcon size={18} color={theme.secondaryText} />
+            </TouchableOpacity>
+          </>
+        ) : (
+          <TouchableOpacity
+            style={themedStyles.searchInput}
+            onPress={() => navigation.navigate('SearchInput')}
+            activeOpacity={0.7}>
+            <View style={styles.searchInputContent}>
+              <SearchIcon size={16} color={theme.secondaryText} />
+              <Text style={[themedStyles.searchPlaceholder, styles.searchInputText]}>搜索文章/版面/用户</Text>
+            </View>
+          </TouchableOpacity>
+        )}
       </View>
     );
   };
@@ -2104,6 +2185,48 @@ const styles = StyleSheet.create({
     fontSize: 14,
     // color 由主题动态控制
   },
+  postToolbar: {
+    width: '100%',
+    flexDirection: 'row',
+    flexWrap: 'nowrap',
+    alignItems: 'center',
+  },
+  searchInputContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  searchInputText: {
+    marginLeft: 6,
+  },
+  searchIconButton: {
+    width: 36,
+    height: 36,
+    flexShrink: 0,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  postModeSwitch: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 36,
+    padding: 3,
+    borderRadius: 18,
+  },
+  postModeButton: {
+    flex: 1,
+    minWidth: 50,
+    height: 30,
+    paddingHorizontal: 9,
+    borderRadius: 15,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  postModeText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
   channelsContainer: {
     backgroundColor: 'transparent',
     borderBottomWidth: 1,
@@ -2349,8 +2472,9 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   footerContainer: {
-    paddingVertical: 20,
+    height: 78,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   loadMoreButton: {
     paddingHorizontal: 24,
