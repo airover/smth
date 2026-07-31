@@ -1246,12 +1246,17 @@ export const getBoardPosts = async (
   boardId: string, // 现在传入的是版面 hash ID
   page: number = 1,
   isOrderByFlushTime: number = 0, // 0: 按发布时间排序, 1: 按回复时间排序
+  isEssence: boolean = false,
 ): Promise<{topics: any[], tops: any[], totalPages: number}> => {
   try {
     const cookies = await getCookies();
     const timestamp = Date.now();
-    // API: https://wap.newsmth.net/wap/api/board/topic/list?t=:t&id=:id&isOrderByFlushTime=0&page=:page
-    const url = `${WAP_BASE_URL}/wap/api/board/topic/list?t=${timestamp}&id=${boardId}&isOrderByFlushTime=${isOrderByFlushTime}&page=${page}`;
+    const pageSize = 20;
+    const essenceStart = (page - 1) * pageSize + 1;
+    // 普通帖子按页码请求；精华接口的第二个路径参数是从 1 开始的记录偏移量。
+    const url = isEssence
+      ? `${WAP_BASE_URL}/wap/api/board/load/essence/${boardId}/${essenceStart}/${pageSize}?t=${timestamp}`
+      : `${WAP_BASE_URL}/wap/api/board/topic/list?t=${timestamp}&id=${boardId}&isOrderByFlushTime=${isOrderByFlushTime}&page=${page}`;
     
     console.log('Fetching Board Posts from API:', url);
     
@@ -1275,10 +1280,30 @@ export const getBoardPosts = async (
 
     const data = json.data || {};
     {
-      const topics = data.topics || [];
-      const tops = data.tops || [];
-      // API返回的是total表示总页数，不是totalPages
-      const totalPages = data.pager?.total || 1;
+      // 普通列表返回 topics/article；精华接口返回 articles/articles[0]，先统一成同一结构。
+      const topics = isEssence
+        ? (data.articles || []).map((topic: any) => {
+            const article = topic.articles?.[0] || {};
+            const authorMatch = typeof article.body === 'string'
+              ? article.body.match(/发信人[：:]\s*([a-zA-Z0-9_]+)/i)
+              : null;
+            return {
+              ...topic,
+              article: {
+                ...article,
+                account: article.account || {
+                  name: authorMatch?.[1] || '',
+                  nick: '',
+                },
+              },
+            };
+          })
+        : (data.topics || []);
+      const tops = isEssence ? [] : (data.tops || []);
+      // 普通列表的 total 是总页数；精华接口的 total 固定为请求条数，需按返回数量判断是否有下一页。
+      const totalPages = isEssence
+        ? (topics.length < pageSize ? page : page + 1)
+        : (data.pager?.total || 1);
       const boardListMSiteIds = await resolveMSitePostIdsForBoardList(topics, page);
       
       // wapPosition: 页内位置（仅普通帖子有效，置顶帖为-1）

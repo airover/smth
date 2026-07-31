@@ -241,35 +241,31 @@ const FavoritesScreen: React.FC = () => {
 
   // 渲染Tab切换按钮 - 横向胶囊样式
   const renderTabs = () => (
-    <View style={[styles.tabContainer, {backgroundColor: theme.cardBackground, borderBottomColor: theme.border}]}>
-      <TouchableOpacity
-        style={[
-          styles.tab,
-          {backgroundColor: activeTab === 'topics' ? theme.primary : theme.background},
-        ]}
-        onPress={() => setActiveTab('topics')}
-      >
-        <Text style={[
-          styles.tabText,
-          {color: activeTab === 'topics' ? '#fff' : theme.text},
-        ]}>
-          文章
-        </Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={[
-          styles.tab,
-          {backgroundColor: activeTab === 'boards' ? theme.primary : theme.background},
-        ]}
-        onPress={() => setActiveTab('boards')}
-      >
-        <Text style={[
-          styles.tabText,
-          {color: activeTab === 'boards' ? '#fff' : theme.text},
-        ]}>
-          版面
-        </Text>
-      </TouchableOpacity>
+    <View style={styles.tabBarArea}>
+      <View style={[styles.tabContainer, {backgroundColor: theme.placeholderBackground}]}>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'topics' && {backgroundColor: theme.primary}]}
+          onPress={() => setActiveTab('topics')}
+          activeOpacity={0.8}>
+          <Text style={[
+            styles.tabText,
+            {color: activeTab === 'topics' ? '#fff' : theme.secondaryText},
+          ]}>
+            文章
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'boards' && {backgroundColor: theme.primary}]}
+          onPress={() => setActiveTab('boards')}
+          activeOpacity={0.8}>
+          <Text style={[
+            styles.tabText,
+            {color: activeTab === 'boards' ? '#fff' : theme.secondaryText},
+          ]}>
+            版面
+          </Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 
@@ -479,27 +475,26 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  // Tab切换 - 横向胶囊样式
+  tabBarArea: {
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm,
+  },
   tabContainer: {
     flexDirection: 'row',
-    paddingHorizontal: SPACING.lg,
-    paddingVertical: SPACING.md,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    gap: SPACING.sm,
+    alignItems: 'center',
+    height: 36,
+    padding: 3,
+    borderRadius: 18,
   },
   tab: {
     flex: 1,
-    paddingVertical: SPACING.sm + 2,
-    paddingHorizontal: SPACING.lg,
+    height: 30,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: BORDER_RADIUS.lg,
-  },
-  activeTab: {
-    borderColor: 'transparent',
+    borderRadius: 15,
   },
   tabText: {
-    fontSize: FONT_SIZE.md,
+    fontSize: 13,
     fontWeight: '600',
   },
   // 滑动删除相关样式（rowBack已移至themedCardStyles）

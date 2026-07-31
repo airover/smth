@@ -363,59 +363,25 @@ const MyArticlesScreen: React.FC = () => {
 
   return (
     <View style={[styles.container, {backgroundColor: theme.background}]}>
-      {/* Tab切换栏 - 横向滚动胶囊样式 */}
-      <View style={[styles.tabContainer, {backgroundColor: theme.cardBackground, borderBottomColor: theme.border}]}>
-        <TouchableOpacity
-          style={[
-            styles.tab,
-            activeTab === 0 && [styles.activeTab, {backgroundColor: theme.primary}],
-            {backgroundColor: activeTab === 0 ? theme.primary : theme.background},
-          ]}
-          onPress={() => setActiveTab(0)}
-        >
-          <Text
-            style={[
-              styles.tabText,
-              {color: activeTab === 0 ? '#fff' : theme.text},
-            ]}
-          >
-            帖子
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.tab,
-            activeTab === 1 && [styles.activeTab, {backgroundColor: theme.primary}],
-            {backgroundColor: activeTab === 1 ? theme.primary : theme.background},
-          ]}
-          onPress={() => setActiveTab(1)}
-        >
-          <Text
-            style={[
-              styles.tabText,
-              {color: activeTab === 1 ? '#fff' : theme.text},
-            ]}
-          >
-            回复
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.tab,
-            activeTab === 2 && [styles.activeTab, {backgroundColor: theme.primary}],
-            {backgroundColor: activeTab === 2 ? theme.primary : theme.background},
-          ]}
-          onPress={() => setActiveTab(2)}
-        >
-          <Text
-            style={[
-              styles.tabText,
-              {color: activeTab === 2 ? '#fff' : theme.text},
-            ]}
-          >
-            喜欢
-          </Text>
-        </TouchableOpacity>
+      {/* 与版面帖子列表一致的分段切换控件 */}
+      <View style={styles.tabBarArea}>
+        <View style={[styles.tabContainer, {backgroundColor: theme.placeholderBackground}]}>
+          {(['帖子', '回复', '喜欢'] as const).map((label, index) => {
+            const tab = index as 0 | 1 | 2;
+            const isActive = activeTab === tab;
+            return (
+              <TouchableOpacity
+                key={label}
+                style={[styles.tab, isActive && {backgroundColor: theme.primary}]}
+                onPress={() => setActiveTab(tab)}
+                activeOpacity={0.8}>
+                <Text style={[styles.tabText, {color: isActive ? '#fff' : theme.secondaryText}]}>
+                  {label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
       </View>
 
       {/* 加载中 */}
@@ -456,27 +422,26 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  // Tab 样式 - 横向胶囊样式
+  tabBarArea: {
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm,
+  },
   tabContainer: {
     flexDirection: 'row',
-    paddingHorizontal: SPACING.lg,
-    paddingVertical: SPACING.md,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    gap: SPACING.sm,
+    alignItems: 'center',
+    height: 36,
+    padding: 3,
+    borderRadius: 18,
   },
   tab: {
     flex: 1,
-    paddingVertical: SPACING.sm + 2,
-    paddingHorizontal: SPACING.lg,
+    height: 30,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: BORDER_RADIUS.lg,
-  },
-  activeTab: {
-    borderColor: 'transparent',
+    borderRadius: 15,
   },
   tabText: {
-    fontSize: FONT_SIZE.md,
+    fontSize: 13,
     fontWeight: '600',
   },
   // 列表样式
