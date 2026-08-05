@@ -148,6 +148,8 @@ const ThemeHeader: React.FC<ThemeHeaderProps> = ({
       onPress={onGoBack}
       activeOpacity={0.6}
       hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
+      accessibilityRole="button"
+      accessibilityLabel="返回"
       style={hasBackgroundImage ? styles.themedButton : styles.normalBackButton}
     >
       <ArrowLeftIcon
@@ -322,13 +324,17 @@ export const ThemedHeaderButton: React.FC<{
   onPress: () => void;
   children: React.ReactNode;
   style?: any;
-}> = ({onPress, children, style}) => {
+  accessibilityLabel?: string;
+}> = ({onPress, children, style, accessibilityLabel}) => {
   const theme = useTheme();
   const hasBackgroundImage = !!theme.headerBackgroundImage;
 
   return (
     <TouchableOpacity
       onPress={onPress}
+      hitSlop={{top: 6, bottom: 6, left: 6, right: 6}}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
       style={[hasBackgroundImage ? styles.themedButton : {padding: 4}, style]}
     >
       {children}

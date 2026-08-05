@@ -6,6 +6,7 @@ import {
   Text,
 } from 'react-native';
 import {WebView} from 'react-native-webview';
+import {useTheme} from '../components/ThemedComponents';
 
 interface CaptchaScreenProps {
   username: string;
@@ -19,6 +20,7 @@ const CaptchaScreen: React.FC<CaptchaScreenProps> = ({
   onCancel,
 }) => {
   const webViewRef = useRef<WebView>(null);
+  const theme = useTheme();
   const [loading, setLoading] = useState(true);
   const sdkReadyRef = useRef(false);
 
@@ -45,10 +47,10 @@ const CaptchaScreen: React.FC<CaptchaScreenProps> = ({
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      color: #666;
+      color: ${theme.secondaryText};
       font-size: 14px;
       text-align: center;
-      background: rgba(255,255,255,0.8);
+      background: ${theme.cardBackground};
       padding: 20px;
       border-radius: 8px;
     }
@@ -56,7 +58,7 @@ const CaptchaScreen: React.FC<CaptchaScreenProps> = ({
       display: none;
       margin-top: 10px;
       padding: 10px 20px;
-      background: #007AFF;
+      background: ${theme.primary};
       color: #fff;
       border: none;
       border-radius: 4px;
@@ -190,8 +192,8 @@ const CaptchaScreen: React.FC<CaptchaScreenProps> = ({
       />
       {loading && (
               <View style={styles.loadingOverlay}>
-                <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={styles.loadingText}>安全检测中...</Text>
+                <ActivityIndicator size="large" color={theme.primary} />
+          <Text style={[styles.loadingText, {color: theme.secondaryText}]}>安全检测中...</Text>
               </View>
             )}
       </View>
@@ -221,7 +223,6 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 15,
     fontSize: 16,
-    color: '#333',
   },
 });
 

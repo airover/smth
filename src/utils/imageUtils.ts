@@ -22,7 +22,7 @@ export const normalizeImageUrl = (url: string | undefined | null): string => {
 
   // 2. 如果是相对路径，添加HTTPS域名
   if (!trimmedUrl.startsWith('http')) {
-    return `https://file.mysmth.net/${trimmedUrl}`;
+    return `https://file.mysmth.net/${trimmedUrl.replace(/^\/+/, '')}`;
   }
 
   // 3. 强制转换 HTTP 为 HTTPS

@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
 import {useTheme} from './ThemedComponents';
-import {StarIcon, BoardIcon, MessageIcon} from './SvgIcons';
+import {StarIcon, ChevronRightIcon, MessageIcon} from './SvgIcons';
 import {getCardElevation} from '../utils/theme';
 import {getFavoriteTopics, getFavoriteBoards} from '../services/dataFetcher';
 import {formatRelativeTime} from '../utils/timeFormat';
@@ -146,7 +146,10 @@ const FavoritesDrawer: React.FC<FavoritesDrawerProps> = ({visible, onClose, cont
           <View style={styles.spacer} />
           <Text style={[styles.title, {color: theme.text}]}>收藏</Text>
           <TouchableOpacity style={[styles.spacer, {alignItems: 'flex-end'}]} onPress={goAll} activeOpacity={0.6}>
-            <Text style={[styles.allLink, {color: theme.primary}]}>查看全部 ›</Text>
+            <View style={styles.allLinkRow}>
+              <Text style={[styles.allLink, {color: theme.primary}]}>查看全部</Text>
+              <ChevronRightIcon size={16} color={theme.primary} />
+            </View>
           </TouchableOpacity>
         </View>
       </View>
@@ -264,6 +267,10 @@ const styles = StyleSheet.create({
   allLink: {
     fontSize: FONT_SIZE.sm,
     fontWeight: '500',
+  },
+  allLinkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
 
   loader: {flex: 1, justifyContent: 'center', alignItems: 'center'},

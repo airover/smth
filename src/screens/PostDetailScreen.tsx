@@ -48,7 +48,8 @@ import {
   TrashIcon,
   BanIcon,
   PaperclipIcon,
-  ChevronDownIcon,
+  XIcon,
+  SortIcon,
 } from '../components/SvgIcons';
 import {normalizeImageUrl, isImageAttachment, isVideoAttachment} from '../utils/imageUtils';
 import {impactLight, impactMedium, notifySuccess} from '../utils/haptics';
@@ -82,8 +83,16 @@ const formatDateTime = (time: string): string => {
 
 const SCREEN_WIDTH = RESPONSIVE.SCREEN_WIDTH;
 const SCREEN_HEIGHT = RESPONSIVE.SCREEN_HEIGHT;
+const POST_DETAIL_CACHE_VERSION = 2;
 const POST_DETAIL_CACHE_FRESH_AGE = 60 * 1000;
 const POST_DETAIL_CACHE_MAX_STALE_AGE = 8 * 60 * 60 * 1000;
+
+const getAvatarUri = (avatar?: string | null): string => normalizeImageUrl(avatar);
+
+const getAvatarInitial = (name?: string | null): string => {
+  const value = name?.trim() || '?';
+  return value.charAt(0).toUpperCase();
+};
 
 // 点赞/扔鸡蛋专用的 Captcha ID
 const LIKE_CAPTCHA_ID = '3a6990c763f90e33fa62a97faad3a05f';
@@ -335,6 +344,7 @@ const PostDetailScreen: React.FC = () => {
     setHeaderOptions({
       headerRight: () => (
         <ThemedHeaderButton
+          accessibilityLabel="更多操作"
           onPress={() => {
             // 构建菜单选项
             const options: string[] = [];
@@ -408,7 +418,7 @@ const PostDetailScreen: React.FC = () => {
             }
           }}
         >
-          <MoreVerticalIcon size={24} color={theme.headerBackgroundImage ? '#FFFFFF' : theme.tabBarInactive} />
+          <MoreVerticalIcon size={24} color={theme.headerBackgroundImage ? '#FFFFFF' : theme.headerTint} />
         </ThemedHeaderButton>
       ),
     });
@@ -482,8 +492,8 @@ const PostDetailScreen: React.FC = () => {
       if (pageNum === 1) {
         setLoadError(null);
         // 第一页：检查缓存并获取主题详情和回复列表
-        const postCacheKey = `${board}-${postId}`;
-        const repliesCacheKey = `${postId}-${repliesMode}-1`;
+        const postCacheKey = `v${POST_DETAIL_CACHE_VERSION}:${board}-${postId}`;
+        const repliesCacheKey = `v${POST_DETAIL_CACHE_VERSION}:${postId}-${repliesMode}-1`;
         
         // 尝试从缓存获取数据（下拉刷新时跳过缓存）
         let detailData = forceRefresh ? null : cacheManager.get('postDetail', postCacheKey, POST_DETAIL_CACHE_FRESH_AGE);
@@ -598,7 +608,7 @@ const PostDetailScreen: React.FC = () => {
         }
       } else {
         // 后续页：检查缓存并获取回复列表
-        const repliesCacheKey = `${postId}-${repliesMode}-${pageNum}`;
+        const repliesCacheKey = `v${POST_DETAIL_CACHE_VERSION}:${postId}-${repliesMode}-${pageNum}`;
         let repliesData = cacheManager.get('topicReplies', repliesCacheKey, POST_DETAIL_CACHE_FRESH_AGE);
         const staleRepliesCache = repliesData ? null : getStaleCache<any>('topicReplies', repliesCacheKey);
         const shouldRefreshReplies = !repliesData && staleRepliesCache;
@@ -1716,9 +1726,9 @@ const PostDetailScreen: React.FC = () => {
             return (
               <TouchableOpacity
                 key={index}
-                style={styles.fileAttachment}
+                style={[styles.fileAttachment, {backgroundColor: theme.placeholderBackground, borderColor: theme.border}]}
                 onPress={() => {/* Handle other file types */}}>
-                <Text style={styles.fileName}>{item.name || '未知附件'}</Text>
+                <Text style={[styles.fileName, {color: theme.primary}]}>{item.name || '未知附件'}</Text>
               </TouchableOpacity>
             );
           }
@@ -1740,6 +1750,8 @@ const PostDetailScreen: React.FC = () => {
         </View>
         {displayedLikes.map((like, index) => {
           const isCurrentUser = currentUsername && like.author === currentUsername;
+          const likeAvatarUri = getAvatarUri(like.avatar);
+          const likeAvatarName = like.nick || like.author;
           
           return (
             <View key={like.id || index} style={styles.likeItem}>
@@ -1750,17 +1762,18 @@ const PostDetailScreen: React.FC = () => {
                   }}
                   activeOpacity={0.7}
                 >
-                  {like.avatar ? (
+                  {likeAvatarUri ? (
                     <ImageWithPlaceholder
-                      uri={like.avatar}
+                      uri={likeAvatarUri}
                       style={[styles.likeAvatar, {borderWidth: StyleSheet.hairlineWidth, borderColor: theme.border}]}
                       resizeMode="cover"
                       isAvatar={true}
+                      placeholderText={likeAvatarName}
                     />
                   ) : (
-                    <View style={[styles.likeAvatar, styles.likeAvatarPlaceholder]}>
-                      <Text style={styles.likeAvatarText}>
-                        {like.author.charAt(0).toUpperCase()}
+                    <View style={[styles.likeAvatar, styles.likeAvatarPlaceholder, {backgroundColor: theme.placeholderBackground, borderWidth: StyleSheet.hairlineWidth, borderColor: theme.border}]}>
+                      <Text style={[styles.likeAvatarText, {color: theme.secondaryText}]}>
+                        {getAvatarInitial(likeAvatarName)}
                       </Text>
                     </View>
                   )}
@@ -1826,6 +1839,8 @@ const PostDetailScreen: React.FC = () => {
 
   const renderReply = ({item}: {item: Reply}) => {
     const isAuthor = post && item.author === post.author;
+    const replyAvatarUri = getAvatarUri(item.avatar);
+    const replyAvatarName = item.nickname || item.author;
     
     return (
     <View style={[styles.replyContainer, {backgroundColor: theme.cardBackground}, getCardElevation(theme)]}>
@@ -1837,17 +1852,18 @@ const PostDetailScreen: React.FC = () => {
             }}
             activeOpacity={0.7}
           >
-            {item.avatar ? (
+            {replyAvatarUri ? (
               <ImageWithPlaceholder
-                uri={item.avatar}
+                uri={replyAvatarUri}
                 style={[styles.avatar, {borderWidth: StyleSheet.hairlineWidth, borderColor: theme.border}]}
                 resizeMode="cover"
                 isAvatar={true}
+                placeholderText={replyAvatarName}
               />
             ) : (
-              <View style={[styles.authorAvatarPlaceholder, {backgroundColor: theme.primary}]}>
-                <Text style={styles.authorAvatarText}>
-                  {item.author.charAt(0).toUpperCase()}
+              <View style={[styles.authorAvatarPlaceholder, {backgroundColor: theme.placeholderBackground, borderWidth: StyleSheet.hairlineWidth, borderColor: theme.border}]}>
+                <Text style={[styles.authorAvatarText, {color: theme.secondaryText}]}>
+                  {getAvatarInitial(replyAvatarName)}
                 </Text>
               </View>
             )}
@@ -1859,7 +1875,7 @@ const PostDetailScreen: React.FC = () => {
                   {item.levelTitle ? ` · ${item.levelTitle}` : ''}
                 </Text>
                 {isAuthor && (
-                  <View style={styles.authorBadge}>
+                  <View style={[styles.authorBadge, {backgroundColor: theme.primary}]}>
                     <Text style={styles.authorBadgeText}>楼主</Text>
                   </View>
                 )}
@@ -1899,6 +1915,8 @@ const PostDetailScreen: React.FC = () => {
               style={[styles.deleteReplyButton, {borderColor: theme.border}]}
               onPress={() => handleDeleteReply(item)}
               activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="删除回复"
             >
               <TrashIcon size={FONT_SIZE.md} color={theme.error} />
             </TouchableOpacity>
@@ -1908,6 +1926,8 @@ const PostDetailScreen: React.FC = () => {
               style={[styles.reportReplyButton, {borderColor: theme.border}]}
               onPress={() => handleReport(item.author, item.id)}
               activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="举报回复"
             >
               <BanIcon size={FONT_SIZE.md} color={theme.secondaryText} />
             </TouchableOpacity>
@@ -1916,6 +1936,8 @@ const PostDetailScreen: React.FC = () => {
             style={[styles.quoteReplyButton, {borderColor: theme.border}]}
             onPress={() => handleQuoteReply(item)}
             activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="引用回复"
           >
             <MessageIcon size={12} color={theme.primary} />
           </TouchableOpacity>
@@ -1974,6 +1996,9 @@ const PostDetailScreen: React.FC = () => {
     );
   };
 
+  const postAvatarUri = getAvatarUri(post.avatar);
+  const postAvatarName = post.nick || post.author;
+
   return (
     <SafeAreaView edges={['bottom']} style={[styles.container, {backgroundColor: theme.background}]}>
       <FlatList
@@ -2015,17 +2040,18 @@ const PostDetailScreen: React.FC = () => {
                     }}
                     activeOpacity={0.7}
                   >
-                    {post.avatar ? (
+                    {postAvatarUri ? (
                       <ImageWithPlaceholder
-                        uri={post.avatar}
+                        uri={postAvatarUri}
                         style={styles.avatar}
                         resizeMode="cover"
                         isAvatar={true}
+                        placeholderText={postAvatarName}
                       />
                     ) : (
-                    <View style={[styles.authorAvatarPlaceholder, {backgroundColor: theme.primary}]}>
-                      <Text style={styles.authorAvatarText}>
-                        {post.author.charAt(0).toUpperCase()}
+                    <View style={[styles.authorAvatarPlaceholder, {backgroundColor: theme.placeholderBackground, borderWidth: StyleSheet.hairlineWidth, borderColor: theme.border}]}>
+                      <Text style={[styles.authorAvatarText, {color: theme.secondaryText}]}>
+                        {getAvatarInitial(postAvatarName)}
                       </Text>
                     </View>
                     )}
@@ -2063,6 +2089,8 @@ const PostDetailScreen: React.FC = () => {
                   style={[styles.actionIconButton, {backgroundColor: theme.background, borderColor: theme.border}]}
                   onPress={handleLikePress}
                   activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="点赞"
                 >
                   <ThumbsUpIcon size={20} color={theme.text} />
                 </TouchableOpacity>
@@ -2072,6 +2100,8 @@ const PostDetailScreen: React.FC = () => {
                   style={[styles.actionIconButton, {backgroundColor: theme.background, borderColor: theme.border}]}
                   onPress={handleDislikePress}
                   activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="扔鸡蛋"
                 >
                   <EggIcon size={20} color={theme.text} />
                 </TouchableOpacity>
@@ -2080,9 +2110,11 @@ const PostDetailScreen: React.FC = () => {
                   style={[styles.sortIconButton, {backgroundColor: theme.background, borderColor: theme.border}]}
                   onPress={toggleSortOrder}
                   activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel={sortOrder === 'asc' ? '按最新回复排序' : '按最早回复排序'}
                 >
                   <View style={{transform: [{rotate: sortOrder === 'asc' ? '180deg' : '0deg'}]}}>
-                    <ChevronDownIcon size={20} color={theme.text} />
+                    <SortIcon size={20} color={theme.text} />
                   </View>
                 </TouchableOpacity>
               </View>
@@ -2238,14 +2270,23 @@ const PostDetailScreen: React.FC = () => {
             }
           ]}>
             <View style={styles.ratingModalHeader}>
-              <Text style={[styles.ratingModalTitle, {color: theme.text}]}>
-                {ratingType === 'like' ? '👍 点赞' : '🥚 扔鸡蛋'}
-              </Text>
+              <View style={styles.ratingModalTitleRow}>
+                {ratingType === 'like' ? (
+                  <ThumbsUpIcon size={20} color={theme.text} />
+                ) : (
+                  <EggIcon size={20} color={theme.text} />
+                )}
+                <Text style={[styles.ratingModalTitle, {color: theme.text}]}>
+                  {ratingType === 'like' ? '点赞' : '扔鸡蛋'}
+                </Text>
+              </View>
               <TouchableOpacity
                 onPress={closeModal}
                 style={styles.ratingModalClose}
+                accessibilityRole="button"
+                accessibilityLabel="关闭评分弹窗"
               >
-                <Text style={[styles.ratingModalCloseText, {color: theme.secondaryText}]}>✕</Text>
+                <XIcon size={20} color={theme.secondaryText} />
               </TouchableOpacity>
             </View>
             
@@ -2537,6 +2578,7 @@ const styles = StyleSheet.create({
   fileAttachment: {
     flexDirection: 'row',
     alignItems: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
     backgroundColor: '#f0f0f0',
     padding: SPACING.sm + 2,
     borderRadius: BORDER_RADIUS.sm,
@@ -2890,12 +2932,13 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZE.xxl,
     fontWeight: 'bold',
   },
+  ratingModalTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+  },
   ratingModalClose: {
     padding: SPACING.sm,
-  },
-  ratingModalCloseText: {
-    fontSize: FONT_SIZE.xxl,
-    fontWeight: 'bold',
   },
   scoreSelector: {
     marginBottom: SPACING.xl,

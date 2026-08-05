@@ -14,6 +14,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {getFavoriteBoards} from '../services/api';
 import {removeBoardFavorite} from '../services/dataFetcher';
 import {Board} from '../types';
+import {useTheme} from '../components/ThemedComponents';
+import {getCardElevation} from '../utils/theme';
 import {
   SPACING,
   FONT_SIZE,
@@ -24,6 +26,7 @@ import {
 const BoardListScreen: React.FC = () => {
   const route = useRoute();
   const navigation = useNavigation<any>();
+  const theme = useTheme();
   const {favorites} = route.params as {favorites?: boolean};
   const [boards, setBoards] = useState<Board[]>([]);
   const [loading, setLoading] = useState(true);
@@ -156,7 +159,7 @@ const BoardListScreen: React.FC = () => {
 
   const renderBoardItem = ({item}: {item: Board}) => (
     <TouchableOpacity
-      style={styles.boardItem}
+      style={[styles.boardItem, {backgroundColor: theme.cardBackground}, getCardElevation(theme)]}
       onPress={() => {
         // 由于 Board 是 MainTabs 中的嵌套路由，需要指定 MainTabs
         navigation.navigate('MainTabs', {
@@ -169,11 +172,11 @@ const BoardListScreen: React.FC = () => {
         });
       }}
       onLongPress={() => handleRemoveFavorite(item)}>
-      <Text style={styles.boardName}>
+      <Text style={[styles.boardName, {color: theme.text}]}>
         {item.chineseName || item.name}
       </Text>
       {item.description && (
-        <Text style={styles.boardDesc} numberOfLines={1}>
+        <Text style={[styles.boardDesc, {color: theme.secondaryText}]} numberOfLines={1}>
           {item.description}
         </Text>
       )}
@@ -182,9 +185,9 @@ const BoardListScreen: React.FC = () => {
 
   if (loading) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, {backgroundColor: theme.background}]}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
+          <ActivityIndicator size="large" color={theme.primary} />
         </View>
       </View>
     );
@@ -192,11 +195,11 @@ const BoardListScreen: React.FC = () => {
 
   if (!isLoggedIn) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, {backgroundColor: theme.background}]}>
         <View style={styles.emptyContainer}>
-          <Text style={styles.emptyTitle}>未登录</Text>
-          <Text style={styles.emptyText}>请先登录以查看收藏版面</Text>
-          <TouchableOpacity style={styles.loginButton} onPress={handleLogin}>
+          <Text style={[styles.emptyTitle, {color: theme.text}]}>未登录</Text>
+          <Text style={[styles.emptyText, {color: theme.secondaryText}]}>请先登录以查看收藏版面</Text>
+          <TouchableOpacity style={[styles.loginButton, {backgroundColor: theme.primary}]} onPress={handleLogin}>
             <Text style={styles.loginButtonText}>前往登录</Text>
           </TouchableOpacity>
         </View>
@@ -205,7 +208,7 @@ const BoardListScreen: React.FC = () => {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, {backgroundColor: theme.background}]}>
       <FlatList
         data={boards}
         renderItem={renderBoardItem}
@@ -215,14 +218,14 @@ const BoardListScreen: React.FC = () => {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            colors={['#007AFF']}
-            tintColor="#007AFF"
+            colors={[theme.primary]}
+            tintColor={theme.primary}
           />
         }
         ListEmptyComponent={
           dataLoaded ? (
             <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>暂无收藏版面</Text>
+              <Text style={[styles.emptyText, {color: theme.secondaryText}]}>暂无收藏版面</Text>
             </View>
           ) : null
         }
@@ -236,7 +239,6 @@ const BoardListScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
   },
   content: {
     padding: SPACING.md,
@@ -245,7 +247,6 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-start',
   },
   boardItem: {
-    backgroundColor: '#fff',
     borderRadius: BORDER_RADIUS.md,
     padding: SPACING.md,
     marginBottom: SPACING.sm + 2,
@@ -254,21 +255,14 @@ const styles = StyleSheet.create({
     height: scaleModerate(60),
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 1},
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
   },
   boardName: {
     fontSize: FONT_SIZE.sm,
     fontWeight: '500',
-    color: '#333',
     textAlign: 'center',
   },
   boardDesc: {
     fontSize: FONT_SIZE.xs,
-    color: '#999',
     marginTop: SPACING.xs / 2,
     textAlign: 'center',
   },
@@ -286,16 +280,13 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: FONT_SIZE.xxl,
     fontWeight: '600',
-    color: '#333',
     marginBottom: SPACING.sm,
   },
   emptyText: {
     fontSize: FONT_SIZE.md,
-    color: '#999',
     marginBottom: SPACING.xxl,
   },
   loginButton: {
-    backgroundColor: '#007AFF',
     paddingHorizontal: SPACING.xxxl,
     paddingVertical: SPACING.md,
     borderRadius: BORDER_RADIUS.md,
@@ -308,4 +299,3 @@ const styles = StyleSheet.create({
 });
 
 export default BoardListScreen;
-

@@ -17,6 +17,8 @@ import {useTheme} from '../components/ThemedComponents';
 import {useSettings} from '../context/SettingsContext';
 import {getFontSizes} from '../utils/theme';
 import {cleanHtml} from '../utils/htmlParser';
+import {ArticleIcon, ChevronRightIcon, HeartIcon, MessageIcon} from '../components/SvgIcons';
+import {getCardElevation} from '../utils/theme';
 import {
   SPACING,
   FONT_SIZE,
@@ -250,7 +252,7 @@ const MyArticlesScreen: React.FC = () => {
   // 渲染帖子项
   const renderItem = ({item}: {item: MyArticle}) => (
     <TouchableOpacity
-      style={[styles.articleItem, {backgroundColor: theme.cardBackground}]}
+      style={[styles.articleItem, {backgroundColor: theme.cardBackground}, getCardElevation(theme)]}
       onPress={() => handleArticlePress(item)}
       activeOpacity={0.7}
     >
@@ -293,7 +295,7 @@ const MyArticlesScreen: React.FC = () => {
           </Text>
         </View>
       </View>
-      <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
+      <ChevronRightIcon size={18} color={theme.chevron} />
     </TouchableOpacity>
   );
 
@@ -329,7 +331,15 @@ const MyArticlesScreen: React.FC = () => {
     
     return (
       <View style={styles.emptyContainer}>
-        <Text style={styles.emptyIcon}>{activeTab === 0 ? '📝' : activeTab === 1 ? '💬' : '❤️'}</Text>
+        <View style={styles.emptyIcon}>
+          {activeTab === 0 ? (
+            <ArticleIcon size={60} color={theme.secondaryText} />
+          ) : activeTab === 1 ? (
+            <MessageIcon size={60} color={theme.secondaryText} />
+          ) : (
+            <HeartIcon size={60} color={theme.secondaryText} />
+          )}
+        </View>
         <Text style={[styles.emptyText, {color: theme.secondaryText}]}>
           {activeTab === 0 ? '暂无发表的帖子' : activeTab === 1 ? '暂无回复记录' : '暂无喜欢的内容'}
         </Text>
@@ -465,14 +475,6 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.md,
     flexDirection: 'row',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 2,
   },
   itemContent: {
     flex: 1,
@@ -534,8 +536,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: scaleModerate(40),
   },
   emptyIcon: {
-    fontSize: scaleModerate(64),
     marginBottom: SPACING.lg,
+    opacity: 0.7,
   },
   emptyText: {
     fontSize: FONT_SIZE.lg,

@@ -38,6 +38,9 @@ import {
 import {getCacheStats, clearCache} from '../services/cacheManager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useAuth} from '../context/AuthContext';
+import {useTheme} from '../components/ThemedComponents';
+import {getCardElevation, ThemeColors} from '../utils/theme';
+import {TrashIcon} from '../components/SvgIcons';
 import {
   SPACING,
   FONT_SIZE,
@@ -47,6 +50,8 @@ import {
 
 const CacheManagementScreen: React.FC = () => {
   const {logout} = useAuth();
+  const theme = useTheme();
+  const styles = createStyles(theme);
   const [cacheStats, setCacheStats] = useState<{
     categories: {name: string; count: number; size: string}[];
     total: number;
@@ -299,8 +304,8 @@ const CacheManagementScreen: React.FC = () => {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            colors={['#007AFF']}
-            tintColor="#007AFF"
+            colors={[theme.primary]}
+            tintColor={theme.primary}
           />
         }
       >
@@ -395,25 +400,33 @@ const CacheManagementScreen: React.FC = () => {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>缓存管理</Text>
           <View style={styles.card}>
-            <TouchableOpacity style={styles.actionButton} onPress={handleClearMemoryCache}>
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={handleClearMemoryCache}
+              accessibilityRole="button"
+              accessibilityLabel="清除内存缓存">
               <View style={styles.actionButtonContent}>
-                <View>
+                <TrashIcon size={20} color={theme.secondaryText} />
+                <View style={styles.actionButtonTextGroup}>
                   <Text style={styles.actionButtonText}>清除内存缓存</Text>
                   <Text style={styles.actionButtonDesc}>不影响登录状态</Text>
                 </View>
-                <Text style={styles.chevron}>›</Text>
               </View>
             </TouchableOpacity>
 
             <View style={styles.divider} />
 
-            <TouchableOpacity style={styles.actionButton} onPress={handleClearAllData}>
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={handleClearAllData}
+              accessibilityRole="button"
+              accessibilityLabel="清除所有数据">
               <View style={styles.actionButtonContent}>
-                <View>
+                <TrashIcon size={20} color={theme.error} />
+                <View style={styles.actionButtonTextGroup}>
                   <Text style={[styles.actionButtonText, styles.dangerText]}>清除所有数据</Text>
                   <Text style={styles.actionButtonDesc}>包括登录信息，需重新登录</Text>
                 </View>
-                <Text style={[styles.chevron, styles.dangerText]}>›</Text>
               </View>
             </TouchableOpacity>
           </View>
@@ -424,10 +437,10 @@ const CacheManagementScreen: React.FC = () => {
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: ThemeColors) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: theme.background,
   },
   scrollView: {
     flex: 1,
@@ -439,19 +452,15 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: FONT_SIZE.sm,
     fontWeight: '600',
-    color: '#8E8E93',
+    color: theme.secondaryText,
     marginBottom: SPACING.sm,
     textTransform: 'uppercase',
   },
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: theme.cardBackground,
     borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.lg,
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 1},
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
+    ...getCardElevation(theme),
   },
   summaryRow: {
     flexDirection: 'row',
@@ -461,12 +470,12 @@ const styles = StyleSheet.create({
   },
   summaryLabel: {
     fontSize: FONT_SIZE.lg,
-    color: '#000',
+    color: theme.text,
   },
   summaryValue: {
     fontSize: FONT_SIZE.lg,
     fontWeight: '600',
-    color: '#007AFF',
+    color: theme.primary,
   },
   statItem: {
     flexDirection: 'row',
@@ -479,22 +488,22 @@ const styles = StyleSheet.create({
   },
   statItemName: {
     fontSize: FONT_SIZE.md,
-    color: '#000',
+    color: theme.text,
     marginBottom: SPACING.xs,
   },
   statItemValue: {
     fontSize: FONT_SIZE.sm,
-    color: '#8E8E93',
+    color: theme.secondaryText,
   },
   clearButton: {
     paddingHorizontal: SPACING.md,
     paddingVertical: SPACING.xs + 2,
-    backgroundColor: '#f0f0f0',
+    backgroundColor: theme.placeholderBackground,
     borderRadius: BORDER_RADIUS.xs + 2,
   },
   clearButtonText: {
     fontSize: FONT_SIZE.sm,
-    color: '#007AFF',
+    color: theme.primary,
   },
   emptyState: {
     paddingVertical: SPACING.xl,
@@ -502,37 +511,35 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: FONT_SIZE.md,
-    color: '#8E8E93',
+    color: theme.secondaryText,
   },
   actionButton: {
     paddingVertical: SPACING.md,
   },
   actionButtonContent: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+  },
+  actionButtonTextGroup: {
+    flex: 1,
+    marginLeft: SPACING.md,
   },
   actionButtonText: {
     fontSize: FONT_SIZE.lg,
-    color: '#000',
+    color: theme.text,
     fontWeight: '500',
     marginBottom: SPACING.xs,
   },
   actionButtonDesc: {
     fontSize: FONT_SIZE.sm,
-    color: '#8E8E93',
-  },
-  chevron: {
-    fontSize: FONT_SIZE.xxxl,
-    color: '#C7C7CC',
-    fontWeight: '300',
+    color: theme.secondaryText,
   },
   dangerText: {
-    color: '#FF3B30',
+    color: theme.error,
   },
   divider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: '#f0f0f0',
+    backgroundColor: theme.border,
     marginVertical: SPACING.sm,
   },
 });

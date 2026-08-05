@@ -51,7 +51,7 @@ const MainTabs = () => {
         headerStyle: {
           backgroundColor: theme.headerBackground,
         },
-        headerTintColor: theme.headerText,
+        headerTintColor: theme.headerTint,
         headerTitleStyle: {
           fontWeight: '600' as const,
           color: theme.headerText,
@@ -194,7 +194,7 @@ const AppNavigator = () => {
             <TouchableOpacity
               onPress={() => navigation.goBack()}
               style={{marginLeft: -4, padding: 4, paddingRight: 12}}>
-              <ArrowLeftIcon size={28} color={theme.tabBarInactive} />
+              <ArrowLeftIcon size={28} color={theme.headerTint} />
             </TouchableOpacity>
           ) : null,
       })}>

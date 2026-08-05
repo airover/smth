@@ -15,7 +15,7 @@ import {formatRelativeTime} from '../utils/timeFormat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {useTheme, EmptyState} from '../components/ThemedComponents';
-import {SearchIcon} from '../components/SvgIcons';
+import {ArticleIcon, BoardIcon, FlameIcon, SearchIcon} from '../components/SvgIcons';
 import {
   SPACING,
   FONT_SIZE,
@@ -393,7 +393,10 @@ const SearchScreen: React.FC = () => {
                 },
               });
             }}>
-            <Text style={[styles.boardNameText, {color: theme.primary}]}>📋 {item.board.title}</Text>
+            <View style={styles.boardNameRow}>
+              <BoardIcon size={14} color={theme.primary} />
+              <Text style={[styles.boardNameText, {color: theme.primary}]}>{item.board.title}</Text>
+            </View>
           </TouchableOpacity>
         </View>
       </TouchableOpacity>
@@ -423,8 +426,14 @@ const SearchScreen: React.FC = () => {
           <Text style={[styles.boardName, {color: theme.secondaryText}]}>({cleanName})</Text>
         </View>
         <View style={styles.boardStats}>
-          <Text style={[styles.boardStatText, {color: theme.secondaryText}]}>📝 {item.articleCount} 篇文章</Text>
-          <Text style={[styles.boardStatText, {color: theme.secondaryText}]}>🔥 今日 {item.todayPostCount} 帖</Text>
+          <View style={styles.boardStatItem}>
+            <ArticleIcon size={14} color={theme.secondaryText} />
+            <Text style={[styles.boardStatText, {color: theme.secondaryText}]}>{item.articleCount} 篇文章</Text>
+          </View>
+          <View style={styles.boardStatItem}>
+            <FlameIcon size={14} color={theme.secondaryText} />
+            <Text style={[styles.boardStatText, {color: theme.secondaryText}]}>今日 {item.todayPostCount} 帖</Text>
+          </View>
         </View>
       </TouchableOpacity>
     );
@@ -721,6 +730,11 @@ const styles = StyleSheet.create({
   },
   boardNameText: {
     fontSize: FONT_SIZE.sm,
+    marginLeft: SPACING.xs,
+  },
+  boardNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   boardItem: {
     padding: SPACING.lg,
@@ -746,6 +760,10 @@ const styles = StyleSheet.create({
   boardStatText: {
     fontSize: FONT_SIZE.sm,
     marginRight: SPACING.lg,
+  },
+  boardStatItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   accountItem: {
     padding: SPACING.lg,

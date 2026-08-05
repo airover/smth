@@ -14,7 +14,7 @@ import {
   buildDeleteHeaders,
 } from '../utils/requestUtils';
 import {setCache, getCacheWithTimestamp, clearCache} from './cacheManager';
-import {extractStaticAttachmentUrls, isImageAttachment} from '../utils/imageUtils';
+import {extractStaticAttachmentUrls, isImageAttachment, normalizeImageUrl} from '../utils/imageUtils';
 import {getCookies, getMSiteCookies, isMSiteResponseLoggedIn, handleMSiteCookieExpired, triggerSilentMSiteReLogin} from './auth';
 import {cleanHtml} from '../utils/htmlParser';
 
@@ -31,6 +31,28 @@ interface MSiteBoardPost {
   cleanTitle: string;
   page: number;
 }
+
+/**
+ * 统一提取账号头像地址。
+ * 部分接口只返回 avatar 相对路径，不能只依赖 avatarUrl/k3sUrl。
+ */
+const resolveAvatarUrl = (...accounts: any[]): string => {
+  for (const account of accounts) {
+    const candidates = [
+      account?.k3sUrl,
+      account?.ks3Url,
+      account?.avatarUrl,
+      account?.avatar,
+    ];
+    const candidate = candidates.find(
+      value => typeof value === 'string' && value.trim().length > 0,
+    );
+    if (candidate) {
+      return normalizeImageUrl(candidate);
+    }
+  }
+  return '';
+};
 
 const runOnce = async <T,>(key: string, request: () => Promise<T>): Promise<T> => {
   const existing = inFlightRequests.get(key);
@@ -1311,10 +1333,7 @@ export const getBoardPosts = async (
         const article = topic.article || {};
         const account = article.account || {};
         
-        let avatar = account.k3sUrl || account.ks3Url || account.avatarUrl || '';
-        if (avatar && avatar.startsWith('http:')) {
-          avatar = avatar.replace('http:', 'https:');
-        }
+        const avatar = resolveAvatarUrl(account);
 
         // 处理附件列表
         const rawAttachments = (article.attachments || []).filter((att: any) => att != null);
@@ -1461,12 +1480,7 @@ export const getPostDetail = async (
       console.log('[getPostDetail] _board (传入参数):', _board);
       
       // 提取头像，优先使用 k3sUrl/ks3Url（云存储）
-      let avatar = article?.account?.k3sUrl || article?.account?.ks3Url ||
-                   article?.user?.k3sUrl || article?.user?.ks3Url ||
-                   article?.account?.avatarUrl || article?.user?.avatarUrl || '';
-      if (avatar && avatar.startsWith('http:')) {
-        avatar = avatar.replace('http:', 'https:');
-      }
+      const avatar = resolveAvatarUrl(article?.account, article?.user);
       
       const boardNameForFetch = topic.board?.name || _board;
 
@@ -1579,12 +1593,7 @@ export const getPostDetail = async (
         likes: (article?.likes || [])
           .filter((like: any) => like != null)
           .map((like: any) => {
-          let likeAvatar = like.account?.k3sUrl || like.account?.ks3Url ||
-                          like.user?.k3sUrl || like.user?.ks3Url ||
-                          like.account?.avatarUrl || like.user?.avatarUrl || '';
-          if (likeAvatar && likeAvatar.startsWith('http:')) {
-            likeAvatar = likeAvatar.replace('http:', 'https:');
-          }
+          const likeAvatar = resolveAvatarUrl(like.account, like.user);
           return {
             id: like.id,
             author: like.account?.name || like.user?.name || '',
@@ -1688,12 +1697,7 @@ export const getTopicReplies = async (
       const totalItems = pager.totalItems || 0;
       const replies: any[] = articles.map((article: any) => {
         // 提取头像，优先使用 k3sUrl/ks3Url（云存储）
-        let avatar = article.account?.k3sUrl || article.account?.ks3Url ||
-                     article.user?.k3sUrl || article.user?.ks3Url ||
-                     article.account?.avatarUrl || article.user?.avatarUrl || '';
-        if (avatar && avatar.startsWith('http:')) {
-          avatar = avatar.replace('http:', 'https:');
-        }
+        const avatar = resolveAvatarUrl(article.account, article.user);
 
         // 处理回复内容
         let content = article.body || '';

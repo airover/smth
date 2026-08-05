@@ -13,6 +13,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // logout 功能暂时未使用
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {useTheme} from '../components/ThemedComponents';
+import {CheckIcon, PlusIcon, TrashIcon} from '../components/SvgIcons';
 import {
   SPACING,
   FONT_SIZE,
@@ -222,7 +223,7 @@ const AccountSwitchScreen: React.FC = () => {
                     <Text style={[styles.accountUsername, {color: theme.secondaryText}]}>@{account.username}</Text>
                   </View>
                 </View>
-                <Text style={[styles.checkIcon, {color: theme.primary}]}>✓</Text>
+                <CheckIcon size={22} color={theme.primary} />
               </View>
             ))}
           </View>
@@ -236,41 +237,46 @@ const AccountSwitchScreen: React.FC = () => {
               {accounts.filter(acc => !acc.isCurrent).map((account, index) => (
                 <View key={index}>
                   {index > 0 && <View style={[styles.divider, {backgroundColor: theme.border}]} />}
-                  <TouchableOpacity
-                    style={styles.accountItem}
-                    onPress={() => handleSwitchAccount(account)}
-                    activeOpacity={0.8}
-                  >
-                    <View style={styles.accountLeft}>
-                      {account.avatar ? (
-                        <ImageWithPlaceholder
-                          uri={account.avatar}
-                          style={styles.avatar}
-                          resizeMode="cover"
-                          isAvatar={true}
-                        />
-                      ) : (
-                        <View style={[styles.avatarPlaceholder, {backgroundColor: theme.primary}]}>
-                          <Text style={styles.avatarText}>
-                            {account.username.charAt(0).toUpperCase()}
+                  <View style={styles.accountItem}>
+                    <TouchableOpacity
+                      style={styles.accountItemContent}
+                      onPress={() => handleSwitchAccount(account)}
+                      activeOpacity={0.8}
+                      accessibilityRole="button"
+                      accessibilityLabel={`切换到账号 ${account.nickname || account.username}`}>
+                      <View style={styles.accountLeft}>
+                        {account.avatar ? (
+                          <ImageWithPlaceholder
+                            uri={account.avatar}
+                            style={styles.avatar}
+                            resizeMode="cover"
+                            isAvatar={true}
+                          />
+                        ) : (
+                          <View style={[styles.avatarPlaceholder, {backgroundColor: theme.primary}]}>
+                            <Text style={styles.avatarText}>
+                              {account.username.charAt(0).toUpperCase()}
+                            </Text>
+                          </View>
+                        )}
+                        <View style={styles.accountInfo}>
+                          <Text style={[styles.accountName, {color: theme.text}]}>
+                            {account.nickname || account.username}
                           </Text>
+                          <Text style={[styles.accountUsername, {color: theme.secondaryText}]}>@{account.username}</Text>
                         </View>
-                      )}
-                      <View style={styles.accountInfo}>
-                        <Text style={[styles.accountName, {color: theme.text}]}>
-                          {account.nickname || account.username}
-                        </Text>
-                        <Text style={[styles.accountUsername, {color: theme.secondaryText}]}>@{account.username}</Text>
                       </View>
-                    </View>
+                    </TouchableOpacity>
                     <TouchableOpacity
                       style={styles.removeButton}
                       onPress={() => handleRemoveAccount(account)}
                       hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
+                      accessibilityRole="button"
+                      accessibilityLabel={`删除已保存账号 ${account.nickname || account.username}`}
                     >
-                      <Text style={[styles.removeButtonText, {color: theme.border}]}>✕</Text>
+                      <TrashIcon size={18} color={theme.error} />
                     </TouchableOpacity>
-                  </TouchableOpacity>
+                  </View>
                 </View>
               ))}
             </View>
@@ -284,7 +290,9 @@ const AccountSwitchScreen: React.FC = () => {
             onPress={handleAddAccount}
             activeOpacity={0.8}
           >
-            <Text style={[styles.addButtonIcon, {color: theme.primary}]}>+</Text>
+            <View style={styles.addButtonIcon}>
+              <PlusIcon size={20} color={theme.primary} />
+            </View>
             <Text style={[styles.addButtonText, {color: theme.primary}]}>添加账号</Text>
           </TouchableOpacity>
         </View>
@@ -345,6 +353,9 @@ const styles = StyleSheet.create({
     paddingVertical: SPACING.md,
     paddingHorizontal: SPACING.lg,
   },
+  accountItemContent: {
+    flex: 1,
+  },
   accountLeft: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -379,18 +390,11 @@ const styles = StyleSheet.create({
   accountUsername: {
     fontSize: FONT_SIZE.md,
   },
-  checkIcon: {
-    fontSize: FONT_SIZE.xxl,
-    fontWeight: '600',
-  },
   removeButton: {
     width: scaleModerate(28),
     height: scaleModerate(28),
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  removeButtonText: {
-    fontSize: FONT_SIZE.xl,
   },
   divider: {
     height: StyleSheet.hairlineWidth,
@@ -405,7 +409,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   addButtonIcon: {
-    fontSize: FONT_SIZE.xl,
     marginRight: SPACING.xs + 2,
   },
   addButtonText: {

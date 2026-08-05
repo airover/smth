@@ -40,6 +40,9 @@ import {
   EditIcon,
   MenuIcon,
   ChevronDownIcon,
+  PaperclipIcon,
+  XIcon,
+  PlusIcon,
 } from '../components/SvgIcons';
 import {ThemedHeaderButton, useFloatingHeader} from '../components/ThemeHeader';
 import {useReadPosts} from '../context/ReadPostsContext';
@@ -646,14 +649,16 @@ const BoardScreen: React.FC = () => {
       },
       headerLeft: () => (
         <ThemedHeaderButton
-          onPress={() => setShowBoardList(true)}>
-          <MenuIcon size={24} color={theme.headerBackgroundImage ? '#FFFFFF' : theme.tabBarInactive} />
+          onPress={() => setShowBoardList(true)}
+          accessibilityLabel="打开版面目录">
+          <MenuIcon size={24} color={theme.headerBackgroundImage ? '#FFFFFF' : theme.headerTint} />
         </ThemedHeaderButton>
       ),
       headerRight: () => (
         <ThemedHeaderButton
-          onPress={() => navigation.navigate('BoardList', {favorites: true})}>
-          <StarIcon size={24} color={theme.headerBackgroundImage ? '#FFFFFF' : theme.tabBarInactive} />
+          onPress={() => navigation.navigate('BoardList', {favorites: true})}
+          accessibilityLabel="打开收藏版面">
+          <StarIcon size={24} color={theme.headerBackgroundImage ? '#FFFFFF' : theme.headerTint} />
         </ThemedHeaderButton>
       ),
     });
@@ -1630,17 +1635,22 @@ const BoardScreen: React.FC = () => {
       }}>
       <View style={styles.postHeader}>
         {item.isTop && <View style={[styles.topBadge, {backgroundColor: theme.error}]}><Text style={styles.topBadgeText}>置顶</Text></View>}
-        <Text 
-          style={[
-            styles.postTitle,
-            {color: theme.text},
-            item.isTop && {color: theme.error},
-            itemIsRead && {color: theme.secondaryText, fontWeight: 'normal'}
-          ]} 
-          numberOfLines={2}
-        >
-          {item.title}{hasAttachments && <Text style={styles.attachmentIcon}> 📎</Text>}
-        </Text>
+        <View style={styles.postTitleWithAttachment}>
+          <Text
+            style={[
+              styles.postTitle,
+              {color: theme.text},
+              item.isTop && {color: theme.error},
+              itemIsRead && {color: theme.secondaryText, fontWeight: 'normal'}
+            ]}
+            numberOfLines={2}
+          >
+            {item.title}
+          </Text>
+          {hasAttachments && (
+            <PaperclipIcon size={FONT_SIZE.sm} color={theme.secondaryText} />
+          )}
+        </View>
       </View>
       <View style={styles.postMeta}>
         <View style={styles.postAuthorInfo}>
@@ -2001,11 +2011,12 @@ const BoardScreen: React.FC = () => {
                 setShowFabMenu(!showFabMenu);
               }
             }}
-            style={styles.fabButtonTouchable}>
-            <Animated.Text
+            style={styles.fabButtonTouchable}
+            accessibilityRole="button"
+            accessibilityLabel={showFabMenu ? '关闭操作菜单' : '打开操作菜单'}>
+            <Animated.View
               style={[
                 styles.fabIcon,
-                {color: theme.primary},
                 {
                   transform: [
                     {
@@ -2017,8 +2028,8 @@ const BoardScreen: React.FC = () => {
                   ],
                 },
               ]}>
-              +
-            </Animated.Text>
+              <PlusIcon size={26} color={theme.primary} />
+            </Animated.View>
           </TouchableOpacity>
         </Animated.View>
       </>
@@ -2140,8 +2151,12 @@ const BoardScreen: React.FC = () => {
                 <View style={styles.drawerTitleEmoji}><BoardIcon size={20} color={theme.text} /></View>
                 <Text style={[styles.modalTitle, {color: theme.text}]}>版面目录</Text>
               </View>
-              <TouchableOpacity onPress={closeDrawer} style={styles.drawerCloseButton}>
-                <Text style={{fontSize: 20, color: theme.secondaryText}}>✕</Text>
+              <TouchableOpacity
+                onPress={closeDrawer}
+                style={styles.drawerCloseButton}
+                accessibilityRole="button"
+                accessibilityLabel="关闭版面目录">
+                <XIcon size={20} color={theme.secondaryText} />
               </TouchableOpacity>
             </View>
             <ScrollView>
@@ -2286,8 +2301,10 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZE.xs,
     fontWeight: 'bold',
   },
-  attachmentIcon: {
-    fontSize: FONT_SIZE.sm,
+  postTitleWithAttachment: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
   },
   postTitle: {
     flex: 1,
@@ -2639,10 +2656,8 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   fabIcon: {
-    fontSize: 32,
-    // color 由主题动态控制
-    fontWeight: '200',
-    lineHeight: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   fabMenuItem: {
     position: 'absolute',

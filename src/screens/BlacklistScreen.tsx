@@ -14,6 +14,8 @@ import {useNavigation, useFocusEffect} from '@react-navigation/native';
 import {getBlackList} from '../services/api';
 import {useTheme} from '../components/ThemedComponents';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
+import {BanIcon, ChevronRightIcon} from '../components/SvgIcons';
+import {getCardElevation} from '../utils/theme';
 import {
   SPACING,
   FONT_SIZE,
@@ -108,7 +110,7 @@ const BlacklistScreen: React.FC = () => {
   // 渲染用户项
   const renderItem = ({item}: {item: UserItem}) => (
     <TouchableOpacity
-      style={[styles.userItem, {backgroundColor: theme.cardBackground}]}
+      style={[styles.userItem, {backgroundColor: theme.cardBackground}, getCardElevation(theme)]}
       onPress={() => handleUserPress(item)}
       activeOpacity={0.7}
     >
@@ -136,7 +138,7 @@ const BlacklistScreen: React.FC = () => {
           </Text>
         )}
       </View>
-      <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
+      <ChevronRightIcon size={18} color={theme.chevron} />
     </TouchableOpacity>
   );
 
@@ -148,7 +150,9 @@ const BlacklistScreen: React.FC = () => {
     
     return (
       <View style={styles.emptyContainer}>
-        <Text style={styles.emptyIcon}>🚫</Text>
+        <View style={styles.emptyIcon}>
+          <BanIcon size={60} color={theme.secondaryText} />
+        </View>
         <Text style={[styles.emptyText, {color: theme.secondaryText}]}>
           黑名单为空
         </Text>
@@ -231,14 +235,6 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.md,
     flexDirection: 'row',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 2,
   },
   avatar: {
     width: scaleModerate(48),
@@ -280,8 +276,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: scaleModerate(40),
   },
   emptyIcon: {
-    fontSize: scaleModerate(64),
     marginBottom: SPACING.lg,
+    opacity: 0.7,
   },
   emptyText: {
     fontSize: FONT_SIZE.lg,
