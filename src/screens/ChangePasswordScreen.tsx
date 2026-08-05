@@ -14,6 +14,7 @@ import {
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {useNavigation} from '@react-navigation/native';
 import {useTheme} from '../components/ThemedComponents';
+import {EyeIcon, EyeOffIcon} from '../components/SvgIcons';
 import {changePassword} from '../services/api';
 import {useAuth} from '../context/AuthContext';
 import {
@@ -102,8 +103,14 @@ const ChangePasswordScreen: React.FC = () => {
               />
               <TouchableOpacity
                 style={styles.eyeButton}
-                onPress={() => setShowOldPassword(!showOldPassword)}>
-                <Text style={styles.eyeIcon}>{showOldPassword ? '👁️' : '👁️‍🗨️'}</Text>
+                onPress={() => setShowOldPassword(!showOldPassword)}
+                accessibilityRole="button"
+                accessibilityLabel={showOldPassword ? '隐藏旧密码' : '显示旧密码'}>
+                {showOldPassword ? (
+                  <EyeIcon size={22} color={theme.secondaryText} />
+                ) : (
+                  <EyeOffIcon size={22} color={theme.secondaryText} />
+                )}
               </TouchableOpacity>
             </View>
           </View>
@@ -124,8 +131,14 @@ const ChangePasswordScreen: React.FC = () => {
               />
               <TouchableOpacity
                 style={styles.eyeButton}
-                onPress={() => setShowNewPassword(!showNewPassword)}>
-                <Text style={styles.eyeIcon}>{showNewPassword ? '👁️' : '👁️‍🗨️'}</Text>
+                onPress={() => setShowNewPassword(!showNewPassword)}
+                accessibilityRole="button"
+                accessibilityLabel={showNewPassword ? '隐藏新密码' : '显示新密码'}>
+                {showNewPassword ? (
+                  <EyeIcon size={22} color={theme.secondaryText} />
+                ) : (
+                  <EyeOffIcon size={22} color={theme.secondaryText} />
+                )}
               </TouchableOpacity>
             </View>
           </View>
@@ -194,9 +207,6 @@ const styles = StyleSheet.create({
   },
   eyeButton: {
     padding: SPACING.sm,
-  },
-  eyeIcon: {
-    fontSize: FONT_SIZE.xxl,
   },
   submitButton: {
     borderRadius: BORDER_RADIUS.md,

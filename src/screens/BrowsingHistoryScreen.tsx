@@ -13,6 +13,7 @@ import {SwipeListView} from 'react-native-swipe-list-view';
 import {formatRelativeTime} from '../utils/timeFormat';
 import {useTheme, SkeletonList, EmptyState} from '../components/ThemedComponents';
 import {HistoryIcon, ChevronRightIcon} from '../components/SvgIcons';
+import {getCardElevation} from '../utils/theme';
 import {
   SPACING,
   FONT_SIZE,
@@ -128,7 +129,7 @@ const BrowsingHistoryScreen: React.FC = () => {
 
   const renderItem = ({item}: {item: BrowsingHistoryItem}) => (
     <TouchableOpacity
-      style={[styles.historyItem, {backgroundColor: theme.cardBackground}]}
+      style={[styles.historyItem, {backgroundColor: theme.cardBackground}, getCardElevation(theme)]}
       onPress={() => handlePostPress(item)}
       activeOpacity={0.7}
     >
@@ -259,11 +260,6 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.md,
     flexDirection: 'row',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 2,
   },
   itemContent: {
     flex: 1,

@@ -212,6 +212,39 @@ export const SearchIcon: React.FC<IconProps> = ({
   </SvgIcon>
 );
 
+/** 关闭/取消 */
+export const XIcon: React.FC<IconProps> = ({size = 24, color = '#333'}) => (
+  <SvgIcon size={size} color={color}>
+    <Line x1="6" y1="6" x2="18" y2="18" />
+    <Line x1="18" y1="6" x2="6" y2="18" />
+  </SvgIcon>
+);
+
+/** 密码可见 */
+export const EyeIcon: React.FC<IconProps> = ({size = 24, color = '#333'}) => (
+  <SvgIcon size={size} color={color}>
+    <Path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z" />
+    <Circle cx="12" cy="12" r="3" />
+  </SvgIcon>
+);
+
+/** 密码隐藏 */
+export const EyeOffIcon: React.FC<IconProps> = ({size = 24, color = '#333'}) => (
+  <SvgIcon size={size} color={color}>
+    <Path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+    <Path d="M9.9 4.24A9.77 9.77 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+    <Path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+    <Line x1="1" y1="1" x2="23" y2="23" />
+  </SvgIcon>
+);
+
+/** 喜欢/心形 */
+export const HeartIcon: React.FC<IconProps> = ({size = 24, color = '#333'}) => (
+  <SvgIcon size={size} color={color}>
+    <Path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z" />
+  </SvgIcon>
+);
+
 /** 文件夹（展开） */
 export const FolderOpenIcon: React.FC<IconProps> = ({
   size = 24,
@@ -270,6 +303,13 @@ export const BurstIcon: React.FC<IconProps> = ({
       fillOpacity={0.2}
     />
   </Svg>
+);
+
+/** 热度/热门 */
+export const FlameIcon: React.FC<IconProps> = ({size = 24, color = '#333'}) => (
+  <SvgIcon size={size} color={color}>
+    <Path d="M12 22c4.42 0 8-3.13 8-7 0-4.5-3-7.5-5-11-2 2-4 4.5-4 7 0 1.2.4 2.2 1 3-2-.5-3.5-2-3.5-4.5C5.5 11 4 13 4 15c0 3.87 3.58 7 8 7z" />
+  </SvgIcon>
 );
 
 /** 调色板（替代 🎨） */
@@ -445,5 +485,15 @@ export const ChevronDownIcon: React.FC<IconProps> = ({
 }) => (
   <SvgIcon size={size} color={color}>
     <Polyline points="6 9 12 15 18 9" />
+  </SvgIcon>
+);
+
+/** 排序（上下方向） */
+export const SortIcon: React.FC<IconProps> = ({size = 24, color = '#333'}) => (
+  <SvgIcon size={size} color={color}>
+    <Line x1="8" y1="4" x2="8" y2="20" />
+    <Polyline points="4 8 8 4 12 8" />
+    <Line x1="16" y1="20" x2="16" y2="4" />
+    <Polyline points="12 16 16 20 20 16" />
   </SvgIcon>
 );

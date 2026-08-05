@@ -17,7 +17,6 @@ import {TopTenItem, Board} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useTheme, SkeletonList} from '../components/ThemedComponents';
-import {useThemeHeaderHeight} from '../components/ThemeHeader';
 import {getCardElevation} from '../utils/theme';
 import {
   SPACING,
@@ -118,7 +117,7 @@ const saveCacheData = async <T,>(
 const HomeScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const theme = useTheme();
-  const headerHeight = useThemeHeaderHeight();
+  const hasBackgroundImage = !!theme.headerBackgroundImage;
   const {isRead, markAsRead} = useReadPosts();
   const [topTen, setTopTen] = useState<TopTenItem[]>([]);
   const [hotPosts, setHotPosts] = useState<TopTenItem[]>([]);
@@ -604,7 +603,7 @@ const HomeScreen: React.FC = () => {
       {/* 首页内容（被抽屉推下） */}
       <Animated.View style={[styles.mainContent, {transform: [{translateY: contentTranslateY}]}]}>
         {/* 自绘 Header */}
-        {headerHeight === 0 && (
+        {!hasBackgroundImage && (
           <View style={[styles.homeHeader, {backgroundColor: theme.headerBackground}]}>
             <Text style={[styles.homeHeaderTitle, {color: theme.headerText}]}>首页</Text>
           </View>
@@ -616,7 +615,7 @@ const HomeScreen: React.FC = () => {
         />
         <FlatList
           data={[{type: 'content'}]}
-          contentContainerStyle={[styles.content, headerHeight > 0 && {paddingTop: headerHeight}]}
+          contentContainerStyle={styles.content}
           scrollEventThrottle={16}
           onScroll={handleListScroll}
           onScrollBeginDrag={handleScrollBeginDrag}

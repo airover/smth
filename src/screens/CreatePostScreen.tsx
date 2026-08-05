@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useRef} from 'react';
+import React, {useState, useEffect, useMemo, useRef} from 'react';
 import {
   View,
   Text,
@@ -30,6 +30,8 @@ import {
   responsiveSize,
 } from '../utils/responsive';
 import {ThemedHeaderButton, useFloatingHeader} from '../components/ThemeHeader';
+import {useTheme} from '../components/ThemedComponents';
+import {getCardElevation, ThemeColors} from '../utils/theme';
 import {CameraIcon, ImageIcon, CheckCircleIcon, CheckIcon, LightbulbIcon, TrashIcon} from '../components/SvgIcons';
 import {notifySuccess, impactLight} from '../utils/haptics';
 
@@ -57,6 +59,8 @@ const CreatePostScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const route = useRoute();
   const params = (route.params as RouteParams) || {};
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   const isReplyMode = params.mode === 'reply' || !!params.reId;
   const isEditMode = params.mode === 'edit' && !!params.articleId;
@@ -86,16 +90,17 @@ const CreatePostScreen: React.FC = () => {
       headerRight: () => (
         <ThemedHeaderButton
           onPress={handleSubmit}
+          accessibilityLabel={isEditMode ? '保存帖子' : '发布帖子'}
           style={submitting ? {opacity: 0.5} : undefined}>
           {submitting ? (
-            <ActivityIndicator size="small" color="#007AFF" />
+            <ActivityIndicator size="small" color={theme.primary} />
           ) : (
             <Text style={styles.submitText}>{isEditMode ? '保存' : '发布'}</Text>
           )}
         </ThemedHeaderButton>
       ),
     });
-  }, [navigation, isReplyMode, submitting, title, content, captchaVerified, captchaTicket, captchaRandstr, selectedImages, uploadToken, uploading]);
+  }, [navigation, isReplyMode, isEditMode, submitting, title, content, captchaVerified, captchaTicket, captchaRandstr, selectedImages, uploadToken, uploading, theme, styles]);
 
   // 加载草稿 / 编辑模式填充原始内容
   useEffect(() => {
@@ -472,7 +477,7 @@ const CreatePostScreen: React.FC = () => {
   if (loadingDraft) {
     return (
       <View style={styles.container}>
-        <ActivityIndicator size="large" color="#007AFF" style={{marginTop: 100}} />
+        <ActivityIndicator size="large" color={theme.primary} style={{marginTop: 100}} />
       </View>
     );
   }
@@ -518,7 +523,7 @@ const CreatePostScreen: React.FC = () => {
               style={styles.imageSourceButton}
               onPress={handleTakePhoto}>
               <View style={styles.imageSourceButtonContent}>
-                <CameraIcon size={20} color="#333" />
+                <CameraIcon size={20} color={theme.text} />
                 <Text style={styles.imageSourceButtonText}> 拍照</Text>
               </View>
             </TouchableOpacity>
@@ -526,7 +531,7 @@ const CreatePostScreen: React.FC = () => {
               style={styles.imageSourceButton}
               onPress={handleSelectFromGallery}>
               <View style={styles.imageSourceButtonContent}>
-                <ImageIcon size={20} color="#333" />
+                <ImageIcon size={20} color={theme.text} />
                 <Text style={styles.imageSourceButtonText}> 从相册选择</Text>
               </View>
             </TouchableOpacity>
@@ -581,7 +586,7 @@ const CreatePostScreen: React.FC = () => {
               value={title}
               onChangeText={setTitle}
               placeholder="请输入标题"
-              placeholderTextColor="#999"
+              placeholderTextColor={theme.secondaryText}
               maxLength={80}
               returnKeyType="next"
               editable={!submitting}
@@ -597,7 +602,7 @@ const CreatePostScreen: React.FC = () => {
                 value={content}
                 onChangeText={setContent}
                 placeholder="请输入内容"
-                placeholderTextColor="#999"
+                placeholderTextColor={theme.secondaryText}
                 multiline
                 textAlignVertical="top"
                 maxLength={10000}
@@ -611,7 +616,7 @@ const CreatePostScreen: React.FC = () => {
                   onPress={handleShowImageSourcePicker}
                   disabled={submitting || uploading || selectedImages.length >= 9}
                   activeOpacity={0.6}>
-                  <ImageIcon size={22} color="#666" />
+                  <ImageIcon size={22} color={theme.secondaryText} />
                 </TouchableOpacity>
               )}
             </View>
@@ -625,7 +630,7 @@ const CreatePostScreen: React.FC = () => {
                 <Text style={styles.sectionTitle}>已选择 {selectedImages.length}/9 张图片</Text>
                 {uploadToken && (
                   <View style={styles.uploadSuccessContent}>
-                    <CheckIcon size={14} color="#34C759" />
+                    <CheckIcon size={14} color={theme.primary} />
                     <Text style={styles.uploadSuccessText}> 上传完成</Text>
                   </View>
                 )}
@@ -673,21 +678,21 @@ const CreatePostScreen: React.FC = () => {
               style={[
                 styles.captchaButton,
                 {
-                  backgroundColor: captchaVerified ? '#f0fff0' : '#f9f9f9',
-                  borderColor: captchaVerified ? '#34C759' : '#ddd',
+                  backgroundColor: captchaVerified ? theme.quoteBackground : theme.placeholderBackground,
+                  borderColor: captchaVerified ? theme.primary : theme.border,
                 },
               ]}
               onPress={() => setShowCaptchaModal(true)}
               disabled={submitting}>
               {captchaVerified ? (
                 <View style={styles.captchaVerifiedContent}>
-                  <CheckCircleIcon size={18} color="#34C759" />
-                  <Text style={{fontSize: 16, color: '#34C759', marginLeft: 4}}>验证码已验证</Text>
+                  <CheckCircleIcon size={18} color={theme.primary} />
+                  <Text style={{fontSize: 16, color: theme.primary, marginLeft: 4}}>验证码已验证</Text>
                 </View>
               ) : (
                 <>
-                  <Text style={{fontSize: 16, color: '#666'}}>点击进行人机验证</Text>
-                  <Text style={{fontSize: 14, color: '#007AFF'}}>去验证</Text>
+                  <Text style={{fontSize: 16, color: theme.secondaryText}}>点击进行人机验证</Text>
+                  <Text style={{fontSize: 14, color: theme.primary}}>去验证</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -696,7 +701,7 @@ const CreatePostScreen: React.FC = () => {
           {/* 提示信息 */}
           <View style={styles.tipContainer}>
             <View style={styles.tipHeader}>
-              <LightbulbIcon size={16} color="#E6A700" />
+              <LightbulbIcon size={16} color={theme.primary} />
               <Text style={styles.tipText}> 提示：</Text>
             </View>
             {isEditMode ? (
@@ -718,17 +723,17 @@ const CreatePostScreen: React.FC = () => {
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: ThemeColors) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: theme.background,
   },
   headerButton: {
     paddingHorizontal: SPACING.sm,
   },
   submitText: {
     fontSize: FONT_SIZE.lg,
-    color: '#007AFF',
+    color: theme.primary,
     fontWeight: '600',
   },
   content: {
@@ -738,44 +743,45 @@ const styles = StyleSheet.create({
   boardInfo: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: theme.cardBackground,
+    ...getCardElevation(theme),
     padding: SPACING.md,
     borderRadius: BORDER_RADIUS.md,
     marginBottom: SPACING.lg,
   },
   boardLabel: {
     fontSize: FONT_SIZE.md,
-    color: '#666',
+    color: theme.secondaryText,
   },
   boardName: {
     fontSize: FONT_SIZE.md,
-    color: '#007AFF',
+    color: theme.primary,
     fontWeight: '600',
   },
   inputGroup: {
     marginBottom: SPACING.lg,
   },
   titleInput: {
-    backgroundColor: '#fff',
+    backgroundColor: theme.cardBackground,
     borderRadius: BORDER_RADIUS.md,
     padding: SPACING.md,
     fontSize: FONT_SIZE.lg,
-    color: '#333',
+    color: theme.text,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: theme.border,
   },
   contentInputContainer: {
     position: 'relative',
   },
   contentInput: {
-    backgroundColor: '#fff',
+    backgroundColor: theme.cardBackground,
     borderRadius: BORDER_RADIUS.md,
     padding: SPACING.md,
     paddingBottom: responsiveSize(44, 48, 52, 56), // 为左下角按钮留出空间
     fontSize: FONT_SIZE.lg,
-    color: '#333',
+    color: theme.text,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: theme.border,
     minHeight: responsiveSize(180, 200, 220, 250),
     maxHeight: responsiveSize(350, 400, 450, 500),
   },
@@ -790,7 +796,7 @@ const styles = StyleSheet.create({
   },
   counter: {
     fontSize: FONT_SIZE.sm,
-    color: '#999',
+    color: theme.secondaryText,
     textAlign: 'right',
     marginTop: SPACING.xs,
   },
@@ -798,15 +804,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#f9f9f9',
+    backgroundColor: theme.placeholderBackground,
     borderWidth: 1,
-    borderColor: '#ddd',
+    borderColor: theme.border,
     borderRadius: BORDER_RADIUS.md,
     padding: SPACING.lg,
     minHeight: responsiveSize(46, 50, 54, 58),
   },
   tipContainer: {
-    backgroundColor: '#fff9e6',
+    backgroundColor: theme.quoteBackground,
     borderRadius: BORDER_RADIUS.md,
     padding: SPACING.md,
     marginTop: SPACING.sm,
@@ -817,7 +823,7 @@ const styles = StyleSheet.create({
   },
   tipText: {
     fontSize: FONT_SIZE.sm,
-    color: '#666',
+    color: theme.secondaryText,
     lineHeight: FONT_SIZE.xl,
   },
   captchaVerifiedContent: {
@@ -838,7 +844,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: FONT_SIZE.md,
     fontWeight: '600',
-    color: '#333',
+    color: theme.text,
   },
   imageListHeader: {
     flexDirection: 'row',
@@ -852,7 +858,7 @@ const styles = StyleSheet.create({
   },
   uploadSuccessText: {
     fontSize: FONT_SIZE.sm,
-    color: '#34C759',
+    color: theme.primary,
     fontWeight: '600',
   },
   progressContainer: {
@@ -864,18 +870,18 @@ const styles = StyleSheet.create({
   progressBar: {
     flex: 1,
     height: SPACING.sm,
-    backgroundColor: '#e0e0e0',
+    backgroundColor: theme.border,
     borderRadius: BORDER_RADIUS.sm,
     overflow: 'hidden',
   },
   progressFill: {
     height: '100%',
-    backgroundColor: '#007AFF',
+    backgroundColor: theme.primary,
     borderRadius: BORDER_RADIUS.sm,
   },
   progressText: {
     fontSize: FONT_SIZE.sm,
-    color: '#007AFF',
+    color: theme.primary,
     fontWeight: '600',
     minWidth: scaleModerate(40),
     textAlign: 'right',
@@ -891,7 +897,7 @@ const styles = StyleSheet.create({
     width: scaleModerate(80),
     height: scaleModerate(80),
     borderRadius: BORDER_RADIUS.md,
-    backgroundColor: '#f0f0f0',
+    backgroundColor: theme.placeholderBackground,
   },
   removeImageButton: {
     position: 'absolute',
@@ -900,7 +906,7 @@ const styles = StyleSheet.create({
     width: scaleModerate(24),
     height: scaleModerate(24),
     borderRadius: scaleModerate(12),
-    backgroundColor: '#FF3B30',
+    backgroundColor: theme.error,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -917,7 +923,7 @@ const styles = StyleSheet.create({
     width: scaleModerate(20),
     height: scaleModerate(20),
     borderRadius: scaleModerate(10),
-    backgroundColor: '#34C759',
+    backgroundColor: theme.primary,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -938,9 +944,9 @@ const styles = StyleSheet.create({
   },
   imageActionButton: {
     flex: 1,
-    backgroundColor: '#f9f9f9',
+    backgroundColor: theme.placeholderBackground,
     borderWidth: 1,
-    borderColor: '#ddd',
+    borderColor: theme.border,
     borderRadius: BORDER_RADIUS.md,
     padding: SPACING.md,
     alignItems: 'center',
@@ -949,13 +955,13 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   uploadButton: {
-    backgroundColor: '#007AFF',
-    borderColor: '#007AFF',
+    backgroundColor: theme.primary,
+    borderColor: theme.primary,
   },
   imageActionButtonText: {
     fontSize: FONT_SIZE.md,
     fontWeight: '600',
-    color: '#333',
+    color: theme.text,
   },
   imageSourceOverlay: {
     flex: 1,
@@ -966,23 +972,23 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   imageSourceModalContainer: {
-    backgroundColor: '#fff',
+    backgroundColor: theme.cardBackground,
     borderTopLeftRadius: BORDER_RADIUS.xl,
     borderTopRightRadius: BORDER_RADIUS.xl,
     padding: SPACING.lg,
     paddingBottom: SPACING.xxxl,
   },
   imageSourceButton: {
-    backgroundColor: '#f9f9f9',
+    backgroundColor: theme.placeholderBackground,
     borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.lg,
     marginBottom: SPACING.md,
     alignItems: 'center',
   },
   imageSourceCancelButton: {
-    backgroundColor: '#fff',
+    backgroundColor: theme.cardBackground,
     borderWidth: 1,
-    borderColor: '#ddd',
+    borderColor: theme.border,
   },
   imageSourceButtonContent: {
     flexDirection: 'row',
@@ -991,15 +997,15 @@ const styles = StyleSheet.create({
   imageSourceButtonText: {
     fontSize: FONT_SIZE.lg,
     fontWeight: '600',
-    color: '#333',
+    color: theme.text,
   },
   imageSourceCancelText: {
-    color: '#666',
+    color: theme.secondaryText,
   },
   keyboardAccessory: {
-    backgroundColor: '#f9f9f9',
+    backgroundColor: theme.placeholderBackground,
     borderTopWidth: 1,
-    borderTopColor: '#ddd',
+    borderTopColor: theme.border,
     paddingHorizontal: SPACING.md,
     paddingVertical: SPACING.sm,
     flexDirection: 'row',
@@ -1011,7 +1017,7 @@ const styles = StyleSheet.create({
   },
   keyboardDoneText: {
     fontSize: FONT_SIZE.lg,
-    color: '#007AFF',
+    color: theme.primary,
     fontWeight: '600',
   },
 });

@@ -23,8 +23,8 @@ import {SafeAreaView} from 'react-native-safe-area-context';
 import Clipboard from '@react-native-clipboard/clipboard';
 import ImageCropPicker from 'react-native-image-crop-picker';
 import QRCode from 'react-native-qrcode-svg';
-import Svg, { Path, Circle, Rect, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
-import {SearchIcon, CameraIcon, StarIcon, MapPinIcon, CheckIcon, MailIcon, ImageIcon, TrashIcon, FlashlightIcon, LightbulbIcon, ArrowLeftIcon, MoreVerticalIcon, ChevronDownIcon} from '../components/SvgIcons';
+import Svg, { Rect, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
+import {SearchIcon, CameraIcon, StarIcon, MapPinIcon, CheckIcon, MailIcon, ImageIcon, TrashIcon, FlashlightIcon, PlusIcon, XIcon, ArrowLeftIcon, MoreVerticalIcon, ChevronDownIcon} from '../components/SvgIcons';
 import {Camera, useCameraDevice, useCodeScanner} from 'react-native-vision-camera';
 import {useRoute, useNavigation} from '@react-navigation/native';
 import {getUserInfo, fetchUserInfo, sendMessage, addBlack, removeBlack, addFriend, removeFriend, checkIsHerBlack, getFriendsList, getBlackList} from '../services/api';
@@ -1033,6 +1033,8 @@ const UserProfileScreen: React.FC = () => {
             <TouchableOpacity 
               style={styles.topBarButton}
               onPress={() => navigation.goBack()}
+              accessibilityRole="button"
+              accessibilityLabel="返回"
             >
               <ArrowLeftIcon size={scaleModerate(20)} color="#fff" />
             </TouchableOpacity>
@@ -1040,6 +1042,8 @@ const UserProfileScreen: React.FC = () => {
               <TouchableOpacity 
                 style={styles.topBarButton}
                 onPress={() => navigation.navigate('SearchInput' as never)}
+                accessibilityRole="button"
+                accessibilityLabel="搜索"
               >
                 <SearchIcon size={scaleModerate(20)} color="#fff" />
               </TouchableOpacity>
@@ -1047,6 +1051,8 @@ const UserProfileScreen: React.FC = () => {
               <TouchableOpacity 
                 style={styles.topBarButton}
                 onPress={handleOpenScanner}
+                accessibilityRole="button"
+                accessibilityLabel="扫一扫"
               >
                 <CameraIcon size={scaleModerate(20)} color="#fff" />
               </TouchableOpacity>
@@ -1107,6 +1113,8 @@ const UserProfileScreen: React.FC = () => {
                     }
                   }
                 }}
+                accessibilityRole="button"
+                accessibilityLabel="更多操作"
               >
                 <MoreVerticalIcon size={scaleModerate(20)} color="#fff" />
               </TouchableOpacity>
@@ -1310,7 +1318,10 @@ const UserProfileScreen: React.FC = () => {
                     <Text style={[styles.primaryButtonText, styles.primaryButtonTextFollowed]}> 已关注</Text>
                   </View>
                 ) : (
-                  <Text style={styles.primaryButtonText}>+ 关注</Text>
+                  <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                    <PlusIcon size={14} color="#fff" />
+                    <Text style={[styles.primaryButtonText, {marginLeft: 4}]}>关注</Text>
+                  </View>
                 )}
               </TouchableOpacity>
               <TouchableOpacity 
@@ -1611,27 +1622,29 @@ const UserProfileScreen: React.FC = () => {
                   setTorchOn(false);
                   isProcessingQR.current = false; // 重置防抖状态
                 }}
+                accessibilityRole="button"
+                accessibilityLabel="关闭扫码"
               >
-                <Text style={styles.scannerCloseText}>✕</Text>
+                <XIcon size={22} color="#fff" />
               </TouchableOpacity>
               {/* 手电筒按钮 */}
               <TouchableOpacity
                 style={styles.scannerTorchButton}
                 onPress={() => setTorchOn(!torchOn)}
+                accessibilityRole="button"
+                accessibilityLabel={torchOn ? '关闭手电筒' : '打开手电筒'}
               >
-                {torchOn ? <FlashlightIcon size={scaleModerate(24)} color="#FFD700" /> : <LightbulbIcon size={scaleModerate(24)} color="#fff" />}
+                <FlashlightIcon size={scaleModerate(24)} color={torchOn ? '#FFD700' : '#fff'} />
               </TouchableOpacity>
               {/* 相册按钮 */}
               <TouchableOpacity
                 style={styles.scannerGalleryButton}
                 onPress={handleSelectQRFromGallery}
+                accessibilityRole="button"
+                accessibilityLabel="从相册选择二维码"
               >
                 <View style={styles.scannerGalleryIcon}>
-                  <Svg width={scaleModerate(24)} height={scaleModerate(24)} viewBox="0 0 24 24" fill="none">
-                    <Rect x="3" y="3" width="18" height="18" rx="2" ry="2" stroke="#fff" strokeWidth="2" />
-                    <Circle cx="8.5" cy="8.5" r="1.5" fill="#fff" />
-                    <Path d="M21 15l-5-5L5 21" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                  </Svg>
+                  <ImageIcon size={24} color="#fff" />
                 </View>
                 <Text style={styles.scannerGalleryText}>相册</Text>
               </TouchableOpacity>
@@ -1822,13 +1835,13 @@ const createStyles = (theme: ThemeColors) => StyleSheet.create({
   },
   titleText: {
     fontSize: FONT_SIZE.sm,
-    color: '#FF8C00', // 橙色
+    color: theme.primary,
     fontWeight: '600',
     marginRight: SPACING.xs + 2,
     marginBottom: SPACING.xs,
   },
   customBadge: {
-    backgroundColor: '#FFF7E6',
+    backgroundColor: theme.quoteBackground,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 4,
@@ -1837,11 +1850,11 @@ const createStyles = (theme: ThemeColors) => StyleSheet.create({
   },
   customBadgeText: {
     fontSize: 11,
-    color: '#FF8C00',
+    color: theme.primary,
     fontWeight: '600',
   },
   verifiedBadge: {
-    backgroundColor: '#E6F7FF',
+    backgroundColor: theme.placeholderBackground,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 4,
@@ -1850,7 +1863,7 @@ const createStyles = (theme: ThemeColors) => StyleSheet.create({
   },
   verifiedText: {
     fontSize: 12,
-    color: '#1890FF', // 蓝色
+    color: theme.primary,
     fontWeight: '600',
     marginRight: 6,
     marginBottom: 4,
@@ -2344,11 +2357,6 @@ const createStyles = (theme: ThemeColors) => StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.3)',
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  scannerCloseText: {
-    fontSize: FONT_SIZE.xxxl,
-    color: '#fff',
-    fontWeight: 'bold',
   },
   scannerTorchButton: {
     position: 'absolute',

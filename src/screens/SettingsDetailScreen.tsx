@@ -24,6 +24,7 @@ import {isMSiteEnabled, setMSiteEnabled} from '../services/auth';
 import {getSavedCredentials} from '../utils/storage';
 import CaptchaScreen from './CaptchaScreen';
 import {useTheme} from '../components/ThemedComponents';
+import {CheckCircleIcon, CheckIcon, ChevronRightIcon, XIcon} from '../components/SvgIcons';
 import {
   SPACING,
   FONT_SIZE,
@@ -297,7 +298,7 @@ const subject = encodeURIComponent('海月水母用户反馈');
                 {option.label}
               </Text>
               {option.current && (
-                <Text style={[styles.modalCheckmark, {color: theme.primary}]}>✓</Text>
+                <CheckIcon size={18} color={theme.primary} />
               )}
             </TouchableOpacity>
           ))}
@@ -319,7 +320,7 @@ const subject = encodeURIComponent('海月水母用户反馈');
                 <View style={styles.menuItemLeft}>
                   <Text style={[styles.menuItemText, {color: theme.text}]}>个人资料</Text>
                 </View>
-                <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
+                <ChevronRightIcon size={18} color={theme.chevron} />
               </TouchableOpacity>
             </View>
           </View>
@@ -337,7 +338,7 @@ const subject = encodeURIComponent('海月水母用户反馈');
               </View>
               <View style={styles.menuItemRight}>
                 <Text style={[styles.menuValue, {color: theme.secondaryText}]}>{getFontSizeLabel()}</Text>
-                <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
+                <ChevronRightIcon size={18} color={theme.chevron} />
               </View>
             </TouchableOpacity>
             <View style={[styles.divider, {backgroundColor: theme.border}]} />
@@ -349,7 +350,7 @@ const subject = encodeURIComponent('海月水母用户反馈');
               </View>
               <View style={styles.menuItemRight}>
                 <Text style={[styles.menuValue, {color: theme.secondaryText}]}>{getThemeLabel()}</Text>
-                <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
+                <ChevronRightIcon size={18} color={theme.chevron} />
               </View>
             </TouchableOpacity>
           </View>
@@ -391,7 +392,7 @@ const subject = encodeURIComponent('海月水母用户反馈');
               <View style={styles.menuItemLeft}>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>缓存管理</Text>
               </View>
-              <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
+              <ChevronRightIcon size={18} color={theme.chevron} />
             </TouchableOpacity>
           </View>
         </View>
@@ -411,7 +412,7 @@ const subject = encodeURIComponent('海月水母用户反馈');
               <View style={styles.menuItemLeft}>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>用户反馈</Text>
               </View>
-              <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
+              <ChevronRightIcon size={18} color={theme.chevron} />
             </TouchableOpacity>
             <View style={[styles.divider, {backgroundColor: theme.border}]} />
             <TouchableOpacity 
@@ -420,7 +421,7 @@ const subject = encodeURIComponent('海月水母用户反馈');
               <View style={styles.menuItemLeft}>
                 <Text style={[styles.menuItemText, {color: theme.text}]}>免责声明</Text>
               </View>
-              <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
+              <ChevronRightIcon size={18} color={theme.chevron} />
             </TouchableOpacity>
           </View>
         </View>
@@ -436,15 +437,28 @@ const subject = encodeURIComponent('海月水母用户反馈');
                   <View style={styles.menuItemLeft}>
                     <View style={styles.switchItemContent}>
                       <Text style={[styles.menuItemText, {color: theme.text}]}>登录 M 站</Text>
-                      <Text style={[styles.switchItemDescription, {color: theme.secondaryText}]}>
-                        {!mSiteEnabled
-                          ? '开启后可改善部分帖子图片加载失败的情况'
-                          : mSiteLoggedIn === null
-                            ? '检查登录状态...'
-                            : mSiteLoggedIn
-                              ? '✅ 已登录，可改善帖子图片加载'
-                              : '⚠️ 未登录，等待自动重连...'}
-                      </Text>
+                      {!mSiteEnabled ? (
+                        <Text style={[styles.switchItemDescription, {color: theme.secondaryText}]}>
+                          开启后可改善部分帖子图片加载失败的情况
+                        </Text>
+                      ) : mSiteLoggedIn === null ? (
+                        <Text style={[styles.switchItemDescription, {color: theme.secondaryText}]}>
+                          检查登录状态...
+                        </Text>
+                      ) : (
+                        <View style={styles.switchStatusDescription}>
+                          {mSiteLoggedIn ? (
+                            <CheckCircleIcon size={14} color="#34C759" />
+                          ) : (
+                            <XIcon size={14} color={theme.error} />
+                          )}
+                          <Text style={[styles.switchItemDescription, {color: theme.secondaryText, marginTop: 0}]}>
+                            {mSiteLoggedIn
+                              ? '已登录，可改善帖子图片加载'
+                              : '未登录，等待自动重连...'}
+                          </Text>
+                        </View>
+                      )}
                     </View>
                   </View>
                   <Switch
@@ -462,7 +476,7 @@ const subject = encodeURIComponent('海月水母用户反馈');
                   <View style={styles.menuItemLeft}>
                     <Text style={[styles.menuItemText, {color: theme.text}]}>修改密码</Text>
                   </View>
-                  <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
+                  <ChevronRightIcon size={18} color={theme.chevron} />
                 </TouchableOpacity>
                 <View style={[styles.divider, {backgroundColor: theme.border}]} />
                 <TouchableOpacity 
@@ -471,7 +485,7 @@ const subject = encodeURIComponent('海月水母用户反馈');
                   <View style={styles.menuItemLeft}>
                     <Text style={[styles.menuItemText, {color: theme.text}]}>切换账号</Text>
                   </View>
-                  <Text style={[styles.chevron, {color: theme.border}]}>›</Text>
+                  <ChevronRightIcon size={18} color={theme.chevron} />
                 </TouchableOpacity>
               </View>
             </View>
@@ -647,6 +661,12 @@ const styles = StyleSheet.create({
     // color 由主题动态控制
     marginTop: SPACING.xs,
   },
+  switchStatusDescription: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: SPACING.xs,
+    gap: SPACING.xs,
+  },
   infoRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -728,11 +748,6 @@ const styles = StyleSheet.create({
   modalOptionText: {
     fontSize: FONT_SIZE.lg,
     // color 由主题动态控制
-  },
-  modalCheckmark: {
-    fontSize: FONT_SIZE.xxl,
-    // color 由主题动态控制
-    fontWeight: 'bold',
   },
   disclaimerModalContent: {
     borderRadius: BORDER_RADIUS.lg,

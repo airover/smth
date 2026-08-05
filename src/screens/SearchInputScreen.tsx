@@ -12,6 +12,7 @@ import {SafeAreaView} from 'react-native-safe-area-context';
 import {useNavigation} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useTheme} from '../components/ThemedComponents';
+import {CheckIcon, HistoryIcon, SearchIcon, XIcon} from '../components/SvgIcons';
 import {
   SPACING,
   FONT_SIZE,
@@ -165,16 +166,22 @@ const SearchInputScreen: React.FC = () => {
     <View style={[styles.historyItem, {borderBottomColor: theme.border}]}>
       <TouchableOpacity
         style={styles.historyItemContent}
-        onPress={() => handleSearch(item)}>
-        <Text style={styles.historyIcon}>🕐</Text>
+        onPress={() => handleSearch(item)}
+        accessibilityRole="button"
+        accessibilityLabel={`搜索历史：${item}`}>
+        <View style={styles.historyIcon}>
+          <HistoryIcon size={18} color={theme.secondaryText} />
+        </View>
         <Text style={[styles.historyText, {color: theme.text}]} numberOfLines={1}>
           {item}
         </Text>
       </TouchableOpacity>
       <TouchableOpacity
         style={styles.deleteButton}
-        onPress={() => deleteHistoryItem(item)}>
-        <Text style={[styles.deleteIcon, {color: theme.secondaryText}]}>×</Text>
+        onPress={() => deleteHistoryItem(item)}
+        accessibilityRole="button"
+        accessibilityLabel={`删除搜索历史：${item}`}>
+        <XIcon size={18} color={theme.secondaryText} />
       </TouchableOpacity>
     </View>
   );
@@ -184,7 +191,9 @@ const SearchInputScreen: React.FC = () => {
       {/* 搜索输入框 */}
       <View style={[styles.searchContainer, {backgroundColor: theme.cardBackground, borderBottomColor: theme.border}]}>
         <View style={[styles.searchInputWrapper, {backgroundColor: theme.background}]}>
-          <Text style={styles.searchIcon}>🔍</Text>
+          <View style={styles.searchIcon}>
+            <SearchIcon size={18} color={theme.secondaryText} />
+          </View>
           <TextInput
             style={[styles.searchInput, {color: theme.text}]}
             placeholder="搜索文章/版面/用户"
@@ -198,8 +207,10 @@ const SearchInputScreen: React.FC = () => {
           {keyword.length > 0 && (
             <TouchableOpacity
               style={styles.clearButton}
-              onPress={() => setKeyword('')}>
-              <Text style={[styles.clearIcon, {color: theme.secondaryText}]}>×</Text>
+              onPress={() => setKeyword('')}
+              accessibilityRole="button"
+              accessibilityLabel="清除搜索关键词">
+              <XIcon size={18} color={theme.secondaryText} />
             </TouchableOpacity>
           )}
         </View>
@@ -221,7 +232,7 @@ const SearchInputScreen: React.FC = () => {
           }}
           activeOpacity={0.7}>
           <View style={[styles.checkbox, {borderColor: theme.primary}]}>
-            {searchArticle && <Text style={[styles.checkmark, {color: theme.primary}]}>✓</Text>}
+            {searchArticle && <CheckIcon size={14} color={theme.primary} />}
           </View>
           <Text style={[styles.checkboxLabel, {color: theme.text}]}>文章</Text>
         </TouchableOpacity>
@@ -235,7 +246,7 @@ const SearchInputScreen: React.FC = () => {
           }}
           activeOpacity={0.7}>
           <View style={[styles.checkbox, {borderColor: theme.primary}]}>
-            {searchBoard && <Text style={[styles.checkmark, {color: theme.primary}]}>✓</Text>}
+            {searchBoard && <CheckIcon size={14} color={theme.primary} />}
           </View>
           <Text style={[styles.checkboxLabel, {color: theme.text}]}>版面</Text>
         </TouchableOpacity>
@@ -249,7 +260,7 @@ const SearchInputScreen: React.FC = () => {
           }}
           activeOpacity={0.7}>
           <View style={[styles.checkbox, {borderColor: theme.primary}]}>
-            {searchUser && <Text style={[styles.checkmark, {color: theme.primary}]}>✓</Text>}
+            {searchUser && <CheckIcon size={14} color={theme.primary} />}
           </View>
           <Text style={[styles.checkboxLabel, {color: theme.text}]}>用户</Text>
         </TouchableOpacity>
@@ -276,7 +287,9 @@ const SearchInputScreen: React.FC = () => {
       {/* 空状态提示 */}
       {searchHistory.length === 0 && (
         <View style={styles.emptyContainer}>
-          <Text style={styles.emptyIcon}>🔍</Text>
+          <View style={styles.emptyIcon}>
+            <SearchIcon size={48} color={theme.secondaryText} />
+          </View>
           <Text style={[styles.emptyText, {color: theme.secondaryText}]}>暂无搜索历史</Text>
           <Text style={[styles.emptyHint, {color: theme.secondaryText}]}>输入关键词开始搜索</Text>
         </View>
@@ -305,7 +318,6 @@ const styles = StyleSheet.create({
     height: scaleModerate(40),
   },
   searchIcon: {
-    fontSize: FONT_SIZE.lg,
     marginRight: SPACING.sm,
   },
   searchInput: {
@@ -315,10 +327,6 @@ const styles = StyleSheet.create({
   },
   clearButton: {
     padding: SPACING.xs,
-  },
-  clearIcon: {
-    fontSize: FONT_SIZE.xxl,
-    fontWeight: '300',
   },
   cancelButton: {
     marginLeft: SPACING.md,
@@ -359,7 +367,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   historyIcon: {
-    fontSize: FONT_SIZE.lg,
     marginRight: SPACING.md,
   },
   historyText: {
@@ -369,10 +376,6 @@ const styles = StyleSheet.create({
   deleteButton: {
     padding: SPACING.sm,
     marginLeft: SPACING.sm,
-  },
-  deleteIcon: {
-    fontSize: FONT_SIZE.xxxl,
-    fontWeight: '300',
   },
   emptyContainer: {
     flex: 1,
@@ -413,10 +416,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: SPACING.sm,
-  },
-  checkmark: {
-    fontSize: FONT_SIZE.md,
-    fontWeight: 'bold',
   },
   checkboxLabel: {
     fontSize: FONT_SIZE.lg,

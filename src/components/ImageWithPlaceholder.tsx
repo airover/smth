@@ -1,4 +1,4 @@
-import React, {useState, useRef} from 'react';
+import React, {useState, useRef, useEffect} from 'react';
 import {Image, Animated, View, Text, StyleSheet, ImageStyle, StyleProp, ViewStyle, ActivityIndicator, ImageResizeMode} from 'react-native';
 import Svg, {Path, Line} from 'react-native-svg';
 import {useTheme} from './ThemedComponents';
@@ -38,6 +38,18 @@ const ImageWithPlaceholder: React.FC<ImageWithPlaceholderProps> = ({
   const [failed, setFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   const opacity = useRef(new Animated.Value(0)).current;
+  const previousUri = useRef(uri);
+
+  // 同一列表项复用组件时，头像地址变化后要重新尝试加载，不能沿用旧的失败状态。
+  useEffect(() => {
+    if (previousUri.current === uri) {
+      return;
+    }
+    previousUri.current = uri;
+    setFailed(false);
+    setLoading(true);
+    opacity.setValue(0);
+  }, [uri, opacity]);
 
   if (failed) {
     if (isAvatar) {

@@ -19,7 +19,7 @@ import {
   SkeletonList,
   EmptyState,
 } from '../components/ThemedComponents';
-import {StarIcon, BoardIcon} from '../components/SvgIcons';
+import {ChevronRightIcon, StarIcon, BoardIcon} from '../components/SvgIcons';
 import {getCardElevation} from '../utils/theme';
 import {
   SPACING,
@@ -355,7 +355,7 @@ const FavoritesScreen: React.FC = () => {
           </Text>
         )}
       </View>
-      <Text style={[styles.boardArrow, {color: theme.secondaryText}]}>›</Text>
+      <ChevronRightIcon size={18} color={theme.chevron} />
     </TouchableOpacity>
   );
 
@@ -565,10 +565,6 @@ const styles = StyleSheet.create({
   },
   boardDesc: {
     fontSize: FONT_SIZE.sm,
-  },
-  boardArrow: {
-    fontSize: scaleModerate(24),
-    marginLeft: SPACING.md,
   },
   // 底部加载
   footerContainer: {

@@ -1065,13 +1065,13 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredent
                 flexDirection: 'row',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                backgroundColor: captchaVerified ? (isDarkMode ? '#1a3a1a' : '#f0fff0') : theme.placeholderBackground,
-                borderColor: captchaVerified ? '#34C759' : theme.border,
+                backgroundColor: captchaVerified ? theme.quoteBackground : theme.placeholderBackground,
+                borderColor: captchaVerified ? theme.primary : theme.border,
               }
             ]}
             onPress={() => setShowCaptchaScreen(true)}
           >
-            <Text style={{ fontSize: 16, color: captchaVerified ? '#34C759' : theme.secondaryText }}>
+            <Text style={{ fontSize: 16, color: captchaVerified ? theme.primary : theme.secondaryText }}>
               {captchaVerified ? '✅ 验证码已验证' : '点击进行人机验证'}
             </Text>
             {!captchaVerified && <Text style={{ fontSize: 14, color: theme.primary }}>去验证</Text>}

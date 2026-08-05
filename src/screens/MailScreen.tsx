@@ -17,6 +17,7 @@ import {Mail} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
 import {useTheme, SkeletonList, EmptyState} from '../components/ThemedComponents';
 import {MailIcon} from '../components/SvgIcons';
+import {getCardElevation} from '../utils/theme';
 import {
   SPACING,
   FONT_SIZE,
@@ -152,6 +153,7 @@ const MailScreen: React.FC = () => {
         style={[
           styles.mailItem,
           {backgroundColor: theme.cardBackground},
+          getCardElevation(theme),
           hasUnread && [styles.unreadMail, {backgroundColor: theme.primary + '10', borderLeftColor: theme.primary}]
         ]}
         onPress={() => {
@@ -244,11 +246,6 @@ const styles = StyleSheet.create({
     borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.lg,
     marginBottom: SPACING.md,
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 2,
   },
   unreadMail: {
     borderLeftWidth: 3,
@@ -320,4 +317,3 @@ const styles = StyleSheet.create({
 });
 
 export default MailScreen;
-
