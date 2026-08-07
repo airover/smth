@@ -508,8 +508,8 @@ interface ImageAsset {
 /**
  * 批量上传图片（一次请求上传多张图片）
  * 
- * 使用 rn-fetch-blob 库进行文件上传，该库可以正确读取本地文件并发送
- * React Native 的 fetch/XMLHttpRequest 在处理 FormData 文件时存在兼容性问题
+ * 使用 React Native 原生 XMLHttpRequest 上传 FormData，确保与普通发帖请求
+ * 共用同一套网络栈和 Cookie 处理逻辑，同时保留上传进度回调。
  * 
  * @param boardId 版面ID
  * @param token 上传token
@@ -541,13 +541,9 @@ export const uploadImages = async (
     // Android 不支持 HEIC 格式，所以也不需要转码
     const processedAssets = imageAssets;
 
-    // 构建 multipart/form-data 数据
-    const formDataParts: Array<{
-      name: string;
-      filename: string;
-      type: string;
-      data: string; // rn-fetch-blob 使用 wrap() 包装文件路径
-    }> = [];
+    // 构建 React Native 支持的 multipart/form-data 数据
+    const formData = new FormData();
+    let validImageCount = 0;
     
     for (let i = 0; i < processedAssets.length; i++) {
       const asset = processedAssets[i];
@@ -601,56 +597,62 @@ export const uploadImages = async (
         throw new Error(`无法读取图片文件: ${filename}`);
       }
 
-      // 使用 RNFetchBlob.wrap() 包装文件路径
-      formDataParts.push({
-        name: 'files', // 根据前端JS分析，字段名应为 'files'
-        filename: filename,
+      // React Native FormData 的文件字段使用 uri/name/type 结构。
+      // filePath 已去掉 file:// 前缀，content:// 等原生 URI 则保持不变。
+      const uploadUri = filePath.includes('://') ? filePath : `file://${filePath}`;
+      formData.append('files', {
+        uri: uploadUri,
+        name: filename,
         type: mimeType,
-        data: RNFetchBlob.wrap(filePath),
       });
+      validImageCount++;
     }
     
-    if (formDataParts.length === 0) {
+    if (validImageCount === 0) {
       throw new Error('没有有效的图片可上传');
     }
 
     logRequest.start(API_URL, 'POST');
-    logRequest.params({boardId, token, imageCount: processedAssets.length});
+    logRequest.params({boardId, token, imageCount: validImageCount});
 
-    // 构建请求头（使用封装好的函数）
-    // set_identity 已在登录后由 api.ts 自动构造并持久化，无需再手动构造
-    // Content-Type 由 rn-fetch-blob 自动设置为 multipart/form-data，所以这里不传 contentType
+    // 不设置 Content-Type，让原生网络层自动生成正确的 multipart boundary。
     const requestHeaders = buildPostHeaders(
       cookies,
-      '', // Content-Type 由 rn-fetch-blob 自动设置，传空字符串避免使用默认的 urlencoded
+      '',
       `https://wap.newsmth.net/post?boardId=${boardId}`
     );
 
-    // 使用 rn-fetch-blob 上传文件
-    const response = await RNFetchBlob.config({
-      timeout: 30000,
-    }).fetch(
-      'POST',
-      API_URL,
-      requestHeaders,
-      formDataParts
-    )
-    .uploadProgress((written, total) => {
-      // 上传进度从0%开始，预留5%给服务器处理
-      let progress = Math.round((written / total) * 95);
-      // 限制进度最大为95%，预留5%给服务器处理时间
-      if (progress > 95) {
-        progress = 95;
-      }
-      if (onProgress) {
-        onProgress(progress);
-      }
-    });    const responseText = await response.text();
+    const responseText = await new Promise<string>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', API_URL);
+      xhr.timeout = 30000;
+      xhr.withCredentials = true;
 
-    if (response.respInfo.status !== 200) {
-      logRequest.error(API_URL, new Error(`HTTP ${response.respInfo.status}: ${responseText}`));
-      throw new Error(`上传图片失败: ${response.respInfo.status}`);
-    }
+      Object.entries(requestHeaders).forEach(([key, value]) => {
+        xhr.setRequestHeader(key, value);
+      });
+
+      xhr.upload.onprogress = event => {
+        if (event.total <= 0) {
+          return;
+        }
+        const progress = Math.min(95, Math.round((event.loaded / event.total) * 95));
+        onProgress?.(progress);
+      };
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(xhr.responseText);
+          return;
+        }
+        reject(new Error(`上传图片失败: HTTP ${xhr.status}: ${xhr.responseText || '无响应内容'}`));
+      };
+      xhr.onerror = () => reject(new Error('上传图片失败: 网络连接异常'));
+      xhr.ontimeout = () => reject(new Error('上传图片失败: 请求超时'));
+      xhr.onabort = () => reject(new Error('上传图片失败: 请求已取消'));
+
+      xhr.send(formData);
+    });
 
     const result = JSON.parse(responseText);
     logRequest.success(API_URL, result);

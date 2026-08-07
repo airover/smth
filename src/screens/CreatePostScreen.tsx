@@ -33,7 +33,7 @@ import {ThemedHeaderButton, useFloatingHeader} from '../components/ThemeHeader';
 import {useTheme} from '../components/ThemedComponents';
 import {getCardElevation, ThemeColors} from '../utils/theme';
 import {CameraIcon, ImageIcon, CheckCircleIcon, CheckIcon, LightbulbIcon, TrashIcon} from '../components/SvgIcons';
-import {notifySuccess, impactLight} from '../utils/haptics';
+import {notifySuccess} from '../utils/haptics';
 
 // 在 Android 上启用 LayoutAnimation（仅需启用一次）
 if (
@@ -345,7 +345,6 @@ const CreatePostScreen: React.FC = () => {
         }));
         const newImages = [...selectedImages, ...newAssets];
         LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-        impactLight();
         setSelectedImages(newImages);
 
         // 清除之前的上传状态
@@ -390,7 +389,6 @@ const CreatePostScreen: React.FC = () => {
         };
         const newImages = [...selectedImages, newAsset];
         LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-        impactLight();
         setSelectedImages(newImages);
 
         // 清除之前的上传状态
@@ -412,7 +410,6 @@ const CreatePostScreen: React.FC = () => {
     }
     const newImages = selectedImages.filter((_, i) => i !== index);
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    impactLight();
     setSelectedImages(newImages);
     // 如果删除了所有图片，清除token和上传状态
     if (newImages.length === 0) {
