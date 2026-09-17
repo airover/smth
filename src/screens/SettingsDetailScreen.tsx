@@ -258,6 +258,10 @@ const subject = encodeURIComponent('海月水母用户反馈');
     await updateSettings({defaultBoardSort: value ? 'reply' : 'post'});
   };
 
+  const handleAutoResumeToggle = async (value: boolean) => {
+    await updateSettings({autoResumeReading: value});
+  };
+
   const renderSelectionModal = (
     visible: boolean,
     onClose: () => void,
@@ -374,6 +378,22 @@ const subject = encodeURIComponent('海月水母用户反馈');
               <Switch
                 value={settings.defaultBoardSort === 'reply'}
                 onValueChange={handleSortToggle}
+                trackColor={{false: theme.border, true: '#34C759'}}
+                thumbColor="#fff"
+                ios_backgroundColor={theme.border}
+              />
+            </View>
+            <View style={[styles.divider, {backgroundColor: theme.border}]} />
+            <View style={styles.menuItem}>
+              <View style={styles.menuItemLeft}>
+                <View style={styles.switchItemContent}>
+                  <Text style={[styles.menuItemText, {color: theme.text}]}>自动续读</Text>
+                  <Text style={[styles.switchItemDescription, {color: theme.secondaryText}]}>打开帖子时定位到上次阅读位置</Text>
+                </View>
+              </View>
+              <Switch
+                value={settings.autoResumeReading}
+                onValueChange={handleAutoResumeToggle}
                 trackColor={{false: theme.border, true: '#34C759'}}
                 thumbColor="#fff"
                 ios_backgroundColor={theme.border}

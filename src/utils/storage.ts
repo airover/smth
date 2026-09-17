@@ -18,6 +18,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   fontSize: 'medium',
   defaultBoardSort: 'post',
   themeMode: 'light',
+  autoResumeReading: true,
 };
 
 // 保存账号密码

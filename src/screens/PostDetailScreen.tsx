@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useMemo, useRef} from 'react';
+import React, {useState, useEffect, useMemo, useRef, useCallback} from 'react';
 import {
   View,
   Text,
@@ -38,7 +38,8 @@ import {cacheManager} from '../services/cacheManager';
 import {saveBrowsingHistory} from './BrowsingHistoryScreen';
 import {sendMessage} from '../services/dataFetcher';
 import {useSettings} from '../context/SettingsContext';
-import {getTheme, getFontSizes, getCardElevation} from '../utils/theme';
+import {getFontSizes, getCardElevation} from '../utils/theme';
+import {useTheme} from '../components/ThemedComponents';
 import {ThemedHeaderButton, useFloatingHeader} from '../components/ThemeHeader';
 import {
   ThumbsUpIcon,
@@ -50,9 +51,17 @@ import {
   PaperclipIcon,
   XIcon,
   SortIcon,
+  FilterIcon,
+  UserFilterIcon,
 } from '../components/SvgIcons';
 import {normalizeImageUrl, isImageAttachment, isVideoAttachment} from '../utils/imageUtils';
 import {impactLight, impactMedium, notifySuccess} from '../utils/haptics';
+import {
+  getTopicReadingProgress,
+  saveTopicReadingProgress,
+  flushTopicReadingProgress,
+  TopicReadingProgress,
+} from '../utils/readingProgress';
 import {
   SPACING,
   FONT_SIZE,
@@ -83,9 +92,21 @@ const formatDateTime = (time: string): string => {
 
 const SCREEN_WIDTH = RESPONSIVE.SCREEN_WIDTH;
 const SCREEN_HEIGHT = RESPONSIVE.SCREEN_HEIGHT;
-const POST_DETAIL_CACHE_VERSION = 2;
+const POST_DETAIL_CACHE_VERSION = 3;
 const POST_DETAIL_CACHE_FRESH_AGE = 60 * 1000;
 const POST_DETAIL_CACHE_MAX_STALE_AGE = 8 * 60 * 60 * 1000;
+const REPLY_PAGE_SIZE = 20;
+const RESUME_BACKFILL_MAX_PAGES = 3;
+const MAX_QUOTED_CONTENT_LENGTH = 500;
+const UNKNOWN_RESUME_TARGET_OFFSET = Number.MAX_SAFE_INTEGER;
+const FILTER_TOAST_WIDTH = 112;
+const FILTER_TOAST_HEIGHT = 36;
+const FILTER_TOAST_GAP = SPACING.xs;
+const REPLY_VIEWABILITY_CONFIG = {
+  // 使用视口覆盖率，长回复只要占据了一小部分屏幕也能被记录。
+  viewAreaCoveragePercentThreshold: 1,
+  minimumViewTime: 350,
+};
 
 const getAvatarUri = (avatar?: string | null): string => normalizeImageUrl(avatar);
 
@@ -193,9 +214,36 @@ type RepliesPageData = {
 };
 
 // 正序按 mode 1(时间升序，从首楼开始）、倒序按 mode 2(从最新开始)从服务端拉取。
-const getRepliesMode = (order: 'asc' | 'desc'): number => (order === 'desc' ? 2 : 1);
+type ReplyFilter =
+  | {type: 'all'}
+  | {type: 'owner'}
+  | {type: 'author'; author: string; articleId: string};
+
+type PostDetailListItem =
+  | {type: 'actions'; key: 'reply-actions'}
+  | {type: 'earlier'; key: 'earlier-replies'}
+  | {type: 'reply'; key: string; reply: Reply};
+
+type FilterToastAnchor = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+const getRepliesMode = (order: 'asc' | 'desc', filter: ReplyFilter): number => {
+  if (filter.type === 'owner') return 0;
+  // WAP 的 type=3 是按指定文章作者加载同主题回复，articleId 作为请求参数传递。
+  if (filter.type === 'author') return 3;
+  return order === 'desc' ? 2 : 1;
+};
 
 const hasMoreReplies = (data: RepliesPageData): boolean => {
+  // 兼容旧接口的失败哨兵值：失败时保留“可重试”状态，避免永久锁死上拉加载。
+  if (data.totalItems === -1) {
+    return true;
+  }
+
   if (data.totalPages != null && data.currentPage != null) {
     return data.currentPage < data.totalPages;
   }
@@ -215,12 +263,45 @@ const isVisibleReply = (reply: Reply, mainArticleId?: string | number | null): b
   return true;
 };
 
+const getStaleCache = <T,>(category: 'postDetail' | 'topicReplies', key: string): {data: T; age: number} | null => {
+  const cached = cacheManager.getWithTimestamp<T>(category, key);
+  if (!cached) {
+    return null;
+  }
+
+  const age = Date.now() - cached.timestamp;
+  if (age < POST_DETAIL_CACHE_MAX_STALE_AGE) {
+    console.log(`[PostDetail] Stale cache available for ${category}[${key}], age: ${Math.floor(age / 1000)}s`);
+    return {data: cached.data, age};
+  }
+
+  return null;
+};
+
+const getRepliesCacheKey = (
+  postId: string,
+  pageNum: number,
+  order: 'asc' | 'desc',
+  filter: ReplyFilter,
+) => {
+  const repliesMode = getRepliesMode(order, filter);
+  const filterCacheKey = filter.type === 'author'
+    ? `-${filter.articleId}-${order}`
+    : `-${filter.type}-${order}`;
+  return `v${POST_DETAIL_CACHE_VERSION}:${postId}-${repliesMode}${filterCacheKey}-${pageNum}`;
+};
+
 const PostDetailScreen: React.FC = () => {
   const route = useRoute();
   const navigation = useNavigation<any>();
-  const {board, postId, mSitePostId} = route.params as {board: string; postId: string; mSitePostId?: string | null};
-  const {settings} = useSettings();
-  const theme = getTheme(settings.themeMode);
+  const {board, postId, mSitePostId, articleId: navigationArticleId} = route.params as {
+    board: string;
+    postId: string;
+    mSitePostId?: string | null;
+    articleId?: string | null;
+  };
+  const {settings, isLoading: settingsLoading} = useSettings();
+  const theme = useTheme();
   const fontSizes = getFontSizes(settings.fontSize);
   const [post, setPost] = useState<Post | null>(null);
   const [replies, setReplies] = useState<Reply[]>([]);
@@ -231,6 +312,7 @@ const PostDetailScreen: React.FC = () => {
   const [repliesTotal, setRepliesTotal] = useState(0); // 服务端返回的回复总数(pager.totalItems)，用于倒序绝对楼号
   const [likesExpanded, setLikesExpanded] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [repliesReloading, setRepliesReloading] = useState(false);
   const [refreshing, setRefreshing] = useState(false); // 下拉刷新状态
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
   const [selectedImageUri, setSelectedImageUri] = useState('');
@@ -245,6 +327,19 @@ const PostDetailScreen: React.FC = () => {
   const [showCaptchaModal, setShowCaptchaModal] = useState(false); // 显示验证码弹窗
   const [captchaVerified, setCaptchaVerified] = useState(false); // 验证码是否已验证
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc'); // 回复排序：asc=正序，desc=倒序
+  const [replyFilter, setReplyFilter] = useState<ReplyFilter>({type: 'all'});
+  const [filterToast, setFilterToast] = useState<string | null>(null);
+  const [filterToastPlacement, setFilterToastPlacement] = useState<'above' | 'below'>('above');
+  const [filterToastAnchor, setFilterToastAnchor] = useState<FilterToastAnchor | null>(null);
+  const [readingProgress, setReadingProgress] = useState<TopicReadingProgress | null>(null);
+  const [resumePositionReady, setResumePositionReady] = useState(true);
+  const [resumeEarlierRequest, setResumeEarlierRequest] = useState<{
+    page: number;
+    pageSize: number;
+    targetOffset: number;
+  } | null>(null);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const [resumeDataVersion, setResumeDataVersion] = useState(0);
   const [permissions, setPermissions] = useState<PostPermissions | null>(null);
   const [webViewKey, setWebViewKey] = useState(0); // 用于强制刷新WebView
   const appStateRef = useRef(AppState.currentState);
@@ -260,6 +355,32 @@ const PostDetailScreen: React.FC = () => {
   const explosionScale = useRef(new Animated.Value(0)).current;
   const explosionOpacity = useRef(new Animated.Value(0)).current;
   const modalAnim = useRef(new Animated.Value(0)).current;
+  const filterToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const filterToggleAnchorRef = useRef<View>(null);
+  const screenContainerRef = useRef<View>(null);
+  const repliesListRef = useRef<FlatList<PostDetailListItem>>(null);
+  const replyListItemOffsetRef = useRef(1);
+  const postHeaderYRef = useRef(0);
+  const postHeaderHeightRef = useRef(0);
+  const replyActionsHeightRef = useRef(0);
+  const earlierRepliesHeightRef = useRef(0);
+  const sortedRepliesRef = useRef<Reply[]>([]);
+  const currentPageRef = useRef(1);
+  const sortOrderRef = useRef(sortOrder);
+  const replyFilterRef = useRef(replyFilter);
+  const resumeAttemptedRef = useRef(false);
+  const resumeLoadingRef = useRef(false);
+  const resumeTargetIndexRef = useRef<number | null>(null);
+  const resumeTargetArticleIdRef = useRef<string | null>(null);
+  const resumeRetryCountRef = useRef(0);
+  const isRestoringReadingPositionRef = useRef(false);
+  const resumeTargetRenderedRef = useRef(false);
+  const resumeTargetVisibleRef = useRef(false);
+  const resumeSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resumeFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resumeRestoreCompletedRef = useRef(false);
+  const backfillGenerationRef = useRef(0);
+  const replyListGenerationRef = useRef(0);
   // 使用 ref 追踪评分和评论的最新值，避免闭包陷阱
   const ratingScoreRef = useRef(ratingScore);
   const ratingCommentRef = useRef(ratingComment);
@@ -291,10 +412,84 @@ const PostDetailScreen: React.FC = () => {
   ).current;
 
   useEffect(() => {
-    loadPostDetail(1);
+    if (settingsLoading) return;
+    let active = true;
+
+    resumeAttemptedRef.current = false;
+    resumeLoadingRef.current = false;
+    resumeRestoreCompletedRef.current = false;
+    postHeaderYRef.current = 0;
+    postHeaderHeightRef.current = 0;
+    replyActionsHeightRef.current = 0;
+    earlierRepliesHeightRef.current = 0;
+    setResumeDataVersion(version => version + 1);
+    backfillGenerationRef.current += 1;
+    setResumeEarlierRequest(null);
+
     loadCurrentUser();
     loadPermissions();
+    getTopicReadingProgress(postId).then(progress => {
+      if (!active) return;
+      // 通知跳转目标优先于普通续读，因此有明确回复目标时不使用阅读进度抢占定位。
+      const resumeProgress = navigationArticleId
+        ? null
+        : settings.autoResumeReading
+          ? progress
+          : null;
+      setReadingProgress(resumeProgress);
+      setResumePositionReady(!resumeProgress && !navigationArticleId);
+      // 首屏固定从第一页加载，深页由续读流程按需补齐，避免首个请求携带超大 pageSize。
+      loadPostDetail(1, false, 'asc', {type: 'all'});
+    }).catch(error => {
+      if (!active) return;
+      console.error('[PostDetail] Load reading progress failed:', error);
+      setReadingProgress(null);
+      setResumePositionReady(!navigationArticleId);
+      loadPostDetail(1, false, 'asc', {type: 'all'});
+    });
+
+    return () => {
+      active = false;
+      replyListGenerationRef.current += 1;
+      backfillGenerationRef.current += 1;
+    };
+  }, [settingsLoading, postId, navigationArticleId]);
+
+  useEffect(() => {
+    currentPageRef.current = page;
+  }, [page]);
+
+  useEffect(() => {
+    sortOrderRef.current = sortOrder;
+  }, [sortOrder]);
+
+  useEffect(() => {
+    replyFilterRef.current = replyFilter;
+  }, [replyFilter]);
+
+  useEffect(() => {
+    replyListItemOffsetRef.current = resumeEarlierRequest ? 2 : 1;
+  }, [resumeEarlierRequest]);
+
+  useEffect(() => () => {
+    if (filterToastTimerRef.current) {
+      clearTimeout(filterToastTimerRef.current);
+    }
+    if (resumeSettleTimerRef.current) {
+      clearTimeout(resumeSettleTimerRef.current);
+    }
+    if (resumeFallbackTimerRef.current) {
+      clearTimeout(resumeFallbackTimerRef.current);
+    }
+    replyListGenerationRef.current += 1;
+    backfillGenerationRef.current += 1;
   }, []);
+
+  const handlePostHeaderLayout = (event: any) => {
+    const {y, height} = event.nativeEvent.layout;
+    postHeaderYRef.current = y;
+    postHeaderHeightRef.current = height;
+  };
 
   // 监听应用前后台切换，解决WebView内容丢失问题
   // 分档策略：
@@ -308,6 +503,9 @@ const PostDetailScreen: React.FC = () => {
       // 进入后台：记录时间
       if (nextAppState.match(/inactive|background/) && prevState === 'active') {
         backgroundAtRef.current = Date.now();
+        flushTopicReadingProgress().catch(error => {
+          console.error('[PostDetail] Flush reading progress failed:', error);
+        });
       }
       // 从后台切换到前台时
       if (prevState.match(/inactive|background/) && nextAppState === 'active') {
@@ -335,6 +533,9 @@ const PostDetailScreen: React.FC = () => {
 
     return () => {
       subscription.remove();
+      flushTopicReadingProgress().catch(error => {
+        console.error('[PostDetail] Flush reading progress failed:', error);
+      });
     };
   }, []);
 
@@ -467,24 +668,98 @@ const PostDetailScreen: React.FC = () => {
     }
   };
 
-  const getStaleCache = <T,>(category: 'postDetail' | 'topicReplies', key: string): {data: T; age: number} | null => {
-    const cached = cacheManager.getWithTimestamp<T>(category, key);
-    if (!cached) {
-      return null;
+  const getPostCacheKey = () => `v${POST_DETAIL_CACHE_VERSION}:${board}-${postId}`;
+
+  // 续读和“加载更早回复”与普通分页共用同一套缓存 key，避免同一页被重复请求。
+  // totalItems=-1 是接口软失败哨兵，不能写入缓存，也不能当成成功的空页。
+  const getRepliesPageWithCache = useCallback(async (
+    pageNum: number,
+    order: 'asc' | 'desc',
+    filter: ReplyFilter,
+    pageSize: number = REPLY_PAGE_SIZE,
+  ): Promise<RepliesPageData> => {
+    const repliesCacheKey = getRepliesCacheKey(postId, pageNum, order, filter);
+    let repliesData = cacheManager.get<RepliesPageData>(
+      'topicReplies',
+      repliesCacheKey,
+      POST_DETAIL_CACHE_FRESH_AGE,
+    );
+    const staleRepliesCache = repliesData
+      ? null
+      : getStaleCache<RepliesPageData>('topicReplies', repliesCacheKey);
+    if (staleRepliesCache) {
+      repliesData = staleRepliesCache.data;
     }
 
-    const age = Date.now() - cached.timestamp;
-    if (age < POST_DETAIL_CACHE_MAX_STALE_AGE) {
-      console.log(`[PostDetail] Stale cache available for ${category}[${key}], age: ${Math.floor(age / 1000)}s`);
-      return {data: cached.data, age};
+    if (repliesData && repliesData.totalItems !== -1) {
+      return repliesData;
     }
 
-    return null;
+    const result = await getTopicReplies(
+      postId,
+      pageNum,
+      pageSize,
+      getRepliesMode(order, filter),
+      filter.type === 'author' ? filter.articleId : undefined,
+    ) as RepliesPageData;
+    if (!result || result.totalItems === -1) {
+      throw new Error(`GET_TOPIC_REPLIES_FAILED_PAGE_${pageNum}`);
+    }
+
+    cacheManager.set('topicReplies', repliesCacheKey, result);
+    return result;
+  }, [postId]);
+
+  // 评分/删除点评只需要更新主帖点评区域，不应重建回复列表或改变当前阅读位置。
+  const refreshPostDetailOnly = async () => {
+    try {
+      const detailData = await getPostDetail(board, postId, 1, mSitePostId);
+      if (!detailData) {
+        return;
+      }
+
+      cacheManager.set('postDetail', getPostCacheKey(), detailData);
+      setPost(detailData as Post);
+      saveBrowsingHistory({
+        postId,
+        board,
+        title: detailData.title,
+        author: detailData.author,
+        boardName: detailData.boardName || board,
+        replyCount: detailData.replyCount,
+      });
+    } catch (error) {
+      // 点评已经成功时，主帖刷新失败不应冒泡成“点评失败”，保留当前页面数据即可。
+      console.error('[PostDetail] Refresh post detail only failed:', error);
+    }
   };
 
-  const loadPostDetail = async (pageNum: number, forceRefresh: boolean = false, order: 'asc' | 'desc' = sortOrder) => {
+  const loadPostDetail = async (
+    pageNum: number,
+    forceRefresh: boolean = false,
+    order: 'asc' | 'desc' = sortOrder,
+    filter: ReplyFilter = replyFilter,
+  ) => {
+    let requestGeneration = replyListGenerationRef.current;
     try {
-      const repliesMode = getRepliesMode(order);
+      if (pageNum === 1) {
+        replyListGenerationRef.current += 1;
+        if (forceRefresh) {
+          resumeLoadingRef.current = false;
+          resumeRestoreCompletedRef.current = true;
+          setResumePositionReady(true);
+        }
+      }
+      requestGeneration = replyListGenerationRef.current;
+      if (forceRefresh) {
+        backfillGenerationRef.current += 1;
+        setResumeDataVersion(version => version + 1);
+        setResumeEarlierRequest(null);
+        cacheManager.clearByKeyPrefix('postDetail', getPostCacheKey());
+        cacheManager.clearByKeyPrefix('topicReplies', `v${POST_DETAIL_CACHE_VERSION}:${postId}-`);
+      }
+      const repliesMode = getRepliesMode(order, filter);
+      const firstPageSize = REPLY_PAGE_SIZE;
       if (pageNum > 1) {
         setLoadingMore(true);
       }
@@ -492,8 +767,8 @@ const PostDetailScreen: React.FC = () => {
       if (pageNum === 1) {
         setLoadError(null);
         // 第一页：检查缓存并获取主题详情和回复列表
-        const postCacheKey = `v${POST_DETAIL_CACHE_VERSION}:${board}-${postId}`;
-        const repliesCacheKey = `v${POST_DETAIL_CACHE_VERSION}:${postId}-${repliesMode}-1`;
+        const postCacheKey = getPostCacheKey();
+        const repliesCacheKey = getRepliesCacheKey(postId, 1, order, filter);
         
         // 尝试从缓存获取数据（下拉刷新时跳过缓存）
         let detailData = forceRefresh ? null : cacheManager.get('postDetail', postCacheKey, POST_DETAIL_CACHE_FRESH_AGE);
@@ -513,6 +788,7 @@ const PostDetailScreen: React.FC = () => {
         // 保存旧缓存作为降级方案
         const oldDetailData = detailData;
         const oldRepliesData = repliesData;
+        let repliesDataIsFallback = Boolean(shouldRefreshReplies && repliesData);
 
         if (!forceRefresh && (shouldRefreshDetail || shouldRefreshReplies)) {
           if (detailData) {
@@ -544,8 +820,10 @@ const PostDetailScreen: React.FC = () => {
 
           const [detailResult, repliesResult] = await Promise.all([
             settleRequest(detailData && !shouldRefreshDetail && !forceRefresh ? Promise.resolve(detailData) : getPostDetail(board, postId, 1, mSitePostId)),
-            settleRequest(repliesData && !shouldRefreshReplies && !forceRefresh ? Promise.resolve(repliesData) : getTopicReplies(postId, 1, 20, repliesMode))
+            settleRequest(repliesData && !shouldRefreshReplies && !forceRefresh ? Promise.resolve(repliesData) : getTopicReplies(postId, 1, firstPageSize, repliesMode, filter.type === 'author' ? filter.articleId : undefined))
           ]);
+
+          if (requestGeneration !== replyListGenerationRef.current) return;
 
           let detailError: any = null;
 
@@ -562,6 +840,7 @@ const PostDetailScreen: React.FC = () => {
             // ✅ 修复：检查 totalItems !== -1 来判断是否成功
             cacheManager.set('topicReplies', repliesCacheKey, repliesResult.value);
             repliesData = repliesResult.value;
+            repliesDataIsFallback = false;
           } else if (repliesResult.status === 'rejected') {
             console.error('[PostDetail] Failed to fetch replies:', repliesResult.reason?.message || repliesResult.reason);
           }
@@ -571,6 +850,7 @@ const PostDetailScreen: React.FC = () => {
           }
           if (!repliesData && oldRepliesData) {
             repliesData = oldRepliesData;
+            repliesDataIsFallback = true;
           }
           if (!detailData && detailError) {
             setLoadError(getPostDetailLoadErrorMessage(detailError));
@@ -596,7 +876,7 @@ const PostDetailScreen: React.FC = () => {
           });
         }
 
-        if (repliesData) {
+        if (repliesData && !repliesDataIsFallback) {
           // 过滤掉第一层（主贴）和status非0的回复（status=0为正常，status=1为已删除等异常状态，status不存在时视为正常）
           const mainArticleId = (detailData as any)?.articleId || (post as any)?.articleId;
           const repliesPage = repliesData as RepliesPageData;
@@ -608,7 +888,7 @@ const PostDetailScreen: React.FC = () => {
         }
       } else {
         // 后续页：检查缓存并获取回复列表
-        const repliesCacheKey = `v${POST_DETAIL_CACHE_VERSION}:${postId}-${repliesMode}-${pageNum}`;
+        const repliesCacheKey = getRepliesCacheKey(postId, pageNum, order, filter);
         let repliesData = cacheManager.get('topicReplies', repliesCacheKey, POST_DETAIL_CACHE_FRESH_AGE);
         const staleRepliesCache = repliesData ? null : getStaleCache<any>('topicReplies', repliesCacheKey);
         const shouldRefreshReplies = !repliesData && staleRepliesCache;
@@ -617,9 +897,9 @@ const PostDetailScreen: React.FC = () => {
           const repliesPage = repliesData as RepliesPageData;
           if (repliesPage.replies.length > 0) {
             setReplies(prev => {
-              const existingIds = new Set(prev.map(r => r.id));
+              const existingIds = new Set(prev.map(r => String(r.id)));
               const mainArticleId = post?.articleId || post?.id;
-              const newReplies = repliesPage.replies.filter((r: any) => !existingIds.has(r.id) && isVisibleReply(r, mainArticleId));
+              const newReplies = repliesPage.replies.filter((r: any) => !existingIds.has(String(r.id)) && isVisibleReply(r, mainArticleId));
               return [...prev, ...newReplies];
             });
             setPage(pageNum);
@@ -632,7 +912,8 @@ const PostDetailScreen: React.FC = () => {
         if (!repliesData || shouldRefreshReplies) {
           console.log(`[PostDetail] ${shouldRefreshReplies ? 'Stale cache' : 'Cache miss'} for page ${pageNum}, fetching from API`);
           try {
-            repliesData = await getTopicReplies(postId, pageNum, 20, repliesMode);
+            repliesData = await getTopicReplies(postId, pageNum, REPLY_PAGE_SIZE, repliesMode, filter.type === 'author' ? filter.articleId : undefined);
+            if (requestGeneration !== replyListGenerationRef.current) return;
             // ✅ 修复：只有成功获取且数据有效时才缓存（totalItems !== -1）
             if (repliesData && (repliesData as RepliesPageData).totalItems !== -1) {
               cacheManager.set('topicReplies', repliesCacheKey, repliesData);
@@ -650,47 +931,133 @@ const PostDetailScreen: React.FC = () => {
         }
         
         if (repliesData && (repliesData as RepliesPageData).replies.length > 0) {
+          if (requestGeneration !== replyListGenerationRef.current) return;
           const repliesPage = repliesData as RepliesPageData;
           // 使用Set来去重，确保不会有重复的id
           setReplies(prev => {
-            const existingIds = new Set(prev.map(r => r.id));
+            const existingIds = new Set(prev.map(r => String(r.id)));
             const mainArticleId = post?.articleId || post?.id;
-            const newReplies = repliesPage.replies.filter((r: any) => !existingIds.has(r.id) && isVisibleReply(r, mainArticleId));
+            const newReplies = repliesPage.replies.filter((r: any) => !existingIds.has(String(r.id)) && isVisibleReply(r, mainArticleId));
             return [...prev, ...newReplies];
           });
           setPage(pageNum);
           setHasMore(hasMoreReplies(repliesPage));
           setRepliesTotal(repliesPage.totalItems || 0);
+        } else if (repliesData) {
+          // 空结果也要沿用接口的 pager/失败哨兵判断，不能直接永久关闭“加载更多”。
+          setHasMore(hasMoreReplies(repliesData as RepliesPageData));
         } else {
-          setHasMore(false);
+          // 请求失败且没有旧缓存时保留原状态，允许用户稍后重试。
         }
       }
     } catch (error) {
+      if (requestGeneration !== replyListGenerationRef.current) {
+        return;
+      }
       console.error('Load post detail error:', error);
       if (pageNum === 1 && !post) {
         setLoadError(getPostDetailLoadErrorMessage(error));
       }
     } finally {
-      if (pageNum === 1) {
-        setLoading(false);
-        setRefreshing(false);
-      } else {
-        setLoadingMore(false);
+      // 过期请求不能影响当前请求的 loading 状态。
+      if (requestGeneration === replyListGenerationRef.current) {
+        if (pageNum === 1) {
+          setLoading(false);
+          setRefreshing(false);
+          setRepliesReloading(false);
+        } else {
+          setLoadingMore(false);
+        }
       }
     }
   };
 
   // 下拉刷新
   const handleRefresh = async () => {
+    if (resumeSettleTimerRef.current) {
+      clearTimeout(resumeSettleTimerRef.current);
+      resumeSettleTimerRef.current = null;
+    }
+    if (resumeFallbackTimerRef.current) {
+      clearTimeout(resumeFallbackTimerRef.current);
+      resumeFallbackTimerRef.current = null;
+    }
+    isRestoringReadingPositionRef.current = false;
+    resumeLoadingRef.current = false;
     setRefreshing(true);
-    await loadPostDetail(1, true); // 强制刷新，跳过缓存
+    try {
+      await loadPostDetail(1, true); // 强制刷新，跳过缓存
+      InteractionManager.runAfterInteractions(() => {
+        repliesListRef.current?.scrollToOffset({offset: 0, animated: false});
+      });
+    } catch (error) {
+      console.error('[PostDetail] Refresh failed:', error);
+    }
   };
 
   const loadMore = () => {
-    if (hasMore && !loadingMore) {
+    if (resumePositionReady && !refreshing && hasMore && !loadingMore) {
       const nextPage = page + 1;
       setPage(nextPage);
       loadPostDetail(nextPage);
+    }
+  };
+
+  // 深页续读只预加载少量早期回复，其余内容由用户按需向前加载，避免一次请求和解析大量数据。
+  const loadEarlierReplies = async () => {
+    if (
+      !resumeEarlierRequest
+      || loadingEarlier
+      || replyFilter.type !== 'all'
+      || sortOrder !== 'asc'
+    ) {
+      return;
+    }
+
+    const request = resumeEarlierRequest;
+    const requestGeneration = replyListGenerationRef.current;
+    const backfillGeneration = backfillGenerationRef.current;
+    setLoadingEarlier(true);
+    try {
+      const result = await getRepliesPageWithCache(
+        request.page,
+        sortOrder,
+        replyFilter,
+        request.pageSize,
+      );
+      if (
+        requestGeneration !== replyListGenerationRef.current
+        || backfillGeneration !== backfillGenerationRef.current
+      ) {
+        return;
+      }
+
+      const mainArticleId = post?.articleId || post?.id;
+      const earlierReplies = result.replies.filter((reply: Reply) => isVisibleReply(reply, mainArticleId));
+      setReplies(currentReplies => {
+        const merged = new Map<string, Reply>();
+        [...currentReplies, ...earlierReplies].forEach(reply => merged.set(String(reply.id), reply));
+        return Array.from(merged.values());
+      });
+
+      const actualPageSize = result.pageSize || request.pageSize;
+      const loadedOffset = request.page * actualPageSize;
+      const reachedResumeTarget = loadedOffset >= request.targetOffset;
+      if (!earlierReplies.length || !hasMoreReplies(result) || reachedResumeTarget) {
+        setResumeEarlierRequest(null);
+      } else {
+        setResumeEarlierRequest({
+          ...request,
+          page: request.page + 1,
+          pageSize: actualPageSize,
+        });
+      }
+    } catch (error) {
+      console.error('[PostDetail] Load earlier replies failed:', error);
+    } finally {
+      if (requestGeneration === replyListGenerationRef.current) {
+        setLoadingEarlier(false);
+      }
     }
   };
 
@@ -773,6 +1140,35 @@ const PostDetailScreen: React.FC = () => {
     });
   };
 
+  const buildQuotedContent = (author: string, content: string) => {
+    const cleanContent = String(content || '')
+      .replace(/<[^>]*>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&amp;/g, '&')
+      .trim();
+    const quotedText = cleanContent.length > MAX_QUOTED_CONTENT_LENGTH
+      ? `${cleanContent.slice(0, MAX_QUOTED_CONTENT_LENGTH)}…`
+      : cleanContent;
+
+    return `【 在 ${author} 的大作中提到: 】\n: ${quotedText.split('\n').join('\n: ')}\n\n`;
+  };
+
+  const handleQuotePost = () => {
+    if (!post) return;
+
+    navigation.navigate('CreatePost', {
+      boardId: board,
+      boardName: post.boardName || board,
+      reId: post.articleId || post.id,
+      reTitle: post.title,
+      mode: 'reply',
+      quotedContent: buildQuotedContent(post.author, post.contentText || post.content || ''),
+    });
+  };
+
   // 编辑帖子
   const handleEditPost = () => {
     if (!post) return;
@@ -824,19 +1220,8 @@ const PostDetailScreen: React.FC = () => {
     //   return;
     // }
 
-    // 格式化引用内容
-    // 清理HTML标签
-    const cleanContent = reply.content
-      .replace(/<[^>]*>/g, '')
-      .replace(/&nbsp;/g, ' ')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/&amp;/g, '&')
-      .trim();
-
     // 构造引用格式（参照curl示例）
-    const quotedContent = `【 在 ${reply.author} 的大作中提到: 】\n: ${cleanContent.split('\n').join('\n: ')}\n\n`;
+    const quotedContent = buildQuotedContent(reply.author, reply.content);
 
     navigation.navigate('CreatePost', {
       boardId: board,
@@ -1256,8 +1641,8 @@ const PostDetailScreen: React.FC = () => {
         closeModal();
         notifySuccess();
         Alert.alert('成功', result.message || '评价成功');
-        // 刷新帖子详情以显示新的点评
-        await loadPostDetail(1, true);
+        // 只刷新主帖点评，保留当前已加载的回复页和滚动位置。
+        await refreshPostDetailOnly();
         // 清除验证码状态
         setCaptchaParams(null);
         setCaptchaVerified(false);
@@ -1388,8 +1773,8 @@ const PostDetailScreen: React.FC = () => {
               
               if (result.success) {
                 Alert.alert('成功', result.message || '删除成功');
-                // 刷新帖子详情以更新点赞列表
-                await loadPostDetail(1, true);
+                // 只刷新主帖点评，保留当前已加载的回复页和滚动位置。
+                await refreshPostDetailOnly();
               } else {
                 Alert.alert('失败', result.message || '删除失败');
               }
@@ -1403,14 +1788,109 @@ const PostDetailScreen: React.FC = () => {
   };
 
   const toggleSortOrder = () => {
+    if (replyFilter.type !== 'all') {
+      return;
+    }
+    if (resumeSettleTimerRef.current) {
+      clearTimeout(resumeSettleTimerRef.current);
+      resumeSettleTimerRef.current = null;
+    }
+    if (resumeFallbackTimerRef.current) {
+      clearTimeout(resumeFallbackTimerRef.current);
+      resumeFallbackTimerRef.current = null;
+    }
     // 正序按 mode1(从首楼)、倒序按 mode2(从最新)向服务端拉取，
     // 因此切换时需按新顺序重新拉第一页。
     const nextOrder = sortOrder === 'asc' ? 'desc' : 'asc';
+    isRestoringReadingPositionRef.current = false;
+    resumeLoadingRef.current = false;
+    backfillGenerationRef.current += 1;
+    setResumeEarlierRequest(null);
+    setLoadingEarlier(false);
     setSortOrder(nextOrder);
-    setReplies([]);
+    resumeAttemptedRef.current = true;
+    resumeRestoreCompletedRef.current = true;
+    // 保留当前回复，等待新排序结果覆盖，避免列表清空导致界面闪烁或跳回顶部。
     setPage(1);
     setHasMore(true);
+    setRepliesReloading(true);
+    // 操作行已经 sticky，刷新数据后保留当前 contentOffset，避免被强制带回主帖标题。
     loadPostDetail(1, false, nextOrder);
+  };
+
+  const applyReplyFilter = (nextFilter: ReplyFilter) => {
+    if (resumeSettleTimerRef.current) {
+      clearTimeout(resumeSettleTimerRef.current);
+      resumeSettleTimerRef.current = null;
+    }
+    if (resumeFallbackTimerRef.current) {
+      clearTimeout(resumeFallbackTimerRef.current);
+      resumeFallbackTimerRef.current = null;
+    }
+    isRestoringReadingPositionRef.current = false;
+    resumeLoadingRef.current = false;
+    backfillGenerationRef.current += 1;
+    setResumeEarlierRequest(null);
+    setLoadingEarlier(false);
+    setReplyFilter(nextFilter);
+    // 保留当前回复，等待新筛选结果覆盖，避免列表清空导致界面闪烁或跳回顶部。
+    setPage(1);
+    setHasMore(true);
+    setRepliesReloading(true);
+    resumeAttemptedRef.current = true;
+    resumeRestoreCompletedRef.current = true;
+    // 操作行已经 sticky，刷新数据后保留当前 contentOffset，避免被强制带回主帖标题。
+    loadPostDetail(1, false, sortOrder, nextFilter);
+  };
+
+  const showFilterToast = (message: string) => {
+    const anchor = filterToggleAnchorRef.current;
+    if (!anchor) {
+      setFilterToastAnchor(null);
+      setFilterToast(message);
+      return;
+    }
+
+    // measureInWindow 得到的是屏幕坐标；减去页面根节点坐标后，才能用于
+    // 页面级 absolute 气泡，避免导航栏/安全区导致气泡整体偏移。
+    anchor.measureInWindow((x, y, width, height) => {
+      const updateAnchor = (containerX: number, containerY: number) => {
+        const relativeY = y - containerY;
+        setFilterToastAnchor({
+          x: x - containerX,
+          y: relativeY,
+          width,
+          height,
+        });
+        setFilterToastPlacement(
+          relativeY >= FILTER_TOAST_HEIGHT + FILTER_TOAST_GAP + SPACING.sm
+            ? 'above'
+            : 'below',
+        );
+        setFilterToast(message);
+      };
+
+      if (screenContainerRef.current) {
+        screenContainerRef.current.measureInWindow((containerX, containerY) => {
+          updateAnchor(containerX, containerY);
+        });
+      } else {
+        updateAnchor(0, 0);
+      }
+    });
+  };
+
+  const toggleOwnerReplies = () => {
+    const nextFilter: ReplyFilter = replyFilter.type === 'all' ? {type: 'owner'} : {type: 'all'};
+    showFilterToast(nextFilter.type === 'owner' ? '只看作者' : '查看全部');
+    applyReplyFilter(nextFilter);
+    if (filterToastTimerRef.current) {
+      clearTimeout(filterToastTimerRef.current);
+    }
+    filterToastTimerRef.current = setTimeout(() => {
+      setFilterToast(null);
+      filterToastTimerRef.current = null;
+    }, 1600);
   };
 
   const isImage = (attachment: any) => {
@@ -1832,10 +2312,377 @@ const PostDetailScreen: React.FC = () => {
       : 0;
     const withFloor = ordered.map((reply, index) => ({
       ...reply,
-      displayFloor: offset + index + 2,
+      // 过滤后的 index 不是全帖楼层；深页续读存在缺口时也不展示伪楼层。
+      displayFloor: replyFilter.type === 'all' && !resumeEarlierRequest
+        ? offset + index + 2
+        : undefined,
     }));
     return sortOrder === 'desc' ? withFloor.reverse() : withFloor;
-  }, [replies, sortOrder, repliesTotal]);
+  }, [replies, sortOrder, repliesTotal, replyFilter.type, resumeEarlierRequest]);
+
+  useEffect(() => {
+    sortedRepliesRef.current = sortedReplies;
+  }, [sortedReplies]);
+
+  const replyListItems = useMemo<PostDetailListItem[]>(() => [
+    {type: 'actions', key: 'reply-actions'},
+    ...(resumeEarlierRequest ? [{type: 'earlier', key: 'earlier-replies'} as const] : []),
+    ...sortedReplies.map(reply => ({
+      type: 'reply' as const,
+      key: `reply-${String(reply.id)}`,
+      reply,
+    })),
+  ], [sortedReplies, resumeEarlierRequest]);
+
+  const getReplyListItemIndex = (replyIndex: number): number => (
+    replyListItemOffsetRef.current + replyIndex
+  );
+
+  const startResumeScroll = (targetArticleId: string, targetIndex: number) => {
+    resumeAttemptedRef.current = true;
+    resumeTargetIndexRef.current = targetIndex;
+    resumeTargetArticleIdRef.current = targetArticleId;
+    resumeRetryCountRef.current = 0;
+    resumeTargetRenderedRef.current = false;
+    resumeTargetVisibleRef.current = false;
+    isRestoringReadingPositionRef.current = true;
+    InteractionManager.runAfterInteractions(() => {
+      requestAnimationFrame(() => {
+        repliesListRef.current?.scrollToIndex({index: targetIndex, animated: false, viewPosition: 0.12});
+      });
+    });
+    if (resumeFallbackTimerRef.current) {
+      clearTimeout(resumeFallbackTimerRef.current);
+    }
+    resumeFallbackTimerRef.current = setTimeout(() => {
+      resumeFallbackTimerRef.current = null;
+      if (!isRestoringReadingPositionRef.current) {
+        return;
+      }
+
+      // 目标已经进入渲染树但还未触发可见项回调时，重新安排一次最终定位。
+      if (resumeTargetRenderedRef.current || resumeTargetVisibleRef.current) {
+        scheduleResumeSettle();
+        return;
+      }
+
+      const fallbackTargetArticleId = resumeTargetArticleIdRef.current;
+      const fallbackTargetReplyIndex = fallbackTargetArticleId == null
+        ? resumeTargetIndexRef.current
+        : sortedRepliesRef.current.findIndex(reply => String(reply.id) === fallbackTargetArticleId);
+      const fallbackTargetIndex = fallbackTargetArticleId == null
+        ? fallbackTargetReplyIndex
+        : fallbackTargetReplyIndex == null || fallbackTargetReplyIndex < 0
+          ? fallbackTargetReplyIndex
+          : getReplyListItemIndex(fallbackTargetReplyIndex);
+      if (fallbackTargetIndex != null && fallbackTargetIndex >= 0 && resumeRetryCountRef.current < 3) {
+        resumeRetryCountRef.current += 1;
+        repliesListRef.current?.scrollToIndex({index: fallbackTargetIndex, animated: false, viewPosition: 0.12});
+        resumeFallbackTimerRef.current = setTimeout(() => {
+          if (isRestoringReadingPositionRef.current) {
+            resumeFallbackTimerRef.current = null;
+            if (resumeTargetRenderedRef.current || resumeTargetVisibleRef.current) {
+              scheduleResumeSettle();
+              return;
+            }
+            isRestoringReadingPositionRef.current = false;
+            setResumePositionReady(true);
+          }
+        }, 800);
+        return;
+      }
+
+      if (resumeSettleTimerRef.current) {
+        clearTimeout(resumeSettleTimerRef.current);
+        resumeSettleTimerRef.current = null;
+      }
+      isRestoringReadingPositionRef.current = false;
+      setResumePositionReady(true);
+    }, 1500);
+  };
+
+  // 续读只补齐目标页附近的少量数据。深页剩余的早期回复通过列表顶部按钮按需加载，
+  // 避免 savedPage * pageSize 造成超大请求和长时间白屏。
+  useEffect(() => {
+    const targetArticleId = navigationArticleId || readingProgress?.articleId;
+    if (
+      !post
+      || !targetArticleId
+      || resumeAttemptedRef.current
+      || resumeLoadingRef.current
+      || loading
+      || replyFilter.type !== 'all'
+      || sortOrder !== 'asc'
+    ) {
+      return;
+    }
+
+    const existingIndex = sortedReplies.findIndex(reply => String(reply.id) === String(targetArticleId));
+    if (existingIndex >= 0) {
+      startResumeScroll(String(targetArticleId), getReplyListItemIndex(existingIndex));
+      return;
+    }
+
+    if (resumeRestoreCompletedRef.current) {
+      resumeAttemptedRef.current = true;
+      setResumePositionReady(true);
+      return;
+    }
+
+    const savedPage = readingProgress ? Math.max(1, readingProgress.page) : 1;
+    if (!readingProgress && !navigationArticleId) {
+      resumeRestoreCompletedRef.current = true;
+      resumeAttemptedRef.current = true;
+      setResumePositionReady(true);
+      return;
+    }
+    if (readingProgress && savedPage <= 1 && !navigationArticleId) {
+      resumeRestoreCompletedRef.current = true;
+      resumeAttemptedRef.current = true;
+      setResumePositionReady(true);
+      return;
+    }
+
+    resumeLoadingRef.current = true;
+    const requestGeneration = replyListGenerationRef.current;
+    const backfillGeneration = backfillGenerationRef.current;
+    const restoreSavedReplies = async () => {
+      try {
+        const mainArticleId = post.articleId || post.id;
+        const pageNumbers = readingProgress
+          ? Array.from(
+              {length: Math.max(0, Math.min(savedPage, RESUME_BACKFILL_MAX_PAGES) - 1)},
+              (_, index) => index + 2,
+            )
+          : [];
+        const requests = pageNumbers.map(pageNumber => settleRequest(
+          getRepliesPageWithCache(pageNumber, sortOrder, replyFilter),
+        ));
+
+        if (readingProgress && savedPage > RESUME_BACKFILL_MAX_PAGES) {
+          // 目标页单独请求，保持每次请求固定大小；早期缺口由顶部按钮逐页补齐。
+          requests.push(settleRequest(
+            getRepliesPageWithCache(savedPage, sortOrder, replyFilter),
+          ));
+        }
+
+        // 通知通常指向最新回复；补拉倒序首屏，使通知跳转不依赖阅读进度。
+        if (navigationArticleId) {
+          requests.push(settleRequest(
+            getRepliesPageWithCache(1, 'desc', {type: 'all'}),
+          ));
+        }
+
+        const results = await Promise.all(requests);
+        if (
+          requestGeneration !== replyListGenerationRef.current
+          || backfillGeneration !== backfillGenerationRef.current
+        ) {
+          return;
+        }
+
+        const successfulResults = results.flatMap(result => (
+          result.status === 'fulfilled' ? [result.value] : []
+        ));
+        const restoredReplies = successfulResults
+          .flatMap(result => result.replies)
+          .filter((reply: Reply) => isVisibleReply(reply, mainArticleId));
+        const targetExists = restoredReplies.some(reply => String(reply.id) === String(targetArticleId));
+
+        if (restoredReplies.length > 0) {
+          setReplies(currentReplies => {
+            const merged = new Map<string, Reply>();
+            [...currentReplies, ...restoredReplies].forEach(reply => merged.set(String(reply.id), reply));
+            return Array.from(merged.values());
+          });
+        }
+
+        if (readingProgress) {
+          const targetPageResult = successfulResults.find(result => result.currentPage === savedPage);
+          setPage(savedPage);
+          if (targetPageResult) {
+            setHasMore(hasMoreReplies(targetPageResult));
+            setRepliesTotal(targetPageResult.totalItems || 0);
+          }
+
+          const firstUnloadedPage = Math.min(savedPage, RESUME_BACKFILL_MAX_PAGES) + 1;
+          if (savedPage > RESUME_BACKFILL_MAX_PAGES + 1) {
+            setResumeEarlierRequest({
+              page: firstUnloadedPage,
+              pageSize: REPLY_PAGE_SIZE,
+              targetOffset: (savedPage - 1) * REPLY_PAGE_SIZE,
+            });
+          } else {
+            setResumeEarlierRequest(null);
+          }
+        } else if (navigationArticleId) {
+          // 通知跳转同时包含正序首页和倒序首页，中间页尚未加载时必须保留缺口标记：
+          // 这样楼层号会暂时隐藏，且顶部会出现逐页补齐入口，不会把两段数据编号成连续楼层。
+          const navigationResult = successfulResults[successfulResults.length - 1];
+          if (navigationResult) {
+            setPage(1);
+            setHasMore(hasMoreReplies(navigationResult));
+            setRepliesTotal(navigationResult.totalItems || 0);
+            setResumeEarlierRequest(
+              hasMoreReplies(navigationResult)
+                ? {
+                    page: 2,
+                    pageSize: navigationResult.pageSize || REPLY_PAGE_SIZE,
+                    targetOffset: UNKNOWN_RESUME_TARGET_OFFSET,
+                  }
+                : null,
+            );
+          }
+        }
+
+        resumeRestoreCompletedRef.current = true;
+        setResumeDataVersion(version => version + 1);
+        if (!targetExists) {
+          resumeAttemptedRef.current = true;
+          setResumePositionReady(true);
+        }
+      } catch (error) {
+        if (requestGeneration === replyListGenerationRef.current) {
+          console.error('[PostDetail] Restore reading progress failed:', error);
+          resumeRestoreCompletedRef.current = true;
+          resumeAttemptedRef.current = true;
+          setResumePositionReady(true);
+        }
+      } finally {
+        if (requestGeneration === replyListGenerationRef.current) {
+          resumeLoadingRef.current = false;
+        }
+      }
+    };
+    restoreSavedReplies();
+  }, [
+    loading,
+    post,
+    postId,
+    readingProgress,
+    navigationArticleId,
+    replyFilter,
+    sortOrder,
+    sortedReplies,
+    resumeDataVersion,
+    getRepliesPageWithCache,
+  ]);
+
+  const scheduleResumeSettle = () => {
+    if (
+      !isRestoringReadingPositionRef.current
+      || (!resumeTargetRenderedRef.current && !resumeTargetVisibleRef.current)
+    ) return;
+    if (resumeSettleTimerRef.current) {
+      clearTimeout(resumeSettleTimerRef.current);
+    }
+    resumeSettleTimerRef.current = setTimeout(() => {
+      const targetArticleId = resumeTargetArticleIdRef.current;
+      const targetReplyIndex = targetArticleId == null
+        ? null
+        : sortedRepliesRef.current.findIndex(reply => String(reply.id) === targetArticleId);
+      const targetIndex = targetReplyIndex == null || targetReplyIndex < 0
+        ? resumeTargetIndexRef.current
+        : getReplyListItemIndex(targetReplyIndex);
+      if (targetIndex != null && targetIndex >= 0) {
+        resumeTargetIndexRef.current = targetIndex;
+        repliesListRef.current?.scrollToIndex({index: targetIndex, animated: false, viewPosition: 0.12});
+      }
+      isRestoringReadingPositionRef.current = false;
+      setResumePositionReady(true);
+      if (resumeFallbackTimerRef.current) {
+        clearTimeout(resumeFallbackTimerRef.current);
+        resumeFallbackTimerRef.current = null;
+      }
+      resumeSettleTimerRef.current = null;
+    }, 180);
+  };
+
+  const onViewableRepliesChanged = useRef(({viewableItems}: {viewableItems: Array<{item?: PostDetailListItem; index?: number | null; isViewable?: boolean}>}) => {
+    if (isRestoringReadingPositionRef.current) {
+      const targetVisible = viewableItems.some(item => (
+        item.isViewable
+        && item.item?.type === 'reply'
+        && item.item.reply.id != null
+        && String(item.item.reply.id) === resumeTargetArticleIdRef.current
+      ));
+      if (targetVisible) {
+        resumeTargetRenderedRef.current = true;
+        resumeTargetVisibleRef.current = true;
+        scheduleResumeSettle();
+      }
+      return;
+    }
+
+    if (
+      sortOrderRef.current !== 'asc'
+      || replyFilterRef.current.type !== 'all'
+    ) return;
+    const firstVisible = viewableItems.find(item => (
+      item.isViewable
+      && item.item?.type === 'reply'
+      && item.item.reply.id != null
+    ));
+    if (!firstVisible?.item || firstVisible.item.type !== 'reply') return;
+
+    const currentPage = currentPageRef.current;
+    // position 仅作为旧数据/缺少 topicOrder 时的兼容字段，不再参与有序回复的前进判断。
+    const listPosition = Math.max(
+      0,
+      (firstVisible.index ?? replyListItemOffsetRef.current) - replyListItemOffsetRef.current,
+    );
+
+    saveTopicReadingProgress({
+      topicId: postId,
+      articleId: firstVisible.item.reply.id,
+      topicOrder: firstVisible.item.reply.topicOrder,
+      position: listPosition,
+      page: currentPage,
+    });
+  }).current;
+
+  // 帖子头部和回复高度均为动态值，目标行未测量时 FlatList 会拒绝直接定位。
+  // 先滚到包含 header 的估算位置触发测量，再有限次重试；全过程不展示额外提示。
+  const handleScrollToIndexFailed = ({index, averageItemLength}: {index: number; averageItemLength: number}) => {
+    if (resumeTargetIndexRef.current !== index || resumeRetryCountRef.current >= 3) {
+      return;
+    }
+
+    resumeRetryCountRef.current += 1;
+    const replyIndex = Math.max(0, index - replyListItemOffsetRef.current);
+    const actionRowOffset = replyActionsHeightRef.current + SPACING.lg;
+    const earlierRowOffset = resumeEarlierRequest
+      ? earlierRepliesHeightRef.current + SPACING.md
+      : 0;
+    repliesListRef.current?.scrollToOffset({
+      // averageItemLength 只统计 data 项，不包含主帖 header；补上实测的
+      // header、操作行和“加载更早回复”行，避免把这些较矮的 data item
+      // 按一条普通回复的平均高度重复计算。
+      offset: Math.max(
+        0,
+        SPACING.lg
+          + postHeaderYRef.current
+          + postHeaderHeightRef.current
+          + actionRowOffset
+          + earlierRowOffset
+          + replyIndex * averageItemLength,
+      ),
+      animated: false,
+    });
+    setTimeout(() => {
+      repliesListRef.current?.scrollToIndex({index, animated: false, viewPosition: 0.12});
+    }, 300);
+  };
+
+  const handleReplyLayout = (articleId: string) => {
+    if (
+      isRestoringReadingPositionRef.current
+      && String(articleId) === resumeTargetArticleIdRef.current
+    ) {
+      resumeTargetRenderedRef.current = true;
+      scheduleResumeSettle();
+    }
+  };
 
   const renderReply = ({item}: {item: Reply}) => {
     const isAuthor = post && item.author === post.author;
@@ -1843,7 +2690,10 @@ const PostDetailScreen: React.FC = () => {
     const replyAvatarName = item.nickname || item.author;
     
     return (
-    <View style={[styles.replyContainer, {backgroundColor: theme.cardBackground}, getCardElevation(theme)]}>
+    <View
+      onLayout={() => handleReplyLayout(String(item.id))}
+      style={[styles.replyContainer, {backgroundColor: theme.cardBackground}, getCardElevation(theme)]}
+    >
       <View style={styles.replyHeader}>
         <View style={styles.replyAuthorInfo}>
           <TouchableOpacity
@@ -1912,39 +2762,154 @@ const PostDetailScreen: React.FC = () => {
         <View style={styles.replyActions}>
           {currentUsername && item.author === currentUsername && (
             <TouchableOpacity
-              style={[styles.deleteReplyButton, {borderColor: theme.border}]}
+              style={[styles.replyFooterIconButton, {backgroundColor: theme.background, borderColor: theme.border}]}
               onPress={() => handleDeleteReply(item)}
               activeOpacity={0.7}
               accessibilityRole="button"
               accessibilityLabel="删除回复"
             >
-              <TrashIcon size={FONT_SIZE.md} color={theme.error} />
+              <TrashIcon size={14} color={theme.error} />
             </TouchableOpacity>
           )}
           {currentUsername && item.author !== currentUsername && (
             <TouchableOpacity
-              style={[styles.reportReplyButton, {borderColor: theme.border}]}
+              style={[styles.replyFooterIconButton, {backgroundColor: theme.background, borderColor: theme.border}]}
               onPress={() => handleReport(item.author, item.id)}
               activeOpacity={0.7}
               accessibilityRole="button"
               accessibilityLabel="举报回复"
             >
-              <BanIcon size={FONT_SIZE.md} color={theme.secondaryText} />
+              <BanIcon size={14} color={theme.secondaryText} />
             </TouchableOpacity>
           )}
           <TouchableOpacity
-            style={[styles.quoteReplyButton, {borderColor: theme.border}]}
+            style={[styles.replyFooterIconButton, {backgroundColor: theme.background, borderColor: theme.border}]}
             onPress={() => handleQuoteReply(item)}
             activeOpacity={0.7}
             accessibilityRole="button"
             accessibilityLabel="引用回复"
           >
-            <MessageIcon size={12} color={theme.primary} />
+            <MessageIcon size={14} color={theme.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.replyFooterIconButton, {backgroundColor: theme.background, borderColor: theme.border}]}
+            onPress={() => applyReplyFilter({type: 'author', author: item.author, articleId: item.id})}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={`只看 ${item.author} 的回复`}
+          >
+            <UserFilterIcon size={14} color={theme.primary} />
           </TouchableOpacity>
         </View>
       </View>
     </View>
   );
+  };
+
+  const renderReplyActions = () => (
+    <View
+      onLayout={event => {
+        replyActionsHeightRef.current = event.nativeEvent.layout.height;
+      }}
+      style={[
+        styles.stickyReplyActions,
+        {backgroundColor: theme.cardBackground, borderBottomColor: theme.border},
+      ]}
+    >
+      <Text style={[styles.repliesTitle, {color: theme.text}]}>回复 ({post?.replyCount ?? 0})</Text>
+      <View style={styles.replyActions}>
+        <TouchableOpacity
+          style={[styles.actionIconButton, {backgroundColor: theme.background, borderColor: theme.border}]}
+          onPress={handleLikePress}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="点赞"
+        >
+          <ThumbsUpIcon size={20} color={theme.text} />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          ref={eggButtonRef}
+          style={[styles.actionIconButton, {backgroundColor: theme.background, borderColor: theme.border}]}
+          onPress={handleDislikePress}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="扔鸡蛋"
+        >
+          <EggIcon size={20} color={theme.text} />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.actionIconButton, {backgroundColor: theme.background, borderColor: theme.border}]}
+          onPress={handleQuotePost}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="引用主帖回复"
+        >
+          <MessageIcon size={20} color={theme.text} />
+        </TouchableOpacity>
+
+        <View ref={filterToggleAnchorRef} collapsable={false} style={styles.filterToggleAnchor}>
+          <TouchableOpacity
+            style={[styles.actionIconButton, {backgroundColor: replyFilter.type === 'all' ? theme.background : theme.primary, borderColor: replyFilter.type === 'all' ? theme.border : theme.primary}]}
+            onPress={toggleOwnerReplies}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={replyFilter.type === 'all' ? '只看作者' : '查看全部回复'}
+            accessibilityState={{selected: replyFilter.type !== 'all'}}
+          >
+            <FilterIcon size={20} color={replyFilter.type === 'all' ? theme.text : '#fff'} />
+          </TouchableOpacity>
+        </View>
+        <TouchableOpacity
+          style={[
+            styles.actionIconButton,
+            {backgroundColor: theme.background, borderColor: theme.border},
+            replyFilter.type !== 'all' && styles.disabledActionButton,
+          ]}
+          onPress={toggleSortOrder}
+          disabled={replyFilter.type !== 'all'}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={sortOrder === 'asc' ? '按最新回复排序' : '按最早回复排序'}
+          accessibilityState={{disabled: replyFilter.type !== 'all'}}
+        >
+          <View style={{transform: [{rotate: sortOrder === 'asc' ? '180deg' : '0deg'}]}}>
+            <SortIcon size={20} color={theme.text} />
+          </View>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  const renderEarlierRepliesItem = () => (
+    <View
+      style={styles.earlierRepliesListItem}
+      onLayout={event => {
+        earlierRepliesHeightRef.current = event.nativeEvent.layout.height;
+      }}
+    >
+      <TouchableOpacity
+        style={[styles.earlierRepliesButton, {backgroundColor: theme.cardBackground, borderColor: theme.border}]}
+        onPress={loadEarlierReplies}
+        disabled={loadingEarlier}
+        activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityLabel="加载更早回复"
+      >
+        {loadingEarlier ? (
+          <ActivityIndicator size="small" color={theme.primary} />
+        ) : (
+          <Text style={[styles.loadMoreText, {color: theme.primary}]}>加载更早回复</Text>
+        )}
+      </TouchableOpacity>
+    </View>
+  );
+
+  const renderPostDetailListItem = ({item}: {item: PostDetailListItem}) => {
+    if (item.type === 'actions') return renderReplyActions();
+    if (item.type === 'earlier') return renderEarlierRepliesItem();
+    return renderReply({item: item.reply});
   };
 
   if (loading && !post) {
@@ -1998,17 +2963,40 @@ const PostDetailScreen: React.FC = () => {
 
   const postAvatarUri = getAvatarUri(post.avatar);
   const postAvatarName = post.nick || post.author;
-
+  // VirtualizedList 会把 ListHeaderComponent 放在 cell 0，操作行是 data 的第一个 cell。
+  const stickyReplyActionsIndex = 1;
+  const filterToastPositionStyle = filterToastAnchor
+    ? {
+        left: Math.max(
+          SPACING.sm,
+          Math.min(
+            filterToastAnchor.x + filterToastAnchor.width / 2 - FILTER_TOAST_WIDTH / 2,
+            Math.max(SPACING.sm, SCREEN_WIDTH - FILTER_TOAST_WIDTH - SPACING.sm),
+          ),
+        ),
+        top: filterToastPlacement === 'above'
+          ? Math.max(
+              SPACING.sm,
+              filterToastAnchor.y - FILTER_TOAST_HEIGHT - FILTER_TOAST_GAP,
+            )
+          : filterToastAnchor.y + filterToastAnchor.height + FILTER_TOAST_GAP,
+      }
+    : styles.filterToastFallback;
   return (
-    <SafeAreaView edges={['bottom']} style={[styles.container, {backgroundColor: theme.background}]}>
+    <SafeAreaView ref={screenContainerRef} edges={['bottom']} style={[styles.container, {backgroundColor: theme.background}]}>
       <FlatList
-        data={sortedReplies}
-        renderItem={renderReply}
-        keyExtractor={(item, index) => `${item.id}-${index}`}
+        ref={repliesListRef}
+        style={!resumePositionReady ? styles.resumeListHidden : undefined}
+        data={replyListItems}
+        renderItem={renderPostDetailListItem}
+        keyExtractor={item => item.key}
+        stickyHeaderIndices={[stickyReplyActionsIndex]}
+        scrollEventThrottle={16}
         refreshing={refreshing}
         onRefresh={handleRefresh}
         ListHeaderComponent={
-          <View style={[styles.postContainer, {backgroundColor: theme.cardBackground}, getCardElevation(theme)]}>
+          <View onLayout={handlePostHeaderLayout}>
+          <View style={[styles.postContainer, styles.postHeaderCard, {backgroundColor: theme.cardBackground}, getCardElevation(theme)]}>
             <Text style={[styles.postTitle, {color: theme.text}]}>{post.title}</Text>
             <View style={styles.postMeta}>
               <TouchableOpacity
@@ -2080,52 +3068,55 @@ const PostDetailScreen: React.FC = () => {
             {renderAttachments(post.attachments || [])}
             {renderLikes(post.likes || [])}
             <View style={[styles.divider, {backgroundColor: theme.border}]} />
-            
-            {/* 回复标题和操作按钮 */}
-            <View style={styles.repliesTitleRow}>
-              <Text style={[styles.repliesTitle, {color: theme.text}]}>回复 ({post.replyCount})</Text>
-              <View style={styles.replyActions}>
-                <TouchableOpacity
-                  style={[styles.actionIconButton, {backgroundColor: theme.background, borderColor: theme.border}]}
-                  onPress={handleLikePress}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel="点赞"
-                >
-                  <ThumbsUpIcon size={20} color={theme.text} />
-                </TouchableOpacity>
-                
-                <TouchableOpacity
-                  ref={eggButtonRef}
-                  style={[styles.actionIconButton, {backgroundColor: theme.background, borderColor: theme.border}]}
-                  onPress={handleDislikePress}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel="扔鸡蛋"
-                >
-                  <EggIcon size={20} color={theme.text} />
-                </TouchableOpacity>
-                
-                <TouchableOpacity
-                  style={[styles.sortIconButton, {backgroundColor: theme.background, borderColor: theme.border}]}
-                  onPress={toggleSortOrder}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel={sortOrder === 'asc' ? '按最新回复排序' : '按最早回复排序'}
-                >
-                  <View style={{transform: [{rotate: sortOrder === 'asc' ? '180deg' : '0deg'}]}}>
-                    <SortIcon size={20} color={theme.text} />
-                  </View>
-                </TouchableOpacity>
-              </View>
-            </View>
+          </View>
           </View>
         }
         ListFooterComponent={renderFooter}
         onEndReached={loadMore}
         onEndReachedThreshold={0.3}
+        onViewableItemsChanged={onViewableRepliesChanged as any}
+        viewabilityConfig={REPLY_VIEWABILITY_CONFIG}
+        onScrollToIndexFailed={handleScrollToIndexFailed}
+        onContentSizeChange={scheduleResumeSettle}
+        maintainVisibleContentPosition={settings.autoResumeReading
+          && readingProgress
+          && replyFilter.type === 'all'
+          && !!resumeEarlierRequest
+          && resumePositionReady
+          ? {minIndexForVisible: 0}
+          : undefined}
+        initialNumToRender={20}
+        maxToRenderPerBatch={20}
         contentContainerStyle={styles.content}
       />
+
+      {repliesReloading && (
+        <View
+          pointerEvents="auto"
+          style={[styles.repliesReloadingOverlay, {backgroundColor: theme.background}]}
+        >
+          <ActivityIndicator size="small" color={theme.primary} />
+        </View>
+      )}
+
+      {filterToast && (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.filterToastOverlay,
+            filterToastPositionStyle,
+            {backgroundColor: theme.text},
+          ]}
+        >
+          <Text style={styles.filterToastText} numberOfLines={1}>{filterToast}</Text>
+        </View>
+      )}
+
+      {!resumePositionReady && (
+        <View pointerEvents="auto" style={[styles.resumeLoadingOverlay, {backgroundColor: theme.background}]}>
+          <ActivityIndicator size="small" color={theme.primary} />
+        </View>
+      )}
       
       <ImageViewer
         visible={imageViewerVisible}
@@ -2411,6 +3402,21 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  resumeListHidden: {
+    opacity: 0,
+  },
+  resumeLoadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 20,
+  },
+  repliesReloadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 40,
+  },
   content: {
     padding: SPACING.lg,
   },
@@ -2419,6 +3425,35 @@ const styles = StyleSheet.create({
     borderRadius: BORDER_RADIUS.md,
     padding: SPACING.lg,
     marginBottom: SPACING.lg,
+  },
+  postHeaderCard: {
+    marginBottom: 0,
+  },
+  filterToggleAnchor: {
+    position: 'relative',
+  },
+  filterToastText: {
+    color: '#fff',
+    fontSize: FONT_SIZE.sm,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  filterToastOverlay: {
+    position: 'absolute',
+    width: FILTER_TOAST_WIDTH,
+    height: FILTER_TOAST_HEIGHT,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+    borderRadius: BORDER_RADIUS.md,
+    justifyContent: 'center',
+    alignItems: 'center',
+    opacity: 0.94,
+    zIndex: 60,
+    elevation: 60,
+  },
+  filterToastFallback: {
+    top: SPACING.sm,
+    alignSelf: 'center',
   },
   postTitle: {
     fontSize: FONT_SIZE.xxl,
@@ -2715,17 +3750,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#f8f9fa',
   },
+  disabledActionButton: {
+    opacity: 0.45,
+  },
   actionIconEmoji: {
     fontSize: responsiveSize(18, 20, 22, 24),
   },
-  sortIconButton: {
-    width: responsiveSize(36, 40, 44, 48),
-    height: responsiveSize(36, 40, 44, 48),
-    borderRadius: BORDER_RADIUS.md,
-    borderWidth: 1,
-    justifyContent: 'center',
+  stickyReplyActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#f8f9fa',
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm,
+    marginBottom: SPACING.lg,
+    borderBottomWidth: 1,
   },
   sortTriangleIcon: {
     fontSize: responsiveSize(16, 18, 20, 22),
@@ -2785,47 +3823,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: SPACING.sm,
   },
-  deleteReplyButton: {
-    paddingHorizontal: SPACING.md,
+  replyFooterIconButton: {
+    width: 28,
     height: 28,
     justifyContent: 'center',
     alignItems: 'center',
     borderRadius: BORDER_RADIUS.sm,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
-  },
-  deleteReplyButtonText: {
-    fontSize: FONT_SIZE.sm,
-    color: '#FF3B30',
-    fontWeight: '500',
-  },
-  quoteReplyButton: {
-    paddingHorizontal: SPACING.lg,
-    height: 28,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: BORDER_RADIUS.sm,
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-  },
-  quoteReplyButtonText: {
-    fontSize: FONT_SIZE.sm,
-    color: '#007AFF',
-    fontWeight: '500',
-  },
-  reportReplyButton: {
-    paddingHorizontal: SPACING.md,
-    height: 28,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: BORDER_RADIUS.sm,
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-  },
-  reportReplyButtonText: {
-    fontSize: FONT_SIZE.sm,
-    color: '#999',
-    fontWeight: '500',
   },
   location: {
     fontSize: FONT_SIZE.xs,
@@ -2869,6 +3873,17 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 1,
     borderColor: '#e0e0e0',
+  },
+  earlierRepliesButton: {
+    minHeight: 40,
+    marginBottom: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  earlierRepliesListItem: {
+    marginBottom: SPACING.md,
   },
   loadMoreText: {
     fontSize: 14,

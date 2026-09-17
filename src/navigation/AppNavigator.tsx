@@ -76,7 +76,7 @@ const MainTabs = () => {
         name="Home"
         options={{
           title: '首页',
-          headerShown: false,
+          headerShown: !hasBackgroundImage,
           tabBarIcon: ({color}) => (
             <HomeIcon size={24} color={color} />
           ),
@@ -222,9 +222,9 @@ const AppNavigator = () => {
       />
       <Stack.Screen
         name="Mail"
-        component={createFloatingHeaderScreen(MailScreen, '站内邮箱')}
+        component={createFloatingHeaderScreen(MailScreen, '消息中心')}
         options={{
-          title: '站内邮箱',
+          title: '消息中心',
         }}
       />
       <Stack.Screen

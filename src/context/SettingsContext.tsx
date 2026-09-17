@@ -16,6 +16,7 @@ export const SettingsProvider: React.FC<{children: ReactNode}> = ({children}) =>
     fontSize: 'medium',
     defaultBoardSort: 'post',
     themeMode: 'light',
+    autoResumeReading: true,
   });
   const [isLoading, setIsLoading] = useState(true);
 

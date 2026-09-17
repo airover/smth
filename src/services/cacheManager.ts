@@ -217,6 +217,18 @@ class CacheManager {
     console.log(`[Cache] Cleared ${category}`);
   }
 
+  /** 清除字典分类下指定 key 前缀的缓存。 */
+  clearByKeyPrefix(category: keyof CacheStore, keyPrefix: string): void {
+    if (!this.DICT_CATEGORIES.includes(category)) return;
+    const categoryCache = this.cache[category] as {[key: string]: CacheItem<any>};
+    Object.keys(categoryCache).forEach(key => {
+      if (key.startsWith(keyPrefix)) {
+        delete categoryCache[key];
+      }
+    });
+    console.log(`[Cache] Cleared ${category}[${keyPrefix}*]`);
+  }
+
   /**
    * 清除所有缓存
    */

@@ -41,6 +41,7 @@ import {useAuth} from '../context/AuthContext';
 import {useTheme} from '../components/ThemedComponents';
 import {getCardElevation, ThemeColors} from '../utils/theme';
 import {TrashIcon} from '../components/SvgIcons';
+import {clearTopicReadingProgress, READING_PROGRESS_STORAGE_KEY} from '../utils/readingProgress';
 import {
   SPACING,
   FONT_SIZE,
@@ -59,7 +60,9 @@ const CacheManagementScreen: React.FC = () => {
   const [asyncStorageStats, setAsyncStorageStats] = useState<{
     readPostsCount: number;
     readPostsSize: number;
-  }>({readPostsCount: 0, readPostsSize: 0});
+    readingProgressCount: number;
+    readingProgressSize: number;
+  }>({readPostsCount: 0, readPostsSize: 0, readingProgressCount: 0, readingProgressSize: 0});
   const [storageSize, setStorageSize] = useState<string>('计算中...');
   const [refreshing, setRefreshing] = useState(false);
 
@@ -79,6 +82,8 @@ const CacheManagementScreen: React.FC = () => {
       let totalSize = 0;
       let readPostsCount = 0;
       let readPostsSize = 0;
+      let readingProgressCount = 0;
+      let readingProgressSize = 0;
 
       items.forEach(([key, value]) => {
         if (value) {
@@ -95,6 +100,17 @@ const CacheManagementScreen: React.FC = () => {
             }
             readPostsSize += size;
           }
+          if (key === READING_PROGRESS_STORAGE_KEY) {
+            try {
+              const progress = JSON.parse(value);
+              readingProgressCount = progress && typeof progress === 'object'
+                ? Object.keys(progress).length
+                : 0;
+            } catch {
+              readingProgressCount = 0;
+            }
+            readingProgressSize += size;
+          }
         }
       });
       
@@ -102,6 +118,8 @@ const CacheManagementScreen: React.FC = () => {
       setAsyncStorageStats({
         readPostsCount,
         readPostsSize,
+        readingProgressCount,
+        readingProgressSize,
       });
     } catch {
       console.error('Get storage size error');
@@ -141,8 +159,8 @@ const CacheManagementScreen: React.FC = () => {
   };
 
   /**
-   * 清除已读帖子记录
-   * 范围：仅清除已读帖子的记录（持久化缓存）
+   * 清除已读帖子记录和阅读进度
+   * 范围：清除已读标记与帖子阅读位置（持久化数据）
    * 不影响：内存缓存、登录信息、用户设置
    * 层级：独立功能（只针对已读记录）
    */
@@ -150,8 +168,9 @@ const CacheManagementScreen: React.FC = () => {
     try {
       await AsyncStorage.removeItem('read_posts_ids');
       await AsyncStorage.removeItem('read_posts_details');
+      await clearTopicReadingProgress();
       loadStats();
-      Alert.alert('成功', '已清除已读记录');
+      Alert.alert('成功', '已清除已读记录和阅读进度');
     } catch (error) {
       console.error('Clear read posts error:', error);
       Alert.alert('错误', '清除已读记录失败');
@@ -331,18 +350,19 @@ const CacheManagementScreen: React.FC = () => {
           <View style={styles.card}>
             <View style={styles.statItem}>
               <View style={styles.statItemLeft}>
-                <Text style={styles.statItemName}>已读帖子记录</Text>
+                <Text style={styles.statItemName}>已读记录与阅读进度</Text>
                 <Text style={styles.statItemValue}>
-                  {asyncStorageStats.readPostsCount} 条记录 ({(asyncStorageStats.readPostsSize / 1024).toFixed(2)} KB)
+                  {asyncStorageStats.readPostsCount} 篇已读 · {asyncStorageStats.readingProgressCount} 条进度
+                  {' '}({((asyncStorageStats.readPostsSize + asyncStorageStats.readingProgressSize) / 1024).toFixed(2)} KB)
                 </Text>
               </View>
-              {asyncStorageStats.readPostsCount > 0 && (
+              {(asyncStorageStats.readPostsCount > 0 || asyncStorageStats.readingProgressCount > 0) && (
                 <TouchableOpacity
                   style={styles.clearButton}
                   onPress={() => {
                     Alert.alert(
                       '清除记录',
-                      '确定要清除所有已读帖子记录吗？',
+                      '确定要清除所有已读记录和阅读进度吗？',
                       [
                         {text: '取消', style: 'cancel'},
                         {text: '确定', onPress: handleClearReadPosts},

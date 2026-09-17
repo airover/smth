@@ -12,7 +12,7 @@ import {
   NativeSyntheticEvent,
 } from 'react-native';
 import {useFocusEffect, useNavigation} from '@react-navigation/native';
-import {getTopTen, getHotPosts, getHotBoards} from '../services/api';
+import {getTopTen, getHotPosts, getHotBoards, getReplyNotifications} from '../services/api';
 import {TopTenItem, Board} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -22,7 +22,6 @@ import {
   SPACING,
   FONT_SIZE,
   BORDER_RADIUS,
-  getStatusBarHeight,
 } from '../utils/responsive';
 import {useReadPosts} from '../context/ReadPostsContext';
 import {
@@ -31,6 +30,8 @@ import {
 } from '../components/PullDownFavoritesOverlay';
 import FavoritesDrawer from '../components/FavoritesDrawer';
 import {useOnAppResume} from '../context/AppStateContext';
+import {useFloatingHeader} from '../components/ThemeHeader';
+import {BellIcon} from '../components/SvgIcons';
 
 const AUTO_REFRESH_CHECK_INTERVAL = 60 * 1000;
 
@@ -117,7 +118,7 @@ const saveCacheData = async <T,>(
 const HomeScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const theme = useTheme();
-  const hasBackgroundImage = !!theme.headerBackgroundImage;
+  const setHeaderOptions = useFloatingHeader();
   const {isRead, markAsRead} = useReadPosts();
   const [topTen, setTopTen] = useState<TopTenItem[]>([]);
   const [hotPosts, setHotPosts] = useState<TopTenItem[]>([]);
@@ -128,6 +129,7 @@ const HomeScreen: React.FC = () => {
   const [hasMoreHotPosts, setHasMoreHotPosts] = useState(true);
   const [loadingMoreHotPosts, setLoadingMoreHotPosts] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
+  const [unreadReplyCount, setUnreadReplyCount] = useState(0);
   const hasHandledInitialFocusRef = useRef(false);
   const isSilentRefreshingRef = useRef(false);
   const isRefreshInProgressRef = useRef(false);
@@ -135,6 +137,23 @@ const HomeScreen: React.FC = () => {
   const isDraggingRef = useRef(false);
   const hasPendingSilentUpdateRef = useRef(false);
   const hasDisplayableDataRef = useRef(false);
+
+  const loadUnreadReplyCount = useCallback(async () => {
+    try {
+      if (await AsyncStorage.getItem('isLoggedIn') !== 'true') {
+        setUnreadReplyCount(0);
+        return;
+      }
+      const result = await getReplyNotifications(1, 1);
+      setUnreadReplyCount(result.total);
+    } catch (error) {
+      console.log('[Home] Load unread reply count failed:', error);
+    }
+  }, []);
+
+  const openReplyNotifications = useCallback(() => {
+    navigation.navigate('Mail', {tab: 'reply'});
+  }, [navigation]);
 
   // 下拉进入收藏抽屉
   const [drawerVisible, setDrawerVisible] = useState(false);
@@ -359,7 +378,19 @@ const HomeScreen: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, [loadData]);
+    loadUnreadReplyCount();
+  }, [loadData, loadUnreadReplyCount]);
+
+  useEffect(() => {
+    setHeaderOptions({
+      headerRight: () => (
+        <TouchableOpacity style={styles.floatingBellButton} onPress={openReplyNotifications} accessibilityLabel="回复提醒">
+          <BellIcon size={22} color={theme.headerTint} />
+          {unreadReplyCount > 0 && <View style={[styles.headerBellBadge, {borderColor: theme.headerBackground}]} />}
+        </TouchableOpacity>
+      ),
+    });
+  }, [openReplyNotifications, setHeaderOptions, theme.headerBackground, theme.headerTint, unreadReplyCount]);
 
   useEffect(() => {
     hasDisplayableDataRef.current = dataLoaded || topTen.length > 0 || hotBoards.length > 0 || hotPosts.length > 0;
@@ -369,6 +400,7 @@ const HomeScreen: React.FC = () => {
     useCallback(() => {
       if (hasHandledInitialFocusRef.current) {
         loadDataSilently();
+        loadUnreadReplyCount();
       } else {
         hasHandledInitialFocusRef.current = true;
       }
@@ -380,7 +412,7 @@ const HomeScreen: React.FC = () => {
       return () => {
         clearInterval(refreshTimer);
       };
-    }, [loadDataSilently])
+    }, [loadDataSilently, loadUnreadReplyCount])
   );
 
   useOnAppResume(() => {
@@ -602,12 +634,6 @@ const HomeScreen: React.FC = () => {
 
       {/* 首页内容（被抽屉推下） */}
       <Animated.View style={[styles.mainContent, {transform: [{translateY: contentTranslateY}]}]}>
-        {/* 自绘 Header */}
-        {!hasBackgroundImage && (
-          <View style={[styles.homeHeader, {backgroundColor: theme.headerBackground}]}>
-            <Text style={[styles.homeHeaderTitle, {color: theme.headerText}]}>首页</Text>
-          </View>
-        )}
         {/* 下拉进入收藏的浮层提示 */}
         <PullDownFavoritesOverlay
           pullOffset={pullOffset}
@@ -702,15 +728,21 @@ const styles = StyleSheet.create({
   mainContent: {
     flex: 1,
   },
-  homeHeader: {
-    paddingTop: getStatusBarHeight() + 10,
-    paddingBottom: 12,
-    paddingHorizontal: SPACING.lg,
+  floatingBellButton: {
+    width: 36,
+    height: 36,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  homeHeaderTitle: {
-    fontSize: FONT_SIZE.lg,
-    fontWeight: '600',
+  headerBellBadge: {
+    position: 'absolute',
+    top: 5,
+    right: 5,
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#FF3B30',
+    borderWidth: 1,
   },
   content: {
     padding: SPACING.lg,

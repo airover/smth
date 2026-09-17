@@ -137,6 +137,22 @@ export interface Mail {
   items: number; // 对话中的消息数量
 }
 
+// WAP 通知中心中的“回复我的”提醒。
+export interface ReplyNotification {
+  id: string;
+  status: number; // 1 未读，其他值视为已读
+  subject: string;
+  body: string;
+  sendTime: number;
+  from: string;
+  fromNickname?: string;
+  fromAvatar?: string;
+  topicId?: string;
+  boardId?: string;
+  boardName?: string;
+  articleId?: string;
+}
+
 export interface FavoriteTopic {
   id: string;
   topicId: string;
@@ -161,4 +177,5 @@ export interface AppSettings {
   fontSize: 'small' | 'medium' | 'large'; // 帖子内容字体大小
   defaultBoardSort: 'post' | 'reply'; // 版面帖子默认排序方式: post-按发布时间, reply-按回复时间
   themeMode: 'light' | 'dark' | 'auto' | 'spring'; // 主题模式: light-日间, dark-夜间, auto-跟随系统, spring-新春主题
+  autoResumeReading: boolean; // 打开帖子时自动定位到最远阅读位置
 }

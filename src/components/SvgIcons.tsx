@@ -128,6 +128,30 @@ export const MailIcon: React.FC<IconProps> = ({size = 24, color = '#333'}) => (
   </SvgIcon>
 );
 
+/** 通知/铃铛 */
+export const BellIcon: React.FC<IconProps> = ({size = 24, color = '#333'}) => (
+  <SvgIcon size={size} color={color}>
+    <Path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+    <Path d="M10 21h4" />
+  </SvgIcon>
+);
+
+/** 筛选/漏斗 */
+export const FilterIcon: React.FC<IconProps> = ({size = 24, color = '#333'}) => (
+  <SvgIcon size={size} color={color}>
+    <Path d="M3 5h18l-7 8v5l-4 2v-7z" />
+  </SvgIcon>
+);
+
+/** 按用户筛选 */
+export const UserFilterIcon: React.FC<IconProps> = ({size = 24, color = '#333'}) => (
+  <SvgIcon size={size} color={color}>
+    <Circle cx="9" cy="8" r="3" />
+    <Path d="M3 20v-1a5 5 0 0 1 5-5h2" />
+    <Path d="M15 13h6l-2.5 3v3l-2 1v-4z" />
+  </SvgIcon>
+);
+
 /** 设置/齿轮 */
 export const SettingsIcon: React.FC<IconProps> = ({
   size = 24,

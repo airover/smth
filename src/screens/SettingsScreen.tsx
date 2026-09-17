@@ -13,7 +13,7 @@ import {
 import {useNavigation, useFocusEffect} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {getUserInfo, logout} from '../services/api';
-import {getMessages} from '../services/dataFetcher';
+import {getMessages, getReplyNotifications} from '../services/dataFetcher';
 import {User} from '../types';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {useTheme} from '../components/ThemedComponents';
@@ -70,8 +70,12 @@ const SettingsScreen: React.FC = () => {
         setUnreadMailCount(0);
         return;
       }
-      const messages = await getMessages(0);
-      const count = messages.reduce((sum, mail) => sum + (mail.unread || 0), 0);
+      const [messages, replyNotifications] = await Promise.all([
+        getMessages(0),
+        getReplyNotifications(1, 1),
+      ]);
+      const count = messages.reduce((sum, mail) => sum + (mail.unread || 0), 0)
+        + replyNotifications.items.filter(item => item.status === 1).length;
       setUnreadMailCount(count);
     } catch (error) {
       console.log('loadUnreadMailCount error:', error);
@@ -345,7 +349,7 @@ const SettingsScreen: React.FC = () => {
           </View>
         </View>
 
-        {/* 站内邮箱 */}
+        {/* 消息中心 */}
         <View style={styles.section}>
           <View style={[styles.card, {backgroundColor: theme.cardBackground}]}>
             <TouchableOpacity 
@@ -356,7 +360,7 @@ const SettingsScreen: React.FC = () => {
               <View style={styles.menuIcon}>
                 <MailIcon size={22} color={theme.text} />
               </View>
-                <Text style={[styles.menuItemText, {color: theme.text}]}>站内邮箱</Text>
+                <Text style={[styles.menuItemText, {color: theme.text}]}>消息中心</Text>
                 {unreadMailCount > 0 && (
                   <View style={styles.badge}>
                     <Text style={styles.badgeText}>

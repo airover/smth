@@ -125,8 +125,8 @@ export const getTheme = (themeMode: AppSettings['themeMode']): ThemeColors => {
   if (themeMode === 'spring') {
     return springTheme;
   }
-  // TODO: 实现auto模式，根据系统设置返回对应主题
-  // 目前auto模式默认使用日间主题
+  // auto 模式会在 useTheme / App 根组件中先解析为 light 或 dark。
+  // 此处保留日间回退，兼容不在 React 渲染树内的调用。
   return lightTheme;
 };
 

@@ -2,7 +2,7 @@
 // 职责：所有数据的获取（GET请求）和操作（POST/DELETE请求）
 // 缓存：使用 cacheManager 统一管理
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {Mail} from '../types';
+import {Mail, ReplyNotification} from '../types';
 import {
   fetchWithRetry,
   DEFAULT_TIMEOUT,
@@ -1661,11 +1661,13 @@ export const getTopicReplies = async (
   page: number = 1,
   pageSize: number = 20,
   mode: number = 1, // 1 为全部回复
+  articleId?: string,
 ): Promise<{replies: any[], totalItems: number, totalPages: number, currentPage: number, pageSize: number, start: number}> => {
   try {
     const cookies = await getCookies();
     const timestamp = Date.now();
-    const url = `${WAP_BASE_URL}/wap/api/topic/loadArticlesByMode/${topicId}/${mode}/${page}/${pageSize}?t=${timestamp}`;
+    const articleParam = articleId ? `&articleId=${encodeURIComponent(articleId)}` : '';
+    const url = `${WAP_BASE_URL}/wap/api/topic/loadArticlesByMode/${topicId}/${mode}/${page}/${pageSize}?t=${timestamp}${articleParam}`;
     
     console.log('Fetching Topic Replies from API:', url);
     
@@ -2837,6 +2839,102 @@ export const getMessages = async (_page: number = 0): Promise<Mail[]> => {
     // 其他错误返回空数组
     return [];
   }
+};
+
+/**
+ * 获取 WAP 通知中心的“回复我的”提醒。
+ * WAP 对应接口：GET /wap/api/notify/2/:page，status 为 1/2 时使用
+ * /wap/api/notify/2/:status/:page/20。
+ */
+export const getReplyNotifications = async (
+  status: 0 | 1 | 2 = 0,
+  page: number = 1,
+): Promise<{
+  items: ReplyNotification[];
+  total: number;
+  page: number;
+  pageSize?: number;
+  totalPages?: number;
+  hasMore: boolean;
+}> => {
+  const cookies = await getCookies();
+  if (!cookies) {
+    throw new Error('NOT_LOGGED_IN');
+  }
+
+  const timestamp = Date.now();
+  const path = status === 0
+    ? `/wap/api/notify/2/${page}`
+    : `/wap/api/notify/2/${status}/${page}/20`;
+  const response = await fetchWithRetry(`${WAP_BASE_URL}${path}?t=${timestamp}`, {
+    headers: buildGetHeaders(cookies),
+    credentials: 'include',
+  });
+
+  if (response.status === 401 || response.status === 403) {
+    throw new Error('LOGIN_EXPIRED');
+  }
+
+  const json = await response.json();
+  if (json.code !== 1) {
+    if (isLoginExpiredApiResponse(json)) {
+      throw new Error('LOGIN_EXPIRED');
+    }
+    throw new Error(json.message || json.msg || 'GET_REPLY_NOTIFICATIONS_FAILED');
+  }
+
+  const data = json.data || {};
+  const rawItems = data.notifications || data.notifies || data.list || data.items || [];
+  const pager = data.pager || {};
+  const items: ReplyNotification[] = rawItems.map((item: any) => {
+    const transactor = item.transactor || item.account || {};
+    const cause = item.cause || item.target || {};
+    const board = cause.board || item.board || {};
+    return {
+      id: String(item.id),
+      status: Number(item.status ?? 0),
+      subject: item.subject || cause.subject || '回复提醒',
+      body: item.body || cause.body || item.content || '',
+      sendTime: Number(item.time || item.createTime || item.sendTime || item.postTime || Date.now()),
+      from: transactor.name || item.transactorName || '',
+      fromNickname: transactor.nick || transactor.name || item.transactorName || '',
+      fromAvatar: resolveAvatarUrl(transactor),
+      topicId: cause.topicId || item.topicId || item.targetId,
+      boardId: cause.boardId || board.id || item.boardId,
+      boardName: board.title || board.name || item.boardName,
+      articleId: item.causeId || cause.id || item.articleId,
+    };
+  });
+
+  const currentPage = Number(pager.currentPage ?? pager.page ?? page);
+  const pageSize = Number(pager.pageSize ?? pager.limit ?? 0) || undefined;
+  const totalPages = Number(pager.totalPages ?? pager.pages ?? 0) || undefined;
+  const total = Number(pager.totalItems ?? pager.items ?? data.total ?? items.length);
+  const hasMore = totalPages != null
+    ? currentPage < totalPages
+    : pageSize != null
+      ? currentPage * pageSize < total
+      : items.length > 0 && items.length < total;
+
+  return {items, total, page: currentPage, pageSize, totalPages, hasMore};
+};
+
+/** 标记一条 WAP 回复提醒为已读。 */
+export const markReplyNotificationAsRead = async (notificationId: string): Promise<void> => {
+  const cookies = await getCookies();
+  if (!cookies) throw new Error('NOT_LOGGED_IN');
+
+  const response = await fetchWithRetry(
+    `${WAP_BASE_URL}/wap/api/notify/read/${notificationId}?t=${Date.now()}`,
+    {
+      method: 'PATCH',
+      headers: buildPostHeaders(cookies, 'application/x-www-form-urlencoded', `${WAP_BASE_URL}/message`),
+      credentials: 'include',
+    },
+  );
+  if (response.status === 401 || response.status === 403) throw new Error('LOGIN_EXPIRED');
+  const json = await response.json();
+  if (json.code !== 1) throw new Error(json.message || json.msg || 'MARK_REPLY_NOTIFICATION_READ_FAILED');
 };
 
 // 检查版面是否已收藏

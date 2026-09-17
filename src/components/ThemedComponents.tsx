@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   Animated,
   TouchableOpacity,
+  useColorScheme,
 } from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {useSettings} from '../context/SettingsContext';
@@ -19,7 +20,11 @@ import {SPACING, FONT_SIZE, BORDER_RADIUS, lineHeight} from '../utils/responsive
 // 导出 useTheme Hook，方便直接获取主题
 export const useTheme = () => {
   const {settings} = useSettings();
-  return getTheme(settings.themeMode);
+  const colorScheme = useColorScheme();
+  const resolvedThemeMode = settings.themeMode === 'auto'
+    ? (colorScheme === 'dark' ? 'dark' : 'light')
+    : settings.themeMode;
+  return getTheme(resolvedThemeMode);
 };
 
 // 主题化的 SafeAreaView
