@@ -396,6 +396,23 @@ export const CheckIcon: React.FC<IconProps> = ({
   </SvgIcon>
 );
 
+/** 保存（软盘） */
+export const SaveIcon: React.FC<IconProps> = ({size = 24, color = '#333'}) => (
+  <SvgIcon size={size} color={color}>
+    <Path d="M5 3h11l3 3v15H5z" />
+    <Path d="M8 3v6h8V3" />
+    <Path d="M8 21v-5h8v5" />
+  </SvgIcon>
+);
+
+/** 发布/发送（纸飞机） */
+export const SendIcon: React.FC<IconProps> = ({size = 24, color = '#333'}) => (
+  <SvgIcon size={size} color={color}>
+    <Path d="M22 2 11 13" />
+    <Path d="m22 2-7 20-4-9-9-4 20-7Z" />
+  </SvgIcon>
+);
+
 /** 灯泡/提示 */
 export const LightbulbIcon: React.FC<IconProps> = ({
   size = 24,

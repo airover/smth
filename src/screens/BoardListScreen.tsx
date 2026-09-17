@@ -16,6 +16,7 @@ import {removeBoardFavorite} from '../services/dataFetcher';
 import {Board} from '../types';
 import {useTheme} from '../components/ThemedComponents';
 import {getCardElevation} from '../utils/theme';
+import {useFocusRefresh} from '../hooks/useFocusRefresh';
 import {
   SPACING,
   FONT_SIZE,
@@ -82,8 +83,11 @@ const BoardListScreen: React.FC = () => {
     }
   };
 
-  const loadFavoriteBoards = async (forceRefresh: boolean = false) => {
+  const loadFavoriteBoards = async (forceRefresh: boolean = false, silent: boolean = false) => {
     try {
+      if (!silent) {
+        setLoading(true);
+      }
       const data = await getFavoriteBoards(forceRefresh);
       setBoards(data);
       setDataLoaded(true);
@@ -91,7 +95,7 @@ const BoardListScreen: React.FC = () => {
       console.error('Load favorite boards error:', error);
       
       // 处理登录过期错误
-      if (error.message === 'NOT_LOGGED_IN' || error.message === 'LOGIN_EXPIRED') {
+      if (!silent && (error.message === 'NOT_LOGGED_IN' || error.message === 'LOGIN_EXPIRED')) {
         console.log('Login expired, clearing login status');
         setIsLoggedIn(false);
         // 提示用户重新登录
@@ -115,6 +119,19 @@ const BoardListScreen: React.FC = () => {
       setRefreshing(false);
     }
   };
+
+  useFocusRefresh(
+    async () => {
+      if (favorites && isLoggedIn) {
+        await loadFavoriteBoards(false, true);
+      }
+    },
+    {
+      intervalMs: 60 * 1000,
+      enabled: Boolean(favorites && isLoggedIn),
+      skipFirstFocus: true,
+    },
+  );
   const handleLogin = () => {
     navigation.navigate('Login');
   };

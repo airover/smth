@@ -23,7 +23,7 @@ import {useNavigation, useRoute} from '@react-navigation/native';
 import {getBoards, getFavoriteBoards, getBoardPosts} from '../services/api';
 import {getSubBoards, checkBoardFavorite, addBoardFavorite, removeBoardFavorite, getMSitePostIdForTopic, getStaticAttachmentUrlsForTopic} from '../services/dataFetcher';
 import {Board, Post} from '../types';
-import {getCache, setCache, getCacheWithTimestamp} from '../services/cacheManager';
+import {setCache, getCacheWithTimestamp} from '../services/cacheManager';
 import {formatRelativeTime} from '../utils/timeFormat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useSettings} from '../context/SettingsContext';
@@ -48,12 +48,16 @@ import {ThemedHeaderButton, useFloatingHeader} from '../components/ThemeHeader';
 import {useReadPosts} from '../context/ReadPostsContext';
 import {SPACING, FONT_SIZE, BORDER_RADIUS, RESPONSIVE, lineHeight} from '../utils/responsive';
 import {getCardElevation} from '../utils/theme';
+import {useFocusRefresh} from '../hooks/useFocusRefresh';
 
 
 const {width: SCREEN_WIDTH} = Dimensions.get('window');
 const DRAWER_WIDTH = SCREEN_WIDTH * 0.8;
 const LIST_CACHE_FRESH_AGE = 60 * 1000;
 const LIST_CACHE_MAX_STALE_AGE = 8 * 60 * 60 * 1000;
+const BOARD_TREE_CACHE_FRESH_AGE = 24 * 60 * 60 * 1000;
+const CHANNELS_CACHE_FRESH_AGE = 30 * 60 * 1000;
+const BOARD_REFRESH_CHECK_INTERVAL = 60 * 1000;
 
 // 频道类型定义
 interface Channel {
@@ -664,14 +668,25 @@ const BoardScreen: React.FC = () => {
     });
   }, [selectedBoard, selectedChannel, showChannels, navigation, theme]);
 
-  const loadBoards = async () => {
+  const loadBoards = async (forceRefresh: boolean = false) => {
+    let hasCachedData = false;
     try {
-      // 检查缓存
-      const cachedData = getCache<any[]>('boards');
-      if (cachedData) {
-        setBoards(cachedData);
-        setLoading(false);
-        return;
+      if (!forceRefresh) {
+        const cachedData = getCacheWithTimestamp<any[]>('boards');
+        if (cachedData) {
+          const age = Date.now() - cachedData.timestamp;
+          setBoards(cachedData.data);
+          hasCachedData = true;
+
+          // 版面树变化很少；新鲜时直接使用，过期后保留旧树并静默更新。
+          if (age < BOARD_TREE_CACHE_FRESH_AGE) {
+            return;
+          }
+        }
+      }
+
+      if (!hasCachedData && !selectedBoardRef.current && !selectedChannelRef.current) {
+        setLoading(true);
       }
 
       // 1. 先拉取一级目录
@@ -705,13 +720,16 @@ const BoardScreen: React.FC = () => {
     } catch (error) {
       console.error('Load boards error:', error);
     } finally {
-      setLoading(false);
+      // 版面树在当前内容页不可见时不应覆盖帖子列表自己的 loading 状态。
+      if (!selectedBoardRef.current && !selectedChannelRef.current) {
+        setLoading(false);
+      }
     }
   };
 
-  const loadFavoriteBoards = async () => {
+  const loadFavoriteBoards = async (forceRefresh: boolean = false) => {
     try {
-      const data = await getFavoriteBoards();
+      const data = await getFavoriteBoards(forceRefresh);
       setFavoriteBoards(data);
     } catch (error) {
       console.error('Load favorite boards error:', error);
@@ -761,36 +779,44 @@ const BoardScreen: React.FC = () => {
     }
   };
 
-  const loadChannels = async () => {
+  const loadChannels = async (forceRefresh: boolean = false) => {
     try {
-      // 检查缓存
-      const cachedChannels = getCache<Channel[]>('channels');
-      if (cachedChannels) {
-        // 过滤掉"热贴"频道（包括"热帖"的不同写法）
-        const filteredChannels = cachedChannels.filter(channel => 
-          channel.name !== '热贴' && channel.name !== '热帖'
-        );
-        // 将"图览"频道移到最左边
-        const albumIndex = filteredChannels.findIndex(c => c.name === '图览');
-        if (albumIndex > 0) {
-          const albumChannel = filteredChannels.splice(albumIndex, 1)[0];
-          filteredChannels.unshift(albumChannel);
-        }
-        setChannels(filteredChannels);
-        // 初次进入时默认选中"图览"（仅当没有选中版面时）
-        // 使用Ref和route.params来判断，避免闭包导致的旧状态问题
-        const params = route.params as {board?: string, source?: string} | undefined;
-        const isNavigatingFromLink = params?.board && params?.source && params.source !== 'tab';
-        const hasSelectedBoard = selectedBoardRef.current || isNavigatingFromLink;
-        
-        if (!selectedChannelRef.current && !hasSelectedBoard && filteredChannels.length > 0) {
-          const albumChannel = filteredChannels.find(c => c.name === '图览');
-          if (albumChannel) {
-            setSelectedChannel(albumChannel);
-            loadAlbumPosts(1);
+      if (!forceRefresh) {
+        const cached = getCacheWithTimestamp<Channel[]>('channels');
+        if (cached) {
+          const age = Date.now() - cached.timestamp;
+          const cachedChannels = cached.data;
+
+          // 过滤掉"热贴"频道（包括"热帖"的不同写法）
+          const filteredChannels = cachedChannels.filter(channel => 
+            channel.name !== '热贴' && channel.name !== '热帖'
+          );
+          // 将"图览"频道移到最左边
+          const albumIndex = filteredChannels.findIndex(c => c.name === '图览');
+          if (albumIndex > 0) {
+            const albumChannel = filteredChannels.splice(albumIndex, 1)[0];
+            filteredChannels.unshift(albumChannel);
+          }
+          setChannels(filteredChannels);
+          // 初次进入时默认选中"图览"（仅当没有选中版面时）
+          // 使用Ref和route.params来判断，避免闭包导致的旧状态问题
+          const params = route.params as {board?: string, source?: string} | undefined;
+          const isNavigatingFromLink = params?.board && params?.source && params.source !== 'tab';
+          const hasSelectedBoard = selectedBoardRef.current || isNavigatingFromLink;
+
+          if (!selectedChannelRef.current && !hasSelectedBoard && filteredChannels.length > 0) {
+            const albumChannel = filteredChannels.find(c => c.name === '图览');
+            if (albumChannel) {
+              setSelectedChannel(albumChannel);
+              loadAlbumPosts(1);
+            }
+          }
+
+          // 频道导航变化较少；过期后先展示旧数据，再静默请求最新列表。
+          if (age < CHANNELS_CACHE_FRESH_AGE) {
+            return;
           }
         }
-        return;
       }
 
       const response = await fetch('https://wap.newsmth.net/wap/api/profile/navigation', {
@@ -1349,6 +1375,41 @@ const BoardScreen: React.FC = () => {
     }
   };
 
+  // 页面重新获得焦点或持续停留时，只检查当前可安全刷新的第一页。
+  // 已经翻到深页的帖子/频道列表不在这里重置，避免打断用户阅读位置。
+  useFocusRefresh(async () => {
+    if (refreshing || sortRefreshing) {
+      return;
+    }
+
+    const requests: Promise<any>[] = [
+      loadBoards(),
+      loadChannels(),
+      loadFavoriteBoards(),
+    ];
+
+    if (selectedBoard && page === 1 && !loadingMore) {
+      requests.push(loadPosts(
+        selectedBoard.id,
+        1,
+        sortByReplyTime ? 1 : 0,
+        false,
+        postMode === 'essence',
+      ));
+    } else if (selectedChannel && channelPage === 1 && !loadingChannelPosts) {
+      requests.push(
+        selectedChannel.name === '图览'
+          ? loadAlbumPosts(1)
+          : loadChannelPosts(selectedChannel.id, 1),
+      );
+    }
+
+    await Promise.all(requests);
+  }, {
+    intervalMs: BOARD_REFRESH_CHECK_INTERVAL,
+    skipFirstFocus: true,
+  });
+
   const onRefresh = async () => {
     setRefreshing(true);
     try {
@@ -1366,7 +1427,11 @@ const BoardScreen: React.FC = () => {
         setHasMore(true);
         await loadPosts(selectedBoard.id, 1, sortByReplyTime ? 1 : 0, true, postMode === 'essence');
       } else {
-        await loadChannels();
+        await Promise.all([
+          loadBoards(true),
+          loadChannels(true),
+          loadFavoriteBoards(true),
+        ]);
       }
     } catch (error) {
       console.error('Refresh error:', error);

@@ -1,11 +1,12 @@
 import React from 'react';
 import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
-import {createNativeStackNavigator} from '@react-navigation/native-stack';
+import {createNativeStackNavigator, NativeStackHeaderProps} from '@react-navigation/native-stack';
+import {getHeaderTitle} from '@react-navigation/elements';
 import {Text, TouchableOpacity, ImageBackground, StyleSheet} from 'react-native';
 import {HomeIcon, BoardIcon, UserIcon, ArrowLeftIcon} from '../components/SvgIcons';
 
 import {useTheme} from '../components/ThemedComponents';
-import {FloatingHeaderProvider} from '../components/ThemeHeader';
+import ThemeHeader, {FloatingHeaderProvider} from '../components/ThemeHeader';
 
 // Screens
 import HomeScreen from '../screens/HomeScreen';
@@ -170,6 +171,52 @@ const createFloatingHeaderScreen = (
   };
 };
 
+/**
+ * 无背景图主题下的 Stack Header。
+ * native-stack 的默认 Header 会使用系统 back button，即使配置了 headerLeft，
+ * 在部分平台上仍可能保留原生按钮。这里沿用项目自己的 ThemeHeader，确保
+ * 返回键、标题和页面操作按钮都走同一套 SVG/触控样式。
+ */
+const AppStackHeader: React.FC<NativeStackHeaderProps> = ({
+  back,
+  options,
+  route,
+  navigation,
+}) => {
+  const theme = useTheme();
+  const canGoBack = !!back;
+  const tintColor = options.headerTintColor ?? theme.headerTint;
+  const title = getHeaderTitle(options, route.name);
+
+  const headerLeft = typeof options.headerLeft === 'function'
+    ? options.headerLeft({
+        tintColor,
+        canGoBack,
+        label: options.headerBackTitle ?? back?.title,
+        href: back?.href,
+      })
+    : options.headerLeft;
+
+  const headerRight = typeof options.headerRight === 'function'
+    ? options.headerRight({tintColor, canGoBack})
+    : options.headerRight;
+
+  const headerCenter = typeof options.headerTitle === 'function'
+    ? options.headerTitle({tintColor, children: title})
+    : undefined;
+
+  return (
+    <ThemeHeader
+      title={title}
+      canGoBack={canGoBack}
+      onGoBack={() => navigation.goBack()}
+      headerLeft={headerLeft}
+      headerRight={headerRight}
+      headerCenter={headerCenter}
+    />
+  );
+};
+
 // 应用导航器
 const AppNavigator = () => {
   const theme = useTheme();
@@ -179,6 +226,8 @@ const AppNavigator = () => {
       screenOptions={({navigation}) => ({
         // 有背景图时隐藏 React Navigation 的 header，由 FloatingHeaderProvider 渲染 ThemeHeader
         headerShown: !hasBackgroundImage,
+        // 无背景图时也使用项目自绘 Header，避免 native-stack 的系统返回按钮混入。
+        header: (props) => <AppStackHeader {...props} />,
         headerStyle: {
           backgroundColor: theme.headerBackground,
         },
@@ -187,6 +236,8 @@ const AppNavigator = () => {
           fontWeight: '600' as const,
           color: theme.headerText,
         },
+        // headerLeft 已提供项目自己的 SVG 返回按钮，禁止 native-stack 再渲染原生 back button。
+        headerBackVisible: false,
         headerBackTitleVisible: false,
         headerBackTitle: '',
         headerLeft: ({canGoBack}: {canGoBack?: boolean}) =>

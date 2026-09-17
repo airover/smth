@@ -1,7 +1,13 @@
 /**
  * 统一缓存管理模块
  * 支持分类缓存和一键清理
+ *
+ * 本模块只负责内存层（同步读写）。持久化（AsyncStorage）不是本模块的职责，
+ * 也不会被自动挂钩——各场景根据自己的需要，在调用点自行组合内存层和
+ * readPersistedSnapshot/writePersistedSnapshot（见文件底部），需要几层
+ * 由场景自己决定，不强制统一入口。
  */
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface CacheItem<T> {
   data: T;
@@ -13,28 +19,44 @@ interface CacheItem<T> {
 interface CacheStore {
   // 版面相关缓存
   boards?: CacheItem<any[]>;
-  subBoards: {[key: string]: CacheItem<any[]>};
   boardPosts: {[key: string]: CacheItem<any>};
-  
+
   // 用户相关缓存
   userInfo?: CacheItem<any>;
   otherUserInfo: {[key: string]: CacheItem<any>}; // 他人资料缓存
-  favoriteBoards?: CacheItem<any[]>;
   friendsList: {[key: string]: CacheItem<string[]>}; // 关注列表缓存
   fansList: {[key: string]: CacheItem<{fans: any[], total: number}>}; // 粉丝列表缓存
   blackList: {[key: string]: CacheItem<string[]>}; // 黑名单缓存
-  
+  favoriteBoards?: CacheItem<any[]>; // 收藏版面（调用方自行叠加 AsyncStorage 持久层）
+
+  // 消息中心相关缓存（纯内存，不持久化）：用于同一 App 会话内先画上次内容；
+  // 页面获得焦点或停留达到刷新间隔后，再按页面 TTL 决定是否静默请求。
+  mailConversations?: CacheItem<any[]>; // 私信会话列表
+  replyNotificationsFirstPage?: CacheItem<any>; // 回复提醒第一页快照
+
+  // 我的文章/回复/喜欢：内存层用于快速展示和新鲜期内跳过请求，持久层由页面
+  // 额外维护，用于冷启动和网络失败兜底。
+  myArticles?: CacheItem<any>;
+  myReplies?: CacheItem<any>;
+  myLikes?: CacheItem<any>;
+
   // 内容相关缓存
-  topTen?: CacheItem<any[]>;
-  hotBoards?: CacheItem<any[]>;
-  hotPosts: {[key: string]: CacheItem<any>};
   postDetail: {[key: string]: CacheItem<any>};
   topicReplies: {[key: string]: CacheItem<any[]>};
-  
+  topTen?: CacheItem<any[]>; // 今日十大（调用方自行叠加 AsyncStorage 持久层）
+  hotBoards?: CacheItem<any[]>; // 热门版面（调用方自行叠加 AsyncStorage 持久层）
+  hotPostsFirstPage?: CacheItem<{topics: any[]; totalPages: number}>; // 热门帖子首页快照（调用方自行叠加 AsyncStorage 持久层）
+  hotPosts: {[key: string]: CacheItem<{topics: any[]; totalPages: number}>}; // 热门帖子深页（page>=2），仅会话内去重，不持久化
+
   // 频道相关缓存
   channels?: CacheItem<any[]>;
   channelPosts: {[key: string]: CacheItem<any>}; // 新增：频道帖子缓存
   albumPosts: {[key: string]: CacheItem<any>};   // 新增：图览帖子缓存
+
+  // M 站映射表（topicId -> 短链 postId / 附件静态 URL），永久性映射，不设新鲜度，
+  // 只靠 MAX_ENTRIES 做 LRU 容量淘汰；调用方自行叠加 AsyncStorage 持久层。
+  msitePostId: {[topicId: string]: CacheItem<string>};
+  msiteStaticUrl: {[topicId: string]: CacheItem<string[]>};
 }
 
 class CacheManager {
@@ -42,48 +64,67 @@ class CacheManager {
   private cache: CacheStore;
   private readonly DEFAULT_DURATION = 60 * 1000; // 默认1分钟
   private readonly DICT_CATEGORIES: Array<keyof CacheStore> = [
-    'subBoards',
     'boardPosts',
-    'hotPosts',
     'postDetail',
     'topicReplies',
+    'hotPosts',
     'channelPosts',
     'albumPosts',
     'otherUserInfo',
     'friendsList',
     'fansList',
     'blackList',
+    'msitePostId',
+    'msiteStaticUrl',
   ];
   private readonly SINGLE_CATEGORIES: Array<keyof CacheStore> = [
     'boards',
     'userInfo',
-    'favoriteBoards',
+    'channels',
     'topTen',
     'hotBoards',
-    'channels',
+    'hotPostsFirstPage',
+    'favoriteBoards',
+    'mailConversations',
+    'replyNotificationsFirstPage',
+    'myArticles',
+    'myReplies',
+    'myLikes',
   ];
   private readonly MAX_ENTRIES: {[key: string]: number} = {
-    subBoards: 80,
     boardPosts: 60,
-    hotPosts: 40,
     postDetail: 120,
     topicReplies: 120,
+    hotPosts: 10,
     channelPosts: 40,
     albumPosts: 10,
     otherUserInfo: 120,
     friendsList: 80,
     fansList: 80,
     blackList: 10,
+    msitePostId: 10000,
+    msiteStaticUrl: 5000,
   };
-  
+
   // 针对不同数据类型的缓存时长配置
   private readonly CACHE_DURATIONS: {[key: string]: number} = {
-    topTen: 5 * 60 * 1000,        // 5分钟（今日十大变化较慢）
-    hotBoards: 10 * 60 * 1000,     // 10分钟（热门版面更稳定）
-    hotPosts: 2 * 60 * 1000,       // 2分钟（热帖变化较快）
     boards: 24 * 60 * 60 * 1000,   // 24小时（版面树变化很少）
     channels: 30 * 60 * 1000,      // 30分钟（频道导航变化较少）
+    topTen: 5 * 60 * 1000,         // 5分钟（今日十大变化较慢）
+    hotBoards: 10 * 60 * 1000,     // 10分钟（热门版面更稳定）
+    hotPostsFirstPage: 2 * 60 * 1000, // 2分钟（热帖首页变化较快）
+    hotPosts: 2 * 60 * 1000,       // 2分钟（热帖深页，仅会话内使用）
     favoriteBoards: 5 * 60 * 1000, // 5分钟（收藏版面）
+    // mailConversations/replyNotificationsFirstPage 用 getWithTimestamp 读取，
+    // 不依赖这个时长做新鲜度判断（调用点每次都会照常发起真实请求刷新）；
+    // 这里的数值只影响 cleanExpired() 的过期清理节奏。
+    mailConversations: 60 * 1000,
+    replyNotificationsFirstPage: 60 * 1000,
+    // 同上，myArticles/myReplies/myLikes 也用 getWithTimestamp 读取，这里的数值
+    // 只影响 cleanExpired() 的清理节奏。
+    myArticles: 60 * 1000,
+    myReplies: 60 * 1000,
+    myLikes: 60 * 1000,
     boardPosts: 60 * 1000,         // 1分钟（版面帖子实时性要求高）
     channelPosts: 60 * 1000,       // 1分钟（频道帖子实时性要求高）
     albumPosts: 60 * 1000,         // 1分钟（图览帖子实时性要求高）
@@ -93,21 +134,26 @@ class CacheManager {
     friendsList: 5 * 60 * 1000,    // 5分钟（关注列表相对稳定）
     fansList: 5 * 60 * 1000,       // 5分钟（粉丝列表相对稳定）
     blackList: 5 * 60 * 1000,      // 5分钟（黑名单相对稳定）
+    // msitePostId/msiteStaticUrl 是永久映射表，不设新鲜度，Number.MAX_SAFE_INTEGER
+    // 相当于"永不因为时间过期"，只靠 MAX_ENTRIES 的 LRU 做容量淘汰。
+    msitePostId: Number.MAX_SAFE_INTEGER,
+    msiteStaticUrl: Number.MAX_SAFE_INTEGER,
   };
 
   private constructor() {
     this.cache = {
-      subBoards: {},
       boardPosts: {},
-      hotPosts: {},
       postDetail: {},
       topicReplies: {},
+      hotPosts: {},
       channelPosts: {},
       albumPosts: {},
       otherUserInfo: {},
       friendsList: {},
       fansList: {},
       blackList: {},
+      msitePostId: {},
+      msiteStaticUrl: {},
     };
   }
 
@@ -122,10 +168,34 @@ class CacheManager {
    * 设置缓存
    */
   set<T>(category: keyof CacheStore, key: string | undefined, data: T, duration?: number): void {
-    const timestamp = Date.now();
-    
+    this.setAt(category, key, data, Date.now(), duration);
+  }
+
+  /**
+   * 将已有快照恢复到内存层，同时保留快照原始时间戳。
+   *
+   * 持久缓存即使过期也可能作为首屏兜底，但不能在恢复时把 timestamp
+   * 重置成“现在”，否则旧数据会被错误地当成新数据继续存活。
+   */
+  setWithTimestamp<T>(
+    category: keyof CacheStore,
+    key: string | undefined,
+    data: T,
+    timestamp: number,
+    duration?: number,
+  ): void {
+    this.setAt(category, key, data, timestamp, duration);
+  }
+
+  private setAt<T>(
+    category: keyof CacheStore,
+    key: string | undefined,
+    data: T,
+    timestamp: number,
+    duration?: number,
+  ): void {
     if (key) {
-      // 带 key 的缓存（如 subBoards[id]）
+      // 带 key 的缓存（如 boardPosts[id]）
       const categoryCache = this.cache[category] as {[key: string]: CacheItem<T>};
       if (typeof categoryCache === 'object' && !Array.isArray(categoryCache)) {
         categoryCache[key] = {data, timestamp, duration, lastAccess: timestamp};
@@ -206,6 +276,23 @@ class CacheManager {
   }
 
   /**
+   * 导出某个字典分类当前的全部键值（不含时间戳等元信息），用于需要把
+   * 整个分类整体持久化到别处的场景（如 dataFetcher.ts 的 M 站映射表）。
+   */
+  getDictSnapshot<T>(category: keyof CacheStore): {[key: string]: T} {
+    const categoryCache = this.cache[category] as {[key: string]: CacheItem<T>} | undefined;
+    if (!categoryCache || typeof categoryCache !== 'object') {
+      return {};
+    }
+
+    const snapshot: {[key: string]: T} = {};
+    for (const key of Object.keys(categoryCache)) {
+      snapshot[key] = categoryCache[key].data;
+    }
+    return snapshot;
+  }
+
+  /**
    * 清除指定分类的缓存
    */
   clearCategory(category: keyof CacheStore): void {
@@ -234,17 +321,18 @@ class CacheManager {
    */
   clearAll(): void {
     this.cache = {
-      subBoards: {},
       boardPosts: {},
-      hotPosts: {},
       postDetail: {},
       topicReplies: {},
+      hotPosts: {},
       channelPosts: {},
       albumPosts: {},
       otherUserInfo: {},
       friendsList: {},
       fansList: {},
       blackList: {},
+      msitePostId: {},
+      msiteStaticUrl: {},
     };
     console.log('[Cache] Cleared all caches');
   }
@@ -356,12 +444,26 @@ export const setCache = <T>(category: keyof CacheStore, key: string | undefined,
   cacheManager.set(category, key, data, duration);
 };
 
+export const setCacheWithTimestamp = <T>(
+  category: keyof CacheStore,
+  key: string | undefined,
+  data: T,
+  timestamp: number,
+  duration?: number,
+) => {
+  cacheManager.setWithTimestamp(category, key, data, timestamp, duration);
+};
+
 export const getCache = <T>(category: keyof CacheStore, key?: string, duration?: number): T | null => {
   return cacheManager.get<T>(category, key, duration);
 };
 
 export const getCacheWithTimestamp = <T>(category: keyof CacheStore, key?: string): {data: T, timestamp: number} | null => {
   return cacheManager.getWithTimestamp<T>(category, key);
+};
+
+export const getCacheDictSnapshot = <T>(category: keyof CacheStore): {[key: string]: T} => {
+  return cacheManager.getDictSnapshot<T>(category);
 };
 
 export const clearCache = (category?: keyof CacheStore) => {
@@ -378,4 +480,54 @@ export const getCacheStats = () => {
 
 export const cleanExpiredCache = (duration?: number) => {
   return cacheManager.cleanExpired(duration);
+};
+
+// ============================================================
+// 持久化（AsyncStorage）辅助函数 —— 独立、可选，不绑定任何分类。
+//
+// 这两个函数只是把"读 AsyncStorage → JSON.parse → 用 timestamp 判断新鲜度"
+// 这段样板收成一处，供需要持久层的场景自愿使用；不使用它们、只用内存层，
+// 或者两层都不用（直接读网络），都是允许的，由调用点自己决定怎么组合。
+// ============================================================
+
+interface PersistedSnapshot<T> {
+  data: T;
+  timestamp: number;
+}
+
+/** 从 AsyncStorage 读取一份带时间戳的快照，返回数据及其新鲜度信息；不存在或解析失败返回 null。 */
+export const readPersistedSnapshot = async <T>(
+  storageKey: string,
+  maxAge: number,
+): Promise<{data: T; age: number; isExpired: boolean} | null> => {
+  try {
+    const raw = await AsyncStorage.getItem(storageKey);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed: PersistedSnapshot<T> = JSON.parse(raw);
+    if (!parsed || typeof parsed.timestamp !== 'number') {
+      return null;
+    }
+
+    const age = Date.now() - parsed.timestamp;
+    return {data: parsed.data, age, isExpired: age >= maxAge};
+  } catch (error) {
+    console.error(`[Cache] readPersistedSnapshot failed for ${storageKey}:`, error);
+    return null;
+  }
+};
+
+/** 将数据以 {data, timestamp} 的形式写入 AsyncStorage。 */
+export const writePersistedSnapshot = async <T>(
+  storageKey: string,
+  data: T,
+): Promise<void> => {
+  try {
+    const snapshot: PersistedSnapshot<T> = {data, timestamp: Date.now()};
+    await AsyncStorage.setItem(storageKey, JSON.stringify(snapshot));
+  } catch (error) {
+    console.error(`[Cache] writePersistedSnapshot failed for ${storageKey}:`, error);
+  }
 };

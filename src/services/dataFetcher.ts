@@ -13,7 +13,7 @@ import {
   buildPostHeaders,
   buildDeleteHeaders,
 } from '../utils/requestUtils';
-import {setCache, getCacheWithTimestamp, clearCache} from './cacheManager';
+import {setCache, setCacheWithTimestamp, getCache, getCacheWithTimestamp, getCacheDictSnapshot, clearCache, readPersistedSnapshot, writePersistedSnapshot} from './cacheManager';
 import {extractStaticAttachmentUrls, isImageAttachment, normalizeImageUrl} from '../utils/imageUtils';
 import {getCookies, getMSiteCookies, isMSiteResponseLoggedIn, handleMSiteCookieExpired, triggerSilentMSiteReLogin} from './auth';
 import {cleanHtml} from '../utils/htmlParser';
@@ -84,10 +84,14 @@ const isPostMissingApiResponse = (json: any): boolean => {
   return message.includes('不存在') || message.includes('已删除');
 };
 
+export const FAVORITE_BOARDS_STORAGE_KEY = 'favorite_boards_cache';
+
 const invalidateFavoriteBoardsCache = async (): Promise<void> => {
+  // 收藏版面现在走 cacheManager 的 favoriteBoards 分类（内存）+ AsyncStorage（持久），
+  // 两层都要显式清掉。
   clearCache('favoriteBoards');
   try {
-    await AsyncStorage.removeItem('favorite_boards_cache');
+    await AsyncStorage.removeItem(FAVORITE_BOARDS_STORAGE_KEY);
   } catch (error) {
     console.error('[Cache] Failed to invalidate favorite boards cache:', error);
   }
@@ -437,50 +441,51 @@ export const hasImageAttachmentWithoutCloudUrl = (attachments: any[]): boolean =
   return result;
 };
 
-// ===== M站帖子短ID 持久缓存 (AsyncStorage) =====
-const MSITE_POST_ID_CACHE_KEY = '@msite_post_id_cache';
-const MSITE_POST_ID_CACHE_MAX_SIZE = 10000; // 缓存最大条目数
-const MSITE_STATIC_URL_CACHE_KEY = '@msite_static_attachment_url_cache';
-const MSITE_STATIC_URL_CACHE_MAX_SIZE = 5000;
-let mSitePostIdCacheMemory: Record<string, string> | null = null;
-let mSiteStaticUrlCacheMemory: Record<string, string[]> | null = null;
+// ===== M站帖子短ID 持久缓存 =====
+// 内存层交给 cacheManager 的 msitePostId/msiteStaticUrl 字典分类管理（容量超限时按 LRU
+// 淘汰，取代过去手写的“按插入顺序删前 100 条”）；持久层是 AsyncStorage 上的整块 JSON
+// blob，首次访问时懒加载进 cacheManager，每次写入后把当前内存快照整块写回。
+export const MSITE_POST_ID_CACHE_KEY = '@msite_post_id_cache';
+export const MSITE_STATIC_URL_CACHE_KEY = '@msite_static_attachment_url_cache';
+let mSitePostIdHydrated = false;
+let mSiteStaticUrlHydrated = false;
 
-const loadMSitePostIdCache = async (): Promise<Record<string, string>> => {
-  if (mSitePostIdCacheMemory) {
-    return mSitePostIdCacheMemory;
-  }
+const ensureMSitePostIdHydrated = async (): Promise<void> => {
+  if (mSitePostIdHydrated) return;
+  mSitePostIdHydrated = true;
 
   try {
     const raw = await AsyncStorage.getItem(MSITE_POST_ID_CACHE_KEY);
-    mSitePostIdCacheMemory = raw ? JSON.parse(raw) : {};
-  } catch {
-    mSitePostIdCacheMemory = {};
+    const stored: Record<string, string> = raw ? JSON.parse(raw) : {};
+    Object.entries(stored).forEach(([topicId, mSitePostId]) => {
+      setCache('msitePostId', topicId, mSitePostId);
+    });
+  } catch (err: any) {
+    console.log('[MSiteIdCache] 读取持久缓存失败:', err.message || err);
   }
-
-  return mSitePostIdCacheMemory as Record<string, string>;
 };
 
-const loadMSiteStaticUrlCache = async (): Promise<Record<string, string[]>> => {
-  if (mSiteStaticUrlCacheMemory) {
-    return mSiteStaticUrlCacheMemory;
-  }
+const ensureMSiteStaticUrlHydrated = async (): Promise<void> => {
+  if (mSiteStaticUrlHydrated) return;
+  mSiteStaticUrlHydrated = true;
 
   try {
     const raw = await AsyncStorage.getItem(MSITE_STATIC_URL_CACHE_KEY);
-    mSiteStaticUrlCacheMemory = raw ? JSON.parse(raw) : {};
-  } catch {
-    mSiteStaticUrlCacheMemory = {};
+    const stored: Record<string, string[]> = raw ? JSON.parse(raw) : {};
+    Object.entries(stored).forEach(([topicId, urls]) => {
+      setCache('msiteStaticUrl', topicId, urls);
+    });
+  } catch (err: any) {
+    console.log('[MSiteStaticUrlCache] 读取持久缓存失败:', err.message || err);
   }
-
-  return mSiteStaticUrlCacheMemory as Record<string, string[]>;
 };
 
 /**
  * 从持久缓存中获取 topicId 对应的 mSitePostId
  */
 const getMSitePostIdFromCache = async (topicId: string): Promise<string | null> => {
-  const cache = await loadMSitePostIdCache();
-  return cache[topicId] || null;
+  await ensureMSitePostIdHydrated();
+  return getCache<string>('msitePostId', topicId);
 };
 
 /**
@@ -488,36 +493,28 @@ const getMSitePostIdFromCache = async (topicId: string): Promise<string | null> 
  */
 const saveMSitePostIdToCache = async (topicId: string, mSitePostId: string): Promise<void> => {
   try {
-    const cache = await loadMSitePostIdCache();
-    // 限制缓存条目数量，超过上限时删除最早的100条
-    const keys = Object.keys(cache);
-    if (keys.length > MSITE_POST_ID_CACHE_MAX_SIZE) {
-      const toRemove = keys.slice(0, 100);
-      toRemove.forEach(k => delete cache[k]);
-    }
-    cache[topicId] = mSitePostId;
-    await AsyncStorage.setItem(MSITE_POST_ID_CACHE_KEY, JSON.stringify(cache));
+    await ensureMSitePostIdHydrated();
+    setCache('msitePostId', topicId, mSitePostId);
+    const snapshot = getCacheDictSnapshot<string>('msitePostId');
+    await AsyncStorage.setItem(MSITE_POST_ID_CACHE_KEY, JSON.stringify(snapshot));
   } catch (err: any) {
     console.log('[MSiteIdCache] 写入缓存失败:', err.message || err);
   }
 };
 
 const getStaticAttachmentUrlsFromCache = async (topicId: string): Promise<string[] | null> => {
-  const cache = await loadMSiteStaticUrlCache();
-  return cache[topicId] || null;
+  await ensureMSiteStaticUrlHydrated();
+  return getCache<string[]>('msiteStaticUrl', topicId);
 };
 
 const saveStaticAttachmentUrlsToCache = async (topicId: string, urls: string[]): Promise<void> => {
   if (!topicId || urls.length === 0) return;
 
   try {
-    const cache = await loadMSiteStaticUrlCache();
-    const keys = Object.keys(cache);
-    if (keys.length > MSITE_STATIC_URL_CACHE_MAX_SIZE) {
-      keys.slice(0, 100).forEach(key => delete cache[key]);
-    }
-    cache[topicId] = urls;
-    await AsyncStorage.setItem(MSITE_STATIC_URL_CACHE_KEY, JSON.stringify(cache));
+    await ensureMSiteStaticUrlHydrated();
+    setCache('msiteStaticUrl', topicId, urls);
+    const snapshot = getCacheDictSnapshot<string[]>('msiteStaticUrl');
+    await AsyncStorage.setItem(MSITE_STATIC_URL_CACHE_KEY, JSON.stringify(snapshot));
   } catch (err: any) {
     console.log('[MSiteStaticUrlCache] 写入缓存失败:', err.message || err);
   }
@@ -978,59 +975,71 @@ export const getHotBoards = async (): Promise<any[]> => {
 // 获取收藏版面
 // 使用新的 JSON API 获取
 export const getFavoriteBoards = async (forceRefresh: boolean = false): Promise<any[]> => {
+  const FAVORITE_BOARDS_MEMORY_FRESH_AGE = 5 * 60 * 1000;
+  const FAVORITE_BOARDS_MAX_STALE_AGE = 7 * 24 * 60 * 60 * 1000; // 持久缓存最多兜底7天
+  const FAVORITE_BOARDS_REFRESH_THRESHOLD = 60 * 1000; // 超过1分钟后台刷新
+
   try {
     const cookies = await getCookies();
-    
+
     // 严格校验登录态：必须有Cookie才能调用
     if (!cookies) {
       console.error('getFavoriteBoards: 未登录，无Cookie');
       throw new Error('NOT_LOGGED_IN');
     }
-    
-    // 检查缓存（5分钟有效期）
+
+    // 检查缓存：内存/持久快照在新鲜期内直接返回；超过新鲜期则返回旧数据并静默更新。
     if (!forceRefresh) {
-      const CACHE_KEY = 'favorite_boards_cache';
-      const CACHE_DURATION = 5 * 60 * 1000; // 5分钟
-      
       try {
-        const cachedData = await AsyncStorage.getItem(CACHE_KEY);
-        if (cachedData) {
-          const parsed = JSON.parse(cachedData);
-          const age = Date.now() - parsed.timestamp;
-          
-          if (age < CACHE_DURATION) {
-            console.log(`[Cache] Using favorite boards cache, age: ${Math.floor(age / 1000)}s`);
-            
-            // 如果缓存超过1分钟，异步更新
-            if (age > 60 * 1000) {
+        let cached = getCacheWithTimestamp<any[]>('favoriteBoards');
+        if (!cached) {
+          const persisted = await readPersistedSnapshot<any[]>(FAVORITE_BOARDS_STORAGE_KEY, FAVORITE_BOARDS_MAX_STALE_AGE);
+          if (persisted && !persisted.isExpired) {
+            setCacheWithTimestamp(
+              'favoriteBoards',
+              undefined,
+              persisted.data,
+              Date.now() - persisted.age,
+            );
+            cached = {data: persisted.data, timestamp: Date.now() - persisted.age};
+          }
+        }
+
+        if (cached) {
+          const age = Date.now() - cached.timestamp;
+          if (age < FAVORITE_BOARDS_MAX_STALE_AGE) {
+            const isFresh = age < FAVORITE_BOARDS_MEMORY_FRESH_AGE;
+            console.log(`[Cache] Using ${isFresh ? 'fresh' : 'stale'} favorite boards cache, age: ${Math.floor(age / 1000)}s`);
+
+            // 超过1分钟后继续后台更新，但不阻塞当前页面，也不重置页面状态。
+            if (age >= FAVORITE_BOARDS_REFRESH_THRESHOLD) {
               console.log('[Cache] Favorite boards cache needs background refresh');
-              // 异步更新缓存
               getFavoriteBoards(true).catch(err => {
                 console.error('[Cache] Background refresh failed:', err);
               });
             }
-            
-            return parsed.data;
+
+            return cached.data;
           }
         }
       } catch (error) {
         console.error('[Cache] Read favorite boards cache error:', error);
       }
     }
-    
+
     return await runOnce('favoriteBoards', async () => {
       const timestamp = Date.now();
       const url = `${WAP_BASE_URL}/wap/api/profile/fav/boards?t=${timestamp}`;
-    
+
       console.log('Fetching Favorite Boards from API:', url);
-    
+
       const headers = buildGetHeaders(cookies);
 
       const response = await fetchWithRetry(url, {
         headers,
         credentials: 'include',
       }, 10000); // 10秒超时
-    
+
       // 检查HTTP状态码，401/403表示未登录或Cookie过期
       if (response.status === 401 || response.status === 403) {
         console.error('getFavoriteBoards: Cookie已过期或无权限，状态码:', response.status);
@@ -1055,18 +1064,18 @@ export const getFavoriteBoards = async (forceRefresh: boolean = false): Promise<
 
       if (json.data?.favBoards) {
         const allFavBoards: any[] = [];
-      
+
       // 兼容处理：有些 API 返回的是对象格式（带数字键）而非标准数组
       const rawData = json.data.favBoards;
       const folders = Array.isArray(rawData) ? rawData : Object.values(rawData || {});
-      
+
       // 深度递归提取所有版面项目
       const collect = (list: any[]) => {
         if (!Array.isArray(list)) return;
-        
+
         list.forEach(item => {
           if (!item) return;
-          
+
           // 根据提供的最新响应格式：
           // 1. 如果 item.type 为 "BOARD"，版面信息在 item.bid 中
           if (item.type === 'BOARD' && item.bid) {
@@ -1079,7 +1088,7 @@ export const getFavoriteBoards = async (forceRefresh: boolean = false): Promise<
                 isFavorite: true,
               });
             }
-          } 
+          }
           // 2. 如果是旧格式或者直接是版面对象
           else if (typeof item.id === 'string' && item.id.length > 10) {
             if (!allFavBoards.find(b => b.id === item.id)) {
@@ -1091,7 +1100,7 @@ export const getFavoriteBoards = async (forceRefresh: boolean = false): Promise<
           });
         }
       }
-          
+
           // 递归进入 items 子列表（处理文件夹嵌套）
           if (item.items && Array.isArray(item.items)) {
             collect(item.items);
@@ -1101,22 +1110,15 @@ export const getFavoriteBoards = async (forceRefresh: boolean = false): Promise<
 
       collect(folders);
       console.log('Extracted fav boards count:', allFavBoards.length);
-      
-      // 保存到缓存
-      const CACHE_KEY = 'favorite_boards_cache';
-      try {
-        await AsyncStorage.setItem(CACHE_KEY, JSON.stringify({
-          data: allFavBoards,
-          timestamp: Date.now(),
-        }));
-        console.log('[Cache] Saved favorite boards to cache');
-      } catch (error) {
-        console.error('[Cache] Failed to save favorite boards cache:', error);
-      }
-      
+
+      // 保存到缓存（内存层 + 持久层）
+      setCache('favoriteBoards', undefined, allFavBoards);
+      await writePersistedSnapshot(FAVORITE_BOARDS_STORAGE_KEY, allFavBoards);
+      console.log('[Cache] Saved favorite boards to cache');
+
       return allFavBoards;
     }
-    
+
       return [];
     });
   } catch (error: any) {
@@ -1125,22 +1127,25 @@ export const getFavoriteBoards = async (forceRefresh: boolean = false): Promise<
     if (error.message === 'NOT_LOGGED_IN' || error.message === 'LOGIN_EXPIRED') {
       throw error;
     }
-    
-    // 其他错误时，尝试返回缓存数据
+
+    // 其他错误时，尝试返回缓存数据（不管新鲜度，能用就用）
     if (error.message === '请求超时') {
-      const CACHE_KEY = 'favorite_boards_cache';
+      const memory = getCacheWithTimestamp<any[]>('favoriteBoards');
+      if (memory) {
+        console.log('[Cache] Using stale memory cache due to timeout');
+        return memory.data;
+      }
       try {
-        const cachedData = await AsyncStorage.getItem(CACHE_KEY);
-        if (cachedData) {
-          const parsed = JSON.parse(cachedData);
-          console.log('[Cache] Using stale cache due to timeout');
-          return parsed.data;
+        const persisted = await readPersistedSnapshot<any[]>(FAVORITE_BOARDS_STORAGE_KEY, Number.MAX_SAFE_INTEGER);
+        if (persisted) {
+          console.log('[Cache] Using stale persisted cache due to timeout');
+          return persisted.data;
         }
       } catch (cacheError) {
         console.error('[Cache] Failed to read cache on error:', cacheError);
       }
     }
-    
+
     // 其他错误返回空数组
     return [];
   }

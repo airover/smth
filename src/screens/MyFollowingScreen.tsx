@@ -8,15 +8,15 @@ import {
   RefreshControl,
   FlatList,
   Alert,
-  InteractionManager,
 } from 'react-native';
-import {useNavigation, useFocusEffect} from '@react-navigation/native';
+import {useNavigation} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {getFriendsList} from '../services/api';
 import {useTheme} from '../components/ThemedComponents';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {ChevronRightIcon, UsersIcon} from '../components/SvgIcons';
 import {getCardElevation} from '../utils/theme';
+import {useFocusRefresh} from '../hooks/useFocusRefresh';
 import {
   SPACING,
   FONT_SIZE,
@@ -59,12 +59,19 @@ const MyFollowingScreen: React.FC = () => {
   };
 
   // 加载关注列表
-  const loadFollowing = async (page: number = 1, forceRefresh: boolean = false, append: boolean = false) => {
+  const loadFollowing = async (
+    page: number = 1,
+    forceRefresh: boolean = false,
+    append: boolean = false,
+    silent: boolean = false,
+  ) => {
     try {
       const username = currentUsername || await loadCurrentUsername();
       
       if (!username) {
-        Alert.alert('提示', '请先登录');
+        if (!silent) {
+          Alert.alert('提示', '请先登录');
+        }
         setLoading(false);
         return;
       }
@@ -94,13 +101,13 @@ const MyFollowingScreen: React.FC = () => {
         // 直接使用API返回的hasMore字段
         setHasMore(result.hasMore);
       } else {
-        if (!append) {
+        if (!append && !silent) {
           Alert.alert('提示', result.message || '获取关注列表失败');
         }
       }
     } catch (error: any) {
       console.error('Load following error:', error);
-      if (error.message === 'LOGIN_EXPIRED') {
+      if (!silent && error.message === 'LOGIN_EXPIRED') {
         Alert.alert(
           '登录已过期',
           '请重新登录',
@@ -112,7 +119,7 @@ const MyFollowingScreen: React.FC = () => {
             {text: '取消', style: 'cancel'},
           ]
         );
-      } else if (!append) {
+      } else if (!append && !silent) {
         Alert.alert('错误', '加载失败，请稍后重试');
       }
     } finally {
@@ -127,16 +134,17 @@ const MyFollowingScreen: React.FC = () => {
     loadFollowing(1);
   }, []);
 
-  // 页面获得焦点时刷新
-  useFocusEffect(
-    useCallback(() => {
-      if (!loading) {
-        const task = InteractionManager.runAfterInteractions(() => {
-          loadFollowing(1);
-        });
-        return () => task.cancel();
+  // 页面获得焦点或持续停留时检查第一页缓存；深页阅读期间不重置列表。
+  useFocusRefresh(
+    async () => {
+      if (!loading && !refreshing && !loadingMore && currentPage === 1) {
+        await loadFollowing(1, false, false, true);
       }
-    }, [])
+    },
+    {
+      intervalMs: 60 * 1000,
+      skipFirstFocus: true,
+    },
   );
 
   // 下拉刷新

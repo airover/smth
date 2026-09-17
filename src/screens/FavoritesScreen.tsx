@@ -21,6 +21,7 @@ import {
 } from '../components/ThemedComponents';
 import {ChevronRightIcon, StarIcon, BoardIcon} from '../components/SvgIcons';
 import {getCardElevation} from '../utils/theme';
+import {useFocusRefresh} from '../hooks/useFocusRefresh';
 import {
   SPACING,
   FONT_SIZE,
@@ -126,15 +127,17 @@ const FavoritesScreen: React.FC = () => {
   }, [navigation]);
 
   // 加载收藏的版面
-  const loadBoards = useCallback(async (forceRefresh: boolean = false) => {
+  const loadBoards = useCallback(async (forceRefresh: boolean = false, silent: boolean = false) => {
     try {
-      setLoading(true);
+      if (!silent) {
+        setLoading(true);
+      }
       const result = await getFavoriteBoards(forceRefresh);
       setBoards(result);
     } catch (error: any) {
       console.error('Load favorite boards error:', error);
       
-      if (error.message === 'NOT_LOGGED_IN') {
+      if (error.message === 'NOT_LOGGED_IN' && !silent) {
         Alert.alert(
           '未登录',
           '请先登录后查看收藏',
@@ -150,7 +153,7 @@ const FavoritesScreen: React.FC = () => {
             },
           ]
         );
-      } else {
+      } else if (!silent) {
         Alert.alert('加载失败', error.message || '请稍后重试');
       }
     } finally {
@@ -184,6 +187,20 @@ const FavoritesScreen: React.FC = () => {
       loadTopics(topicsPage + 1);
     }
   }, [activeTab, hasMoreTopics, loadingMore, loading, topicsPage, loadTopics]);
+
+  // 收藏版面使用服务层的内存/持久缓存；页面持续停留时定期检查，
+  // 但静默刷新不显示全屏 loading，也不会影响收藏文章分页。
+  useFocusRefresh(
+    async () => {
+      if (activeTab === 'boards') {
+        await loadBoards(false, true);
+      }
+    },
+    {
+      intervalMs: 60 * 1000,
+      skipFirstFocus: true,
+    },
+  );
 
   // 标记文章为已读（静默执行，不显示提示）
   const markAsReadSilently = useCallback(async (item: any) => {

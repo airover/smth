@@ -7,11 +7,17 @@ import {
   ActivityIndicator,
   RefreshControl,
   FlatList,
-  Dimensions,
 } from 'react-native';
-import {useNavigation, useFocusEffect} from '@react-navigation/native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import {useNavigation} from '@react-navigation/native';
 import {getMyArticles, getMyLikes, MyArticle} from '../services/api';
+import {
+  getCacheWithTimestamp,
+  readPersistedSnapshot,
+  setCache,
+  setCacheWithTimestamp,
+  writePersistedSnapshot,
+} from '../services/cacheManager';
+import {getCurrentUsername} from '../services/auth';
 import {formatRelativeTime} from '../utils/timeFormat';
 import {useTheme} from '../components/ThemedComponents';
 import {useSettings} from '../context/SettingsContext';
@@ -25,20 +31,40 @@ import {
   BORDER_RADIUS,
   scaleModerate,
 } from '../utils/responsive';
+import {useFocusRefresh} from '../hooks/useFocusRefresh';
 
-// 缓存 key
-const MY_ARTICLES_CACHE_KEY = 'my_articles_cache';
-const MY_REPLIES_CACHE_KEY = 'my_replies_cache';
-const MY_LIKES_CACHE_KEY = 'my_likes_cache';
-const CACHE_DURATION = 5 * 60 * 1000; // 5分钟缓存
+type MyArticlesTab = 0 | 1 | 2;
+type MyArticlesCategory = 'myArticles' | 'myReplies' | 'myLikes';
 
-interface CachedData {
+interface ArticlesSnapshot {
   articles: MyArticle[];
-  timestamp: number;
   page: number;
   total: number;
   hasMore: boolean;
+  owner?: string;
 }
+
+export const MY_ARTICLES_STORAGE_KEYS = {
+  articles: 'my_articles_cache',
+  replies: 'my_replies_cache',
+  likes: 'my_likes_cache',
+} as const;
+
+const MY_ARTICLES_MEMORY_FRESH_TTL = 2 * 60 * 1000;
+const MY_ARTICLES_PERSIST_MAX_STALE = 7 * 24 * 60 * 60 * 1000;
+const MY_ARTICLES_REFRESH_INTERVAL = 2 * 60 * 1000;
+
+const STORAGE_KEY_BY_TAB: Record<MyArticlesTab, string> = {
+  0: MY_ARTICLES_STORAGE_KEYS.articles,
+  1: MY_ARTICLES_STORAGE_KEYS.replies,
+  2: MY_ARTICLES_STORAGE_KEYS.likes,
+};
+
+const CATEGORY_BY_TAB: Record<MyArticlesTab, MyArticlesCategory> = {
+  0: 'myArticles',
+  1: 'myReplies',
+  2: 'myLikes',
+};
 
 const MyArticlesScreen: React.FC = () => {
   const navigation = useNavigation<any>();
@@ -54,139 +80,159 @@ const MyArticlesScreen: React.FC = () => {
   const [articlesPage, setArticlesPage] = useState(1);
   const [articlesTotal, setArticlesTotal] = useState(0);
   const [articlesHasMore, setArticlesHasMore] = useState(false);
-  
+  const [articlesLoaded, setArticlesLoaded] = useState(false);
+
   // 回复数据
   const [replies, setReplies] = useState<MyArticle[]>([]);
   const [repliesPage, setRepliesPage] = useState(1);
   const [repliesTotal, setRepliesTotal] = useState(0);
   const [repliesHasMore, setRepliesHasMore] = useState(false);
-  
+  const [repliesLoaded, setRepliesLoaded] = useState(false);
+
   // 喜欢数据
   const [likes, setLikes] = useState<MyArticle[]>([]);
   const [likesPage, setLikesPage] = useState(1);
   const [likesTotal, setLikesTotal] = useState(0);
   const [likesHasMore, setLikesHasMore] = useState(false);
-  
-  // 加载状态
-  const [loading, setLoading] = useState(true);
+  const [likesLoaded, setLikesLoaded] = useState(false);
+
+  // 加载状态：是否正在下拉刷新/加载更多。是否显示首屏骨架屏改用下面按 tab 独立的
+  // *Loaded 判断——它们在切 tab 的当次渲染里就能算出来，不需要等 effect 跑完，
+  // 避免"切到还没加载过的 tab 时，先用旧的 loading 值渲染一帧空列表"的闪烁。
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  
+
   // 防止重复加载
   const isLoadingRef = useRef(false);
 
   // 加载缓存数据
-  const loadCachedData = async (type: 0 | 1 | 2): Promise<CachedData | null> => {
-    try {
-      const cacheKey = type === 0 ? MY_ARTICLES_CACHE_KEY : type === 1 ? MY_REPLIES_CACHE_KEY : MY_LIKES_CACHE_KEY;
-      const cached = await AsyncStorage.getItem(cacheKey);
-      if (cached) {
-        const data: CachedData = JSON.parse(cached);
-        // 检查缓存是否过期
-        if (Date.now() - data.timestamp < CACHE_DURATION) {
-          return data;
-        }
-      }
-    } catch (error) {
-      console.error('loadCachedData error:', error);
+  // 把一份快照（本地状态或缓存里取出的）应用到对应 tab 的 state 上
+  const applySnapshot = useCallback((type: MyArticlesTab, snapshot: ArticlesSnapshot) => {
+    if (type === 0) {
+      setArticles(snapshot.articles);
+      setArticlesPage(snapshot.page);
+      setArticlesTotal(snapshot.total);
+      setArticlesHasMore(snapshot.hasMore);
+    } else if (type === 1) {
+      setReplies(snapshot.articles);
+      setRepliesPage(snapshot.page);
+      setRepliesTotal(snapshot.total);
+      setRepliesHasMore(snapshot.hasMore);
+    } else {
+      setLikes(snapshot.articles);
+      setLikesPage(snapshot.page);
+      setLikesTotal(snapshot.total);
+      setLikesHasMore(snapshot.hasMore);
     }
-    return null;
-  };
+  }, []);
 
-  // 保存缓存数据
-  const saveCachedData = async (type: 0 | 1 | 2, data: Omit<CachedData, 'timestamp'>) => {
-    try {
-      const cacheKey = type === 0 ? MY_ARTICLES_CACHE_KEY : type === 1 ? MY_REPLIES_CACHE_KEY : MY_LIKES_CACHE_KEY;
-      const cachedData: CachedData = {
-        ...data,
-        timestamp: Date.now(),
-      };
-      await AsyncStorage.setItem(cacheKey, JSON.stringify(cachedData));
-    } catch (error) {
-      console.error('saveCachedData error:', error);
+  const setLoadedFlag = useCallback((type: MyArticlesTab, value: boolean) => {
+    if (type === 0) {
+      setArticlesLoaded(value);
+    } else if (type === 1) {
+      setRepliesLoaded(value);
+    } else {
+      setLikesLoaded(value);
     }
-  };
+  }, []);
 
-  // 加载数据
-  const loadData = async (type: 0 | 1 | 2, page: number = 1, isRefresh: boolean = false) => {
-    if (isLoadingRef.current && !isRefresh) {
+  // 加载数据。页面进入/切换 tab 时会先使用新鲜缓存；过期缓存只负责首屏兜底，
+  // 然后由静默请求更新。
+  const loadData = useCallback(async (
+    type: MyArticlesTab,
+    page: number = 1,
+    isRefresh: boolean = false,
+    _silent: boolean = false,
+  ) => {
+    if (isLoadingRef.current) {
       return;
     }
-    
+
     isLoadingRef.current = true;
-    
+
     try {
-      // 如果是首次加载，先尝试从缓存获取
+      const currentUsername = page === 1 ? await getCurrentUsername() : null;
+
+      let shouldRequest = true;
+
+      // 先恢复缓存。新鲜缓存直接使用并跳过请求；过期但仍在兜底期内的缓存先展示，
+      // 再由本次进入页面的静默刷新检查更新。
       if (page === 1 && !isRefresh) {
-        const cached = await loadCachedData(type);
-        if (cached) {
-          if (type === 0) {
-            setArticles(cached.articles);
-            setArticlesPage(cached.page);
-            setArticlesTotal(cached.total);
-            setArticlesHasMore(cached.hasMore);
-          } else if (type === 1) {
-            setReplies(cached.articles);
-            setRepliesPage(cached.page);
-            setRepliesTotal(cached.total);
-            setRepliesHasMore(cached.hasMore);
-          } else {
-            setLikes(cached.articles);
-            setLikesPage(cached.page);
-            setLikesTotal(cached.total);
-            setLikesHasMore(cached.hasMore);
+        const cached = getCacheWithTimestamp<ArticlesSnapshot>(CATEGORY_BY_TAB[type]);
+        let cachedTimestamp: number | null = null;
+
+        if (
+          cached
+          && cached.data.owner === currentUsername
+          && Date.now() - cached.timestamp < MY_ARTICLES_PERSIST_MAX_STALE
+        ) {
+          applySnapshot(type, cached.data);
+          setLoadedFlag(type, true);
+          cachedTimestamp = cached.timestamp;
+        } else if (currentUsername) {
+          // 持久化缓存允许比内存新鲜期更久的兜底，但超过最大兜底期就不再展示。
+          const persisted = await readPersistedSnapshot<ArticlesSnapshot>(
+            STORAGE_KEY_BY_TAB[type],
+            MY_ARTICLES_PERSIST_MAX_STALE,
+          );
+          if (
+            persisted?.data &&
+            !persisted.isExpired &&
+            persisted.data.owner === currentUsername &&
+            Array.isArray(persisted.data.articles)
+          ) {
+            applySnapshot(type, persisted.data);
+            setLoadedFlag(type, true);
+            cachedTimestamp = Date.now() - persisted.age;
+            setCacheWithTimestamp(
+              CATEGORY_BY_TAB[type],
+              undefined,
+              persisted.data,
+              cachedTimestamp,
+            );
           }
-          setLoading(false);
-          
-          // 异步刷新数据
-          loadData(type, 1, true);
-          return;
+        }
+
+        if (cachedTimestamp !== null) {
+          shouldRequest = Date.now() - cachedTimestamp >= MY_ARTICLES_MEMORY_FRESH_TTL;
+          if (!shouldRequest) {
+            console.log(`[Cache] my-${type} 命中新鲜缓存，跳过请求`);
+          }
         }
       }
-      
+
+      if (!shouldRequest) {
+        return;
+      }
+
       const result = type === 2 ? await getMyLikes(page) : await getMyArticles(type, page);
-      
+
       if (page === 1) {
         // 第一页，替换数据
-        if (type === 0) {
-          setArticles(result.articles);
-          setArticlesPage(1);
-          setArticlesTotal(result.total);
-          setArticlesHasMore(result.hasMore);
-        } else if (type === 1) {
-          setReplies(result.articles);
-          setRepliesPage(1);
-          setRepliesTotal(result.total);
-          setRepliesHasMore(result.hasMore);
-        } else {
-          setLikes(result.articles);
-          setLikesPage(1);
-          setLikesTotal(result.total);
-          setLikesHasMore(result.hasMore);
-        }
-        
-        // 保存到缓存
-        await saveCachedData(type, {
+        const snapshot: ArticlesSnapshot = {
           articles: result.articles,
           page: 1,
           total: result.total,
           hasMore: result.hasMore,
-        });
+          owner: currentUsername || undefined,
+        };
+        applySnapshot(type, snapshot);
+        setCache(CATEGORY_BY_TAB[type], undefined, snapshot);
+        if (currentUsername) {
+          await writePersistedSnapshot(STORAGE_KEY_BY_TAB[type], snapshot);
+        }
       } else {
         // 加载更多，追加数据
         if (type === 0) {
-          const newArticles = [...articles, ...result.articles];
-          setArticles(newArticles);
+          setArticles(previous => [...previous, ...result.articles]);
           setArticlesPage(page);
           setArticlesHasMore(result.hasMore);
         } else if (type === 1) {
-          const newReplies = [...replies, ...result.articles];
-          setReplies(newReplies);
+          setReplies(previous => [...previous, ...result.articles]);
           setRepliesPage(page);
           setRepliesHasMore(result.hasMore);
         } else {
-          const newLikes = [...likes, ...result.articles];
-          setLikes(newLikes);
+          setLikes(previous => [...previous, ...result.articles]);
           setLikesPage(page);
           setLikesHasMore(result.hasMore);
         }
@@ -194,39 +240,44 @@ const MyArticlesScreen: React.FC = () => {
     } catch (error) {
       console.error('loadData error:', error);
     } finally {
-      setLoading(false);
+      // 不管成功还是失败都标记为“已尝试加载过”，避免请求失败时永远卡在骨架屏；
+      // 失败时如果也没有缓存可用，会落到空状态而不是转不停的菊花。
+      setLoadedFlag(type, true);
       setRefreshing(false);
       setLoadingMore(false);
       isLoadingRef.current = false;
     }
-  };
+  }, [applySnapshot, setLoadedFlag]);
 
-  // 初始加载
+  // 首次挂载和 Tab 切换都会命中下面这个 effect（activeTab 的“首次渲染”本身就算
+  // 一次依赖变化），不需要再单独加一个只在挂载时跑的效果。是否需要加载改判断
+  // “这个 tab 是否已经加载过”（*Loaded），而不是判断“当前数据是否为空”——后者在
+  // 切到一个从未加载过的 tab 时，effect 触发前的那一次渲染就已经是“数据为空”，
+  // 会先用旧的渲染分支画一帧空列表，才轮到这个 effect 去纠正。
   useEffect(() => {
-    loadData(activeTab);
-  }, []);
+    const currentLoaded = activeTab === 0 ? articlesLoaded : activeTab === 1 ? repliesLoaded : likesLoaded;
+    loadData(activeTab, 1, false, currentLoaded);
+  }, [activeTab, articlesLoaded, likesLoaded, loadData, repliesLoaded]);
 
-  // Tab切换时加载
-  useEffect(() => {
-    const currentData = activeTab === 0 ? articles : activeTab === 1 ? replies : likes;
-    if (currentData.length === 0) {
-      setLoading(true);
-      loadData(activeTab);
+  const refreshActiveTabSilently = useCallback(() => {
+    const currentPage = activeTab === 0 ? articlesPage : activeTab === 1 ? repliesPage : likesPage;
+    if (currentPage > 1) {
+      // 已经加载了深页时不在焦点刷新中重置为第一页，避免打断列表阅读。
+      return Promise.resolve();
     }
-  }, [activeTab]);
+    return loadData(activeTab, 1, false, true);
+  }, [activeTab, articlesPage, repliesPage, likesPage, loadData]);
 
-  // 页面获得焦点时刷新
-  useFocusEffect(
-    useCallback(() => {
-      // 页面回来时不自动刷新，用户可以下拉刷新
-    }, [])
-  );
+  useFocusRefresh(refreshActiveTabSilently, {
+    intervalMs: MY_ARTICLES_REFRESH_INTERVAL,
+    skipFirstFocus: true,
+  });
 
   // 下拉刷新
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadData(activeTab, 1, true);
-  }, [activeTab]);
+    await loadData(activeTab, 1, true, false);
+  }, [activeTab, loadData]);
 
   // 加载更多
   const onLoadMore = useCallback(() => {
@@ -239,7 +290,7 @@ const MyArticlesScreen: React.FC = () => {
     
     setLoadingMore(true);
     loadData(activeTab, currentPage + 1);
-  }, [activeTab, articlesHasMore, repliesHasMore, likesHasMore, articlesPage, repliesPage, likesPage, loadingMore]);
+  }, [activeTab, articlesHasMore, repliesHasMore, likesHasMore, articlesPage, repliesPage, likesPage, loadingMore, loadData]);
 
   // 点击帖子
   const handleArticlePress = (item: MyArticle) => {
@@ -301,8 +352,6 @@ const MyArticlesScreen: React.FC = () => {
 
   // 渲染列表底部
   const renderFooter = () => {
-    const hasMore = activeTab === 0 ? articlesHasMore : activeTab === 1 ? repliesHasMore : likesHasMore;
-    
     if (loadingMore) {
       return (
         <View style={styles.footerContainer}>
@@ -311,24 +360,13 @@ const MyArticlesScreen: React.FC = () => {
         </View>
       );
     }
-    
-    if (!hasMore && (activeTab === 0 ? articles : activeTab === 1 ? replies : likes).length > 0) {
-      return (
-        <View style={styles.footerContainer}>
-          <Text style={[styles.footerText, {color: theme.secondaryText}]}>没有更多了</Text>
-        </View>
-      );
-    }
-    
+
+    // 到底后留白，不再显示“没有更多了”提示。
     return null;
   };
 
-  // 渲染空状态
+  // 渲染空状态（只有当前 tab 已经加载完成时才会被渲染到，见下方 FlatList 的条件）
   const renderEmpty = () => {
-    if (loading) {
-      return null;
-    }
-    
     return (
       <View style={styles.emptyContainer}>
         <View style={styles.emptyIcon}>
@@ -370,6 +408,7 @@ const MyArticlesScreen: React.FC = () => {
 
   // 当前显示的数据
   const currentData = activeTab === 0 ? articles : activeTab === 1 ? replies : likes;
+  const currentLoaded = activeTab === 0 ? articlesLoaded : activeTab === 1 ? repliesLoaded : likesLoaded;
 
   return (
     <View style={[styles.container, {backgroundColor: theme.background}]}>
@@ -394,8 +433,9 @@ const MyArticlesScreen: React.FC = () => {
         </View>
       </View>
 
-      {/* 加载中 */}
-      {loading ? (
+      {/* 加载中：按当前 tab 是否已经加载过判断，这个值和 activeTab 在同一次渲染里
+          就能算出来，不用等 effect 跑完，切到未加载过的 tab 时不会先画一帧空列表 */}
+      {!currentLoaded ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={theme.primary} />
         </View>

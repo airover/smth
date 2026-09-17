@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useCallback} from 'react';
+import React, {useState, useEffect, useCallback, useRef} from 'react';
 import {
   View,
   Text,
@@ -8,9 +8,8 @@ import {
   ScrollView,
   Alert,
   RefreshControl,
-  InteractionManager,
 } from 'react-native';
-import {useNavigation, useFocusEffect} from '@react-navigation/native';
+import {useNavigation} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {getUserInfo, logout} from '../services/api';
 import {getMessages, getReplyNotifications} from '../services/dataFetcher';
@@ -34,6 +33,7 @@ import {
   BORDER_RADIUS,
   scaleModerate,
 } from '../utils/responsive';
+import {useFocusRefresh} from '../hooks/useFocusRefresh';
 
 
 const SettingsScreen: React.FC = () => {
@@ -45,45 +45,54 @@ const SettingsScreen: React.FC = () => {
   const [username, setUsername] = useState<string>('');
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [unreadMailCount, setUnreadMailCount] = useState<number>(0);
+  const unreadMailFetchedAtRef = useRef(0);
+  const unreadMailRequestRef = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
     loadUserInfo(false);
+    loadUnreadMailCount();
   }, []);
 
-  // 页面获得焦点时重新加载用户信息
-  useFocusEffect(
-    useCallback(() => {
-      // 使用 InteractionManager 延迟网络请求，确保 UI 先恢复响应
-      const task = InteractionManager.runAfterInteractions(() => {
-        loadUserInfo(false);
-        loadUnreadMailCount();
-      });
-      return () => task.cancel();
-    }, [])
-  );
-
   // 获取未读邮件数量
-  const loadUnreadMailCount = async () => {
-    try {
-      const loginStatus = await AsyncStorage.getItem('isLoggedIn');
-      if (loginStatus !== 'true') {
-        setUnreadMailCount(0);
-        return;
+  const loadUnreadMailCount = async (force: boolean = false): Promise<void> => {
+    if (!force && Date.now() - unreadMailFetchedAtRef.current < 30 * 1000) {
+      return;
+    }
+    if (unreadMailRequestRef.current) {
+      return unreadMailRequestRef.current;
+    }
+
+    const request = (async () => {
+      try {
+        const loginStatus = await AsyncStorage.getItem('isLoggedIn');
+        if (loginStatus !== 'true') {
+          setUnreadMailCount(0);
+          unreadMailFetchedAtRef.current = Date.now();
+          return;
+        }
+        const [messages, replyNotifications] = await Promise.all([
+          getMessages(0),
+          getReplyNotifications(1, 1),
+        ]);
+        const count = messages.reduce((sum, mail) => sum + (mail.unread || 0), 0)
+          + replyNotifications.items.filter(item => item.status === 1).length;
+        setUnreadMailCount(count);
+        unreadMailFetchedAtRef.current = Date.now();
+      } catch (error) {
+        console.log('loadUnreadMailCount error:', error);
+        // 静默失败，不影响页面显示
       }
-      const [messages, replyNotifications] = await Promise.all([
-        getMessages(0),
-        getReplyNotifications(1, 1),
-      ]);
-      const count = messages.reduce((sum, mail) => sum + (mail.unread || 0), 0)
-        + replyNotifications.items.filter(item => item.status === 1).length;
-      setUnreadMailCount(count);
-    } catch (error) {
-      console.log('loadUnreadMailCount error:', error);
-      // 静默失败，不影响页面显示
+    })();
+
+    unreadMailRequestRef.current = request;
+    try {
+      await request;
+    } finally {
+      unreadMailRequestRef.current = null;
     }
   };
 
-  const loadUserInfo = async (forceRefresh: boolean = false) => {
+  const loadUserInfo = async (forceRefresh: boolean = false, silent: boolean = false) => {
     try {
       // 先检查本地登录状态
       const loginStatus = await AsyncStorage.getItem('isLoggedIn');
@@ -94,7 +103,9 @@ const SettingsScreen: React.FC = () => {
         setIsLoggedIn(false);
         setUsername('');
         setUser(null);
-        setLoading(false);
+        if (!silent) {
+          setLoading(false);
+        }
         return;
       }
       
@@ -163,9 +174,24 @@ const SettingsScreen: React.FC = () => {
       // 如果是下拉刷新导致的错误，抛出异常让上层处理
       throw error;
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   };
+
+  useFocusRefresh(
+    async () => {
+      await Promise.all([
+        loadUserInfo(false, true),
+        loadUnreadMailCount(),
+      ]);
+    },
+    {
+      intervalMs: 30 * 1000,
+      skipFirstFocus: true,
+    },
+  );
 
   // 下拉刷新 - 遵循项目规则：同步等待后台返回最新数据
   const onRefresh = useCallback(async () => {

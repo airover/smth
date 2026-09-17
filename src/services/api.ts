@@ -17,7 +17,7 @@ import {
 } from '../utils/requestUtils';
 import {getCookies, storeCookies, storeMSiteCookies, getMSiteCookies, extractAndStoreMSiteCookiesFromJar, clearMSiteCookieJar, isMSiteResponseLoggedIn, handleMSiteCookieExpired, setMSiteEnabled, resetMSiteBackoff} from './auth';
 import {buildHeaders} from '../utils/requestUtils';
-import {setCache, getCacheWithTimestamp, clearCache as clearCacheManager} from './cacheManager';
+import {setCache, setCacheWithTimestamp, getCacheWithTimestamp, clearCache as clearCacheManager, readPersistedSnapshot, writePersistedSnapshot} from './cacheManager';
 
 const BASE_URL = 'https://wap.newsmth.net';
 const WAP_BASE_URL = 'https://wap.newsmth.net';
@@ -596,8 +596,9 @@ export {getTopTen, getHotPosts, getHotBoards, getBoards, getSubBoards, getBoardP
 
 // 用户信息缓存配置
 const USER_INFO_CACHE_DURATION = 60 * 1000; // 1分钟缓存
+const USER_INFO_PERSIST_MAX_STALE_AGE = 7 * 24 * 60 * 60 * 1000; // 持久缓存最多兜底7天
 // 用户信息持久化存储的key（用于 AsyncStorage 备份）
-const USER_INFO_STORAGE_KEY = 'userInfo';
+export const USER_INFO_STORAGE_KEY = 'userInfo';
 const USER_INFO_TIMESTAMP_KEY = 'userInfoTimestamp';
 
 // 从服务器获取用户信息（内部函数）
@@ -684,19 +685,18 @@ const fetchUserInfoFromServer = async (): Promise<any> => {
       
       // 使用 cacheManager 统一管理缓存
       setCache('userInfo', undefined, userInfo, USER_INFO_CACHE_DURATION);
-      
+
       // 同时持久化到 AsyncStorage（用于离线场景和 App 重启后恢复）
       try {
-        await AsyncStorage.setItem(USER_INFO_STORAGE_KEY, JSON.stringify(userInfo));
-        await AsyncStorage.setItem(USER_INFO_TIMESTAMP_KEY, Date.now().toString());
+        await writePersistedSnapshot(USER_INFO_STORAGE_KEY, userInfo);
         console.log('用户信息已持久化到本地存储');
-        
+
         // 更新 set_identity cookie
         await updateSetIdentityCookie(userInfo);
       } catch (error) {
         console.error('持久化用户信息失败:', error);
       }
-      
+
       return userInfo;
     }
     
@@ -731,7 +731,7 @@ const fetchUserInfoFromServer = async (): Promise<any> => {
 // 缓存策略（使用 cacheManager 统一管理）：
 // 1. 优先使用 cacheManager 内存缓存（1分钟有效期）
 // 2. 内存缓存失效时，使用 AsyncStorage 持久化缓存
-// 3. 持久化缓存过期时，异步更新
+// 3. 持久化缓存超过新鲜期但仍在最大兜底期内时，异步更新
 // 4. 无任何缓存时，同步获取
 // 5. forceRefresh=true 时，跳过缓存直接从服务器获取（用于下拉刷新）
 export const getUserInfo = async (forceRefresh: boolean = false): Promise<any> => {
@@ -752,32 +752,33 @@ export const getUserInfo = async (forceRefresh: boolean = false): Promise<any> =
   
   // 第二层：检查 AsyncStorage 持久化缓存
   try {
-    const storedUserInfo = await AsyncStorage.getItem(USER_INFO_STORAGE_KEY);
-    const storedTimestamp = await AsyncStorage.getItem(USER_INFO_TIMESTAMP_KEY);
-    
-    if (storedUserInfo && storedTimestamp) {
-      const userInfo = JSON.parse(storedUserInfo);
-      const timestamp = parseInt(storedTimestamp, 10);
-      const age = now - timestamp;
-      
-      // 如果持久化缓存未过期（1分钟内），恢复到 cacheManager 并返回
-      if (age < USER_INFO_CACHE_DURATION) {
-        console.log('getUserInfo: 使用持久化缓存，剩余有效期:', Math.floor((USER_INFO_CACHE_DURATION - age) / 1000), '秒');
-        // 恢复到 cacheManager（保持原始时间戳行为）
-        setCache('userInfo', undefined, userInfo, USER_INFO_CACHE_DURATION);
+    const persisted = await readPersistedSnapshot<any>(USER_INFO_STORAGE_KEY, USER_INFO_PERSIST_MAX_STALE_AGE);
+
+    if (persisted) {
+      const {data: userInfo, age, isExpired} = persisted;
+
+      if (!isExpired) {
+        // 恢复时保留原始时间戳，不能把过期快照伪装成新缓存。
+        setCacheWithTimestamp(
+          'userInfo',
+          undefined,
+          userInfo,
+          Date.now() - age,
+          USER_INFO_CACHE_DURATION,
+        );
+
+        if (age < USER_INFO_CACHE_DURATION) {
+          console.log('getUserInfo: 使用持久化缓存，剩余有效期:', Math.floor((USER_INFO_CACHE_DURATION - age) / 1000), '秒');
+          return userInfo;
+        }
+
+        // 持久缓存仍在最大兜底期内：先返回旧数据，再静默更新。
+        console.log('getUserInfo: 持久化缓存已过新鲜期（', Math.floor(age / 1000), '秒前），返回旧数据并异步更新');
+        fetchUserInfoOnce().catch(error => {
+          console.error('getUserInfo: 异步更新缓存失败:', error);
+        });
         return userInfo;
       }
-      
-      // 持久化缓存已过期，返回旧数据并异步更新
-      console.log('getUserInfo: 持久化缓存已过期（', Math.floor(age / 1000), '秒前），返回旧数据并异步更新');
-      
-      // 异步更新
-      fetchUserInfoOnce().catch(error => {
-        console.error('getUserInfo: 异步更新缓存失败:', error);
-      });
-      
-      // 立即返回旧数据
-      return userInfo;
     }
   } catch (error) {
     console.error('getUserInfo: 读取持久化缓存失败:', error);
@@ -796,7 +797,7 @@ export const clearUserInfoCache = async () => {
   // 清除 AsyncStorage 持久化缓存
   try {
     await AsyncStorage.removeItem(USER_INFO_STORAGE_KEY);
-    await AsyncStorage.removeItem(USER_INFO_TIMESTAMP_KEY);
+    await AsyncStorage.removeItem(USER_INFO_TIMESTAMP_KEY); // 旧版本遗留的独立时间戳 key，顺手清掉
     console.log('用户信息持久化缓存已清除');
   } catch (error) {
     console.error('清除用户信息持久化缓存失败:', error);
@@ -1196,11 +1197,13 @@ export const getMyArticles = async (
       const totalPages = pager.total || 0; // 总页数
       const pageSize = pager.size || 20;
       const currentPage = pager.page || page;
-      const itemsCount = pager.items || 0; // 当前页实际帖子/回复数
-      
+      // 实测：pager.items 在同一批数据翻页时保持不变（如总共22条，第1页和第2页
+      // 都是22），说明它是总条数，不是当前页条目数。
+      const itemsCount = pager.items || 0; // 总条数
+
       // 判断是否还有更多：当前页 < 总页数
       const hasMore = currentPage < totalPages;
-      
+
       return {
         articles,
         total: itemsCount, // 直接使用当前页的帖子/回复数
@@ -1296,11 +1299,12 @@ export const getMyLikes = async (
       const totalPages = pager.total || 0; // 总页数
       const pageSize = pager.size || 20;
       const currentPage = pager.page || page;
-      const itemsCount = pager.items || 0; // 当前页实际条目数
-      
+      // 实测同 getMyArticles：pager.items 是总条数，不是当前页条目数。
+      const itemsCount = pager.items || 0; // 总条数
+
       // 判断是否还有更多：当前页 < 总页数
       const hasMore = currentPage < totalPages;
-      
+
       return {
         articles,
         total: itemsCount,

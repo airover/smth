@@ -8,14 +8,14 @@ import {
   RefreshControl,
   FlatList,
   Alert,
-  InteractionManager,
 } from 'react-native';
-import {useNavigation, useFocusEffect} from '@react-navigation/native';
+import {useNavigation} from '@react-navigation/native';
 import {getBlackList} from '../services/api';
 import {useTheme} from '../components/ThemedComponents';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {BanIcon, ChevronRightIcon} from '../components/SvgIcons';
 import {getCardElevation} from '../utils/theme';
+import {useFocusRefresh} from '../hooks/useFocusRefresh';
 import {
   SPACING,
   FONT_SIZE,
@@ -39,7 +39,7 @@ const BlacklistScreen: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
 
   // 加载黑名单列表
-  const loadBlacklist = async (forceRefresh: boolean = false) => {
+  const loadBlacklist = async (forceRefresh: boolean = false, silent: boolean = false) => {
     try {
       const result = await getBlackList(forceRefresh);
       
@@ -53,12 +53,12 @@ const BlacklistScreen: React.FC = () => {
         }));
         
         setBlacklist(users);
-      } else {
+      } else if (!silent) {
         Alert.alert('提示', result.message || '获取黑名单失败');
       }
     } catch (error: any) {
       console.error('Load blacklist error:', error);
-      if (error.message === 'LOGIN_EXPIRED') {
+      if (!silent && error.message === 'LOGIN_EXPIRED') {
         Alert.alert(
           '登录已过期',
           '请重新登录',
@@ -70,7 +70,7 @@ const BlacklistScreen: React.FC = () => {
             {text: '取消', style: 'cancel'},
           ]
         );
-      } else {
+      } else if (!silent) {
         Alert.alert('错误', '加载失败，请稍后重试');
       }
     } finally {
@@ -84,16 +84,17 @@ const BlacklistScreen: React.FC = () => {
     loadBlacklist();
   }, []);
 
-  // 页面获得焦点时刷新
-  useFocusEffect(
-    useCallback(() => {
-      if (!loading) {
-        const task = InteractionManager.runAfterInteractions(() => {
-          loadBlacklist();
-        });
-        return () => task.cancel();
+  // 页面获得焦点或持续停留时检查缓存，静默刷新不打断当前列表。
+  useFocusRefresh(
+    async () => {
+      if (!loading && !refreshing) {
+        await loadBlacklist(false, true);
       }
-    }, [])
+    },
+    {
+      intervalMs: 60 * 1000,
+      skipFirstFocus: true,
+    },
   );
 
   // 下拉刷新

@@ -19,12 +19,14 @@ import {
 } from 'react-native';
 import {useRef, useState, useCallback} from 'react';
 import {useTheme} from './ThemedComponents';
-import {StarIcon} from './SvgIcons';
 import {SPACING, FONT_SIZE} from '../utils/responsive';
 
 // 手势区间
 const REFRESH_THRESHOLD = 45;
-const FAVORITES_THRESHOLD = 111
+const FAVORITES_THRESHOLD = 111;
+// iOS UIScrollView 的 onScrollEndDrag velocity 单位是 points/second。
+// 与 onScroll 中按时间差计算出的速度统一单位，避免把 1.1 误当成 points/second。
+const FAST_VELOCITY = 1100;
 
 export type PullDownState = 'idle' | 'pulling' | 'refresh-ready' | 'favorites-ready';
 
@@ -85,14 +87,16 @@ export function usePullDownFavorites(
   const [state, setState] = useState<PullDownState>('idle');
   const isRefreshingRef = useRef(false);
   const velocityRef = useRef(0);
-
-  // 速度阈值：超过此速度视为“快速下拉”，只触发刷新
-  const FAST_VELOCITY = 1.1;
+  const pullOffsetRef = useRef(0);
+  // 上一帧的 {offset, time} 采样，用于在 onScroll 里自己估算速度。
+  const lastSampleRef = useRef<{offset: number; time: number} | null>(null);
 
   const reset = useCallback(() => {
     setState('idle');
     setPullOffset(0);
+    pullOffsetRef.current = 0;
     velocityRef.current = 0;
+    lastSampleRef.current = null;
   }, []);
 
   const setRefreshing = useCallback((refreshing: boolean) => {
@@ -106,16 +110,26 @@ export function usePullDownFavorites(
     if (!enabled || isRefreshingRef.current) return;
 
     const offsetY = event.nativeEvent.contentOffset.y;
-    // iOS 的 velocity 在 onScroll 中不可用，用 contentOffset 差值估算
-    const vy = event.nativeEvent.velocity?.y ?? 0;
+    const now = Date.now();
+
+    // iOS 的 velocity 字段在 onScroll 事件里不可靠，用相邻两帧
+    // contentOffset 的差值 / 时间差保留一个兜底速度；它与松手时的
+    // event.nativeEvent.velocity.y 统一为 points/second。
+    const lastSample = lastSampleRef.current;
+    const vy = lastSample && now > lastSample.time
+      ? ((offsetY - lastSample.offset) / (now - lastSample.time)) * 1000
+      : 0;
+    lastSampleRef.current = {offset: offsetY, time: now};
     velocityRef.current = vy;
 
     if (Platform.OS === 'ios' && offsetY < 0) {
       const amount = Math.abs(offsetY);
       setPullOffset(amount);
+      pullOffsetRef.current = amount;
 
-      // 速度慢且距离超过收藏阈值 → favorites-ready
-      if (amount >= FAVORITES_THRESHOLD && Math.abs(vy) < FAST_VELOCITY) {
+      // 达到收藏距离后保持 ready，避免某一帧速度变快导致状态又退回刷新区。
+      // 是否是快速下拉，交给松手时的原生 velocity 最终判断。
+      if (amount >= FAVORITES_THRESHOLD) {
         setState('favorites-ready');
       } else if (amount >= REFRESH_THRESHOLD) {
         setState('refresh-ready');
@@ -134,20 +148,24 @@ export function usePullDownFavorites(
   const onScrollEndDrag = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     if (isRefreshingRef.current) return;
 
-    // 松手时的速度
-    const vy = Math.abs(event.nativeEvent.velocity?.y ?? velocityRef.current);
+    // 原生 velocity 与上面的采样速度都已经统一为 points/second。
+    const nativeVelocity = event.nativeEvent.velocity?.y;
+    const vy = Math.abs(
+      typeof nativeVelocity === 'number' ? nativeVelocity : velocityRef.current,
+    );
+    const amount = pullOffsetRef.current;
 
-    if (state === 'favorites-ready' && vy < FAST_VELOCITY) {
+    if (amount >= FAVORITES_THRESHOLD && vy < FAST_VELOCITY) {
       // 慢速 + 超过距离 → 收藏
       onTriggerFavorites();
       reset();
-    } else if (state === 'refresh-ready' || state === 'favorites-ready') {
-      // 快速或刷新区 → 刷新
+    } else if (amount >= REFRESH_THRESHOLD) {
+      // 快速下拉或处于刷新区 → 刷新
       onTriggerRefresh();
     } else {
       reset();
     }
-  }, [state, onTriggerFavorites, onTriggerRefresh, reset]);
+  }, [onTriggerFavorites, onTriggerRefresh, reset]);
 
   const isTriggered = state === 'favorites-ready';
 

@@ -49,6 +49,7 @@ import {
 } from '../utils/responsive';
 import {isQRCodeSafe, sanitizeForDisplay} from '../utils/securityUtils';
 import {cleanHtml} from '../utils/htmlParser';
+import {useFocusRefresh} from '../hooks/useFocusRefresh';
 
 const SCREEN_WIDTH = RESPONSIVE.SCREEN_WIDTH;
 const HEADER_HEIGHT = responsiveSize(200, 240, 260, 300);
@@ -659,15 +660,21 @@ const UserProfileScreen: React.FC = () => {
     setShowScanner(true);
   };
 
-  const loadUserInfo = async (isSelf: boolean = isCurrentUser, forceRefresh: boolean = false): Promise<User | null> => {
+  const loadUserInfo = async (
+    isSelf: boolean = isCurrentUser,
+    forceRefresh: boolean = false,
+    silent: boolean = false,
+  ): Promise<User | null> => {
     try {
-      setLoading(true);
+      if (!silent) {
+        setLoading(true);
+      }
       setError(null);
       
       let userInfo;
       if (isSelf) {
         // 查看自己的资料，使用getUserInfo
-        userInfo = await getUserInfo();
+        userInfo = await getUserInfo(forceRefresh);
         console.log('UserProfileScreen getUserInfo result:', userInfo);
       } else {
         // 查看他人资料，使用fetchUserInfo
@@ -681,7 +688,9 @@ const UserProfileScreen: React.FC = () => {
             console.log('UserProfileScreen: Using cached data for', username, 'age:', Math.floor(age / 1000), 's');
             if (age < PROFILE_MAX_STALE_AGE) {
               setUser(cachedData.data);
-              setLoading(false);
+              if (!silent) {
+                setLoading(false);
+              }
             
               if (age > PROFILE_REFRESH_THRESHOLD) {
                 refreshUserProfileOnce(username!).then(freshData => {
@@ -742,9 +751,28 @@ const UserProfileScreen: React.FC = () => {
       setError(err.message || '加载失败');
       return null;
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   };
+
+  useFocusRefresh(
+    async () => {
+      const userInfo = await loadUserInfo(isCurrentUser, false, true);
+      if (!isCurrentUser && username && userInfo) {
+        await Promise.all([
+          checkFollowingStatus(username, false, userInfo),
+          checkBlacklistStatus(username, false, userInfo),
+        ]);
+      }
+    },
+    {
+      intervalMs: 60 * 1000,
+      enabled: Boolean(isCurrentUser || username),
+      skipFirstFocus: true,
+    },
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);

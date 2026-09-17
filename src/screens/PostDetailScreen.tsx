@@ -40,6 +40,7 @@ import {sendMessage} from '../services/dataFetcher';
 import {useSettings} from '../context/SettingsContext';
 import {getFontSizes, getCardElevation} from '../utils/theme';
 import {useTheme} from '../components/ThemedComponents';
+import {useFocusRefresh} from '../hooks/useFocusRefresh';
 import {ThemedHeaderButton, useFloatingHeader} from '../components/ThemeHeader';
 import {
   ThumbsUpIcon,
@@ -971,6 +972,32 @@ const PostDetailScreen: React.FC = () => {
       }
     }
   };
+
+  // 详情页支持 stale-while-revalidate，但不能在续读、通知跳转或深页阅读期间
+  // 重建第一页，否则会破坏当前滚动位置和已合并的回复区间。
+  useFocusRefresh(
+    async () => {
+      if (
+        loading
+        || refreshing
+        || repliesReloading
+        || loadingMore
+        || page !== 1
+        || !resumePositionReady
+        || resumeLoadingRef.current
+        || isRestoringReadingPositionRef.current
+        || resumeEarlierRequest
+      ) {
+        return;
+      }
+
+      await loadPostDetail(1, false, sortOrder, replyFilter);
+    },
+    {
+      intervalMs: 60 * 1000,
+      skipFirstFocus: true,
+    },
+  );
 
   // 下拉刷新
   const handleRefresh = async () => {

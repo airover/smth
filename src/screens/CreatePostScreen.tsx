@@ -32,7 +32,7 @@ import {
 import {ThemedHeaderButton, useFloatingHeader} from '../components/ThemeHeader';
 import {useTheme} from '../components/ThemedComponents';
 import {getCardElevation, ThemeColors} from '../utils/theme';
-import {CameraIcon, ImageIcon, CheckCircleIcon, CheckIcon, LightbulbIcon, TrashIcon} from '../components/SvgIcons';
+import {CameraIcon, ImageIcon, CheckCircleIcon, CheckIcon, LightbulbIcon, TrashIcon, SaveIcon, SendIcon} from '../components/SvgIcons';
 import {notifySuccess} from '../utils/haptics';
 
 // 在 Android 上启用 LayoutAnimation（仅需启用一次）
@@ -95,7 +95,11 @@ const CreatePostScreen: React.FC = () => {
           {submitting ? (
             <ActivityIndicator size="small" color={theme.primary} />
           ) : (
-            <Text style={styles.submitText}>{isEditMode ? '保存' : '发布'}</Text>
+            isEditMode ? (
+              <SaveIcon size={22} color={theme.headerBackgroundImage ? '#FFFFFF' : theme.headerTint} />
+            ) : (
+              <SendIcon size={22} color={theme.headerBackgroundImage ? '#FFFFFF' : theme.headerTint} />
+            )
           )}
         </ThemedHeaderButton>
       ),
@@ -727,11 +731,6 @@ const createStyles = (theme: ThemeColors) => StyleSheet.create({
   },
   headerButton: {
     paddingHorizontal: SPACING.sm,
-  },
-  submitText: {
-    fontSize: FONT_SIZE.lg,
-    color: theme.primary,
-    fontWeight: '600',
   },
   content: {
     flex: 1,

@@ -8,8 +8,8 @@
  * 清理功能层级（从小到大）：
  * ┌─────────────────────────────────────────────────────────────┐
  * │ 层级1：分类清理（最小单位）                                      │
- * │ - 清除"帖子类缓存"：hotPosts, postDetail, topicReplies 等     │
- * │ - 清除"版面类缓存"：boards, boardPosts, favoriteBoards 等     │
+ * │ - 清除"帖子类缓存"：postDetail, topicReplies 等              │
+ * │ - 清除"版面类缓存"：boards, boardPosts 等                     │
  * │ - 清除"其他缓存"：userInfo 等                                 │
  * │ - 清除"已读记录"：read_posts_ids, read_posts_details         │
  * ├─────────────────────────────────────────────────────────────┤
@@ -42,12 +42,34 @@ import {useTheme} from '../components/ThemedComponents';
 import {getCardElevation, ThemeColors} from '../utils/theme';
 import {TrashIcon} from '../components/SvgIcons';
 import {clearTopicReadingProgress, READING_PROGRESS_STORAGE_KEY} from '../utils/readingProgress';
+import {TOP_TEN_STORAGE_KEY, HOT_BOARDS_STORAGE_KEY, HOT_POSTS_FIRST_PAGE_STORAGE_KEY} from './HomeScreen';
+import {MY_ARTICLES_STORAGE_KEYS} from './MyArticlesScreen';
+import {FAVORITE_BOARDS_STORAGE_KEY, MSITE_POST_ID_CACHE_KEY, MSITE_STATIC_URL_CACHE_KEY} from '../services/dataFetcher';
+import {USER_INFO_STORAGE_KEY} from '../services/api';
 import {
   SPACING,
   FONT_SIZE,
   BORDER_RADIUS,
   // scaleModerate - 预留用于响应式布局
 } from '../utils/responsive';
+
+// 部分 cacheManager 分类在内存层之外还叠加了一份 AsyncStorage 持久层（由各自模块
+// 自行决定、自行维护，cacheManager 本身不知道也不关心）。这里按分类名列出对应的
+// 持久化 key，让"清除该分类缓存"时能顺带清掉持久层，避免清除后下次读取又从
+// AsyncStorage 里悄悄恢复回来。msitePostId/msiteStaticUrl 是永久映射表，不在分类
+// 分组里单独展示，但同样需要在清除时一并处理，归入"其他缓存"分组清理。
+const PERSISTED_STORAGE_KEYS_BY_CATEGORY: {[category: string]: string[]} = {
+  topTen: [TOP_TEN_STORAGE_KEY],
+  hotBoards: [HOT_BOARDS_STORAGE_KEY],
+  hotPostsFirstPage: [HOT_POSTS_FIRST_PAGE_STORAGE_KEY],
+  favoriteBoards: [FAVORITE_BOARDS_STORAGE_KEY],
+  userInfo: [USER_INFO_STORAGE_KEY],
+  msitePostId: [MSITE_POST_ID_CACHE_KEY],
+  msiteStaticUrl: [MSITE_STATIC_URL_CACHE_KEY],
+  myArticles: [MY_ARTICLES_STORAGE_KEYS.articles],
+  myReplies: [MY_ARTICLES_STORAGE_KEYS.replies],
+  myLikes: [MY_ARTICLES_STORAGE_KEYS.likes],
+};
 
 const CacheManagementScreen: React.FC = () => {
   const {logout} = useAuth();
@@ -215,30 +237,32 @@ const CacheManagementScreen: React.FC = () => {
   const getCategorizedData = () => {
     const categoryNames: {[key: string]: string} = {
       // 帖子类
-      hotPosts: '热门帖子',
       postDetail: '帖子详情',
       topicReplies: '帖子回复',
       channelPosts: '频道帖子',
       albumPosts: '图览帖子',
       topTen: '今日十大',
+      hotPostsFirstPage: '热门帖子',
       // 版面类
       boards: '版面分区',
-      subBoards: '子版面',
       boardPosts: '版面帖子',
       hotBoards: '热门版面',
       favoriteBoards: '收藏版面',
+      myArticles: '我的文章',
+      myReplies: '我的回复',
+      myLikes: '我的点赞',
       // 其他
       userInfo: '用户信息',
     };
 
     // 帖子类缓存
-    const postCategories = ['hotPosts', 'postDetail', 'topicReplies', 'channelPosts', 'albumPosts', 'topTen'];
+    const postCategories = ['postDetail', 'topicReplies', 'channelPosts', 'albumPosts', 'topTen', 'hotPostsFirstPage'];
     const postData = cacheStats.categories.filter(cat => postCategories.includes(cat.name));
     const postTotal = postData.reduce((sum, cat) => sum + cat.count, 0);
     const postCacheKeys = postData.map(cat => cat.name);
 
     // 版面类缓存
-    const boardCategories = ['boards', 'subBoards', 'boardPosts', 'hotBoards', 'favoriteBoards'];
+    const boardCategories = ['boards', 'boardPosts', 'hotBoards', 'favoriteBoards'];
     const boardData = cacheStats.categories.filter(cat => boardCategories.includes(cat.name));
     const boardTotal = boardData.reduce((sum, cat) => sum + cat.count, 0);
     const boardCacheKeys = boardData.map(cat => cat.name);
@@ -259,13 +283,16 @@ const CacheManagementScreen: React.FC = () => {
   /**
    * 渲染分类缓存组
    * 功能：显示单个缓存分类（帖子类/版面类/其他）及其清除按钮
-   * 
+   *
    * 清除范围：
    * - "帖子类缓存"：清除所有帖子相关的内存缓存
    * - "版面类缓存"：清除所有版面相关的内存缓存
    * - "其他缓存"：清除其他内存缓存（如用户信息）
-   * 
-   * 不影响：持久化数据、登录信息、其他分类的缓存
+   *
+   * 部分分类（如今日十大/热门版面/热门帖子/收藏版面/用户信息/M 站映射表）在内存层
+   * 之外还有各自维护的 AsyncStorage 持久层，这里一并清掉，避免清除后下次读取又从
+   * 持久层悄悄恢复回来。
+   * 不影响：登录信息、其他分类的缓存
    * 层级：最小单位清理（只针对特定分类）
    */
   const renderCategoryGroup = (
@@ -281,8 +308,8 @@ const CacheManagementScreen: React.FC = () => {
       const sizeMatch = item.size.match(/([\d.]+)\s*KB/);
       return sum + (sizeMatch ? parseFloat(sizeMatch[1]) : 0);
     }, 0);
-    const sizeDisplay = totalSizeKB >= 1024 
-      ? `${(totalSizeKB / 1024).toFixed(2)} MB` 
+    const sizeDisplay = totalSizeKB >= 1024
+      ? `${(totalSizeKB / 1024).toFixed(2)} MB`
       : `${totalSizeKB.toFixed(2)} KB`;
 
     return (
@@ -300,9 +327,18 @@ const CacheManagementScreen: React.FC = () => {
               {text: '取消', style: 'cancel'},
               {
                 text: '确定',
-                onPress: () => {
-                  // 清除该分类下的所有缓存项
+                onPress: async () => {
+                  // 清除该分类下的所有内存缓存项
                   data.keys.forEach(key => clearCache(key as any));
+                  // 顺带清除这些分类各自维护的 AsyncStorage 持久层
+                  const persistedKeys = data.keys.flatMap(key => PERSISTED_STORAGE_KEYS_BY_CATEGORY[key] || []);
+                  if (persistedKeys.length > 0) {
+                    try {
+                      await AsyncStorage.multiRemove(persistedKeys);
+                    } catch (error) {
+                      console.error('Clear persisted cache error:', error);
+                    }
+                  }
                   loadStats();
                   Alert.alert('成功', `${title}已清除`);
                 },

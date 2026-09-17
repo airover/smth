@@ -1,4 +1,4 @@
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useCallback, useRef} from 'react';
 import {
   View,
   Text,
@@ -7,13 +7,13 @@ import {
   TouchableOpacity,
   RefreshControl,
   Alert,
-  InteractionManager,
   ActivityIndicator,
 } from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
-import {useNavigation, useFocusEffect, useRoute} from '@react-navigation/native';
+import {useNavigation, useRoute} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {getMessages, getReplyNotifications, markReplyNotificationAsRead} from '../services/api';
+import {getCacheWithTimestamp, setCache, clearCache} from '../services/cacheManager';
 import {Mail, ReplyNotification} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
 import {useTheme, SkeletonList, EmptyState} from '../components/ThemedComponents';
@@ -25,6 +25,19 @@ import {
   BORDER_RADIUS,
   scaleModerate,
 } from '../utils/responsive';
+import {useFocusRefresh} from '../hooks/useFocusRefresh';
+
+const MAIL_MEMORY_FRESH_TTL = 30 * 1000;
+const MAIL_REFRESH_INTERVAL = 30 * 1000;
+
+type ReplyNotificationsSnapshot = {
+  items: ReplyNotification[];
+  total: number;
+  page: number;
+  pageSize?: number;
+  totalPages?: number;
+  hasMore: boolean;
+};
 
 const MailScreen: React.FC = () => {
   const navigation = useNavigation<any>();
@@ -42,91 +55,123 @@ const MailScreen: React.FC = () => {
   const [replyPage, setReplyPage] = useState(1);
   const [replyHasMore, setReplyHasMore] = useState(true);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const replyRequestGenerationRef = React.useRef(0);
-  const replyLoadingMoreRef = React.useRef(false);
+  const replyRequestGenerationRef = useRef(0);
+  const replyLoadingMoreRef = useRef(false);
+  const refreshInFlightRef = useRef<Promise<void> | null>(null);
 
-  useEffect(() => {
-    checkLoginAndLoadMails();
-  }, []);
+  // 从内存缓存（cacheManager，模块级单例，跨组件挂载/卸载存活）里先取上次快照；
+  // 页面进入时会再按 MAIL_MEMORY_FRESH_TTL 判断是否需要静默刷新。
+  const seedMailsFromCache = (): boolean => {
+    const cached = getCacheWithTimestamp<Mail[]>('mailConversations');
+    if (!cached) return false;
+    setMails(cached.data);
+    setMailLoaded(true);
+    return true;
+  };
+
+  const seedReplyNotificationsFromCache = (): boolean => {
+    const cached = getCacheWithTimestamp<ReplyNotificationsSnapshot>('replyNotificationsFirstPage');
+    if (!cached) return false;
+    setReplyNotifications(cached.data.items);
+    setReplyPage(cached.data.page || 1);
+    setReplyHasMore(cached.data.hasMore);
+    setReplyLoaded(true);
+    return true;
+  };
 
   useEffect(() => {
     if (route.params?.tab === 'reply') setActiveTab('reply');
   }, [route.params?.tab]);
 
-  // 页面获得焦点时检查登录状态并刷新消息列表
-  useFocusEffect(
-    React.useCallback(() => {
-      const task = InteractionManager.runAfterInteractions(async () => {
-        await checkLoginStatus();
-        // 如果已登录，刷新私信和回复提醒。
-        if (isLoggedIn) {
-          await Promise.all([loadMails(), loadReplyNotifications()]);
+  const getMailCacheAge = useCallback((): number | null => {
+    const cached = getCacheWithTimestamp<Mail[]>('mailConversations');
+    return cached ? Date.now() - cached.timestamp : null;
+  }, []);
+
+  const getReplyCacheAge = useCallback((): number | null => {
+    const cached = getCacheWithTimestamp<ReplyNotificationsSnapshot>('replyNotificationsFirstPage');
+    return cached ? Date.now() - cached.timestamp : null;
+  }, []);
+
+  const checkLoginAndLoadMails = async (forceRefresh = false, silent = false): Promise<void> => {
+    if (refreshInFlightRef.current) {
+      return refreshInFlightRef.current;
+    }
+
+    const request = (async () => {
+      try {
+        if (!silent) {
+          setLoading(true);
         }
-      });
-      return () => task.cancel();
-    }, [isLoggedIn])
-  );
 
-  const checkLoginAndLoadMails = async () => {
-    try {
-      setLoading(true);
-      // 检查登录状态
-      const loginStatus = await AsyncStorage.getItem('isLoggedIn');
-      const loggedIn = loginStatus === 'true';
-      setIsLoggedIn(loggedIn);
+        const loginStatus = await AsyncStorage.getItem('isLoggedIn');
+        const loggedIn = loginStatus === 'true';
+        setIsLoggedIn(loggedIn);
 
-      if (!loggedIn) {
-        // 未登录，清空数据
-        setMails([]);
-        setMailLoaded(false);
-        setReplyNotifications([]);
-        setReplyLoaded(false);
-        replyRequestGenerationRef.current += 1;
-        replyLoadingMoreRef.current = false;
-        setReplyLoadingMore(false);
-        setReplyPage(1);
-        setReplyHasMore(true);
-        setLoading(false);
-        return;
+        if (!loggedIn) {
+          // 未登录，清空数据（含内存缓存，避免下次登录后先闪一下上一个账号的消息）
+          setMails([]);
+          setMailLoaded(false);
+          setReplyNotifications([]);
+          setReplyLoaded(false);
+          replyRequestGenerationRef.current += 1;
+          replyLoadingMoreRef.current = false;
+          setReplyLoadingMore(false);
+          setReplyPage(1);
+          setReplyHasMore(true);
+          clearCache('mailConversations');
+          clearCache('replyNotificationsFirstPage');
+          setLoading(false);
+          return;
+        }
+
+        // 没有当前数据时先用会话内快照首屏展示；已有数据不重复覆盖，避免用户
+        // 在深页阅读时因为重新获得焦点而被拉回第一页。
+        const hasSeededMails = mailLoaded || seedMailsFromCache();
+        const hasSeededReplies = replyLoaded || seedReplyNotificationsFromCache();
+        if (!silent && (hasSeededMails || hasSeededReplies)) {
+          setLoading(false);
+        }
+
+        const mailAge = getMailCacheAge();
+        const replyAge = getReplyCacheAge();
+        const shouldRefreshMails = forceRefresh || mailAge === null || mailAge >= MAIL_MEMORY_FRESH_TTL;
+        const shouldRefreshReplies = forceRefresh || replyAge === null || replyAge >= MAIL_MEMORY_FRESH_TTL;
+
+        if (!shouldRefreshMails && !shouldRefreshReplies) {
+          return;
+        }
+
+        await Promise.all([
+          shouldRefreshMails ? loadMails() : Promise.resolve(),
+          shouldRefreshReplies
+            ? loadReplyNotifications(1, false, silent && replyLoaded)
+            : Promise.resolve(),
+        ]);
+      } catch (error) {
+        console.error('Check login and load mails error:', error);
+      } finally {
+        if (!silent) {
+          setLoading(false);
+        }
       }
+    })();
 
-      // 已登录，加载消息中心。
-      await Promise.all([loadMails(), loadReplyNotifications()]);
-    } catch (error) {
-      console.error('Check login and load mails error:', error);
+    refreshInFlightRef.current = request;
+    try {
+      await request;
     } finally {
-      setLoading(false);
+      if (refreshInFlightRef.current === request) {
+        refreshInFlightRef.current = null;
+      }
     }
   };
 
-  const checkLoginStatus = async () => {
-    try {
-      const loginStatus = await AsyncStorage.getItem('isLoggedIn');
-      const loggedIn = loginStatus === 'true';
-      const wasLoggedIn = isLoggedIn;
-      
-      setIsLoggedIn(loggedIn);
-      
-      if (!loggedIn) {
-        // 如果退出登录，清空信箱数据
-        setMails([]);
-        setReplyNotifications([]);
-        setMailLoaded(false);
-        setReplyLoaded(false);
-        replyRequestGenerationRef.current += 1;
-        replyLoadingMoreRef.current = false;
-        setReplyLoadingMore(false);
-        setReplyPage(1);
-        setReplyHasMore(true);
-      } else if (!wasLoggedIn && loggedIn) {
-        // 如果从未登录变为已登录，自动加载信箱数据
-        console.log('Login status changed from false to true, loading mails...');
-        await Promise.all([loadMails(), loadReplyNotifications()]);
-      }
-    } catch (error) {
-      console.error('Check login status error:', error);
-    }
-  };
+  useEffect(() => {
+    checkLoginAndLoadMails(false, false);
+    // 首次加载只执行一次；后续刷新由 useFocusRefresh 负责。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const loadMails = async () => {
     try {
@@ -134,9 +179,10 @@ const MailScreen: React.FC = () => {
       console.log('Loaded messages:', data.length);
       setMails(data);
       setMailLoaded(true);
+      setCache('mailConversations', undefined, data);
     } catch (error: any) {
       console.error('Load mails error:', error);
-      
+
       // 处理登录过期错误
       if (error.message === 'NOT_LOGGED_IN' || error.message === 'LOGIN_EXPIRED') {
         console.log('Login expired, clearing login status');
@@ -144,6 +190,7 @@ const MailScreen: React.FC = () => {
         setMails([]);
         setMailLoaded(false);
         setReplyLoaded(false);
+        clearCache('mailConversations');
         // 提示用户重新登录
         Alert.alert(
           '登录已过期',
@@ -164,7 +211,11 @@ const MailScreen: React.FC = () => {
     }
   };
 
-  const loadReplyNotifications = async (page: number = 1, append: boolean = false) => {
+  const loadReplyNotifications = async (
+    page: number = 1,
+    append: boolean = false,
+    preserveExisting: boolean = false,
+  ) => {
     if (append && (!replyHasMore || replyLoadingMore || replyLoadingMoreRef.current)) {
       return;
     }
@@ -189,16 +240,22 @@ const MailScreen: React.FC = () => {
       }
 
       setReplyNotifications(previous => {
-        if (!append) {
+        if (!append && !preserveExisting) {
           return result.items;
         }
         const merged = new Map<string, ReplyNotification>();
-        [...previous, ...result.items].forEach(item => merged.set(item.id, item));
+        [...result.items, ...previous].forEach(item => merged.set(item.id, item));
         return Array.from(merged.values());
       });
-      setReplyPage(result.page || page);
+      if (append || !preserveExisting) {
+        setReplyPage(result.page || page);
+      }
       setReplyHasMore(result.hasMore);
       setReplyLoaded(true);
+      if (!append) {
+        // 只缓存第一页快照，用于下次进入时先展示；深页只在当次会话内使用，不缓存。
+        setCache('replyNotificationsFirstPage', undefined, result);
+      }
     } catch (error: any) {
       console.error('Load reply notifications error:', error);
       if (
@@ -207,6 +264,7 @@ const MailScreen: React.FC = () => {
       ) {
         setReplyNotifications([]);
         setReplyLoaded(false);
+        clearCache('replyNotificationsFirstPage');
       }
     } finally {
       if (requestGeneration === replyRequestGenerationRef.current) {
@@ -226,13 +284,19 @@ const MailScreen: React.FC = () => {
     }
   };
 
+  const refreshMessagesSilently = () => checkLoginAndLoadMails(false, true);
+
+  useFocusRefresh(refreshMessagesSilently, {
+    intervalMs: MAIL_REFRESH_INTERVAL,
+  });
+
   const handleLogin = () => {
     navigation.navigate('Login');
   };
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await checkLoginAndLoadMails();
+    await checkLoginAndLoadMails(true, false);
     setRefreshing(false);
   };
 
@@ -281,6 +345,9 @@ const MailScreen: React.FC = () => {
       setReplyNotifications(prev => prev.map(notification => (
         notification.id === item.id ? {...notification, status: 0} : notification
       )));
+      // 缓存的是页面快照，不会跟着这次乐观更新同步；直接失效它，避免下次重新进入
+      // 这个页面时，从缓存里先闪一下这条“未读”，再被后续请求纠正回来。
+      clearCache('replyNotificationsFirstPage');
       try {
         await markReplyNotificationAsRead(item.id);
       } catch (error) {
