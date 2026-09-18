@@ -20,7 +20,7 @@ import {
 } from 'react-native';
 import ImageCropPicker from 'react-native-image-crop-picker';
 import {useNavigation, useRoute} from '@react-navigation/native';
-import {createPost, replyPost, updateArticle, getDraft, saveDraft, clearDraft, checkPublish, getUploadToken, uploadImages} from '../services/postApi';
+import {createPost, replyPost, updateArticle, getDraft, saveDraft, clearDraft, checkPublish, getUploadToken, getArticleFileToken, deleteUploadedFiles, uploadImages, buildCreatePostReferer, buildReplyPostReferer} from '../services/postApi';
 import PostCaptchaScreen from './PostCaptchaScreen';
 import {
   SPACING,
@@ -32,8 +32,10 @@ import {
 import {ThemedHeaderButton, useFloatingHeader} from '../components/ThemeHeader';
 import {useTheme} from '../components/ThemedComponents';
 import {getCardElevation, ThemeColors} from '../utils/theme';
-import {CameraIcon, ImageIcon, CheckCircleIcon, CheckIcon, LightbulbIcon, TrashIcon, SaveIcon, SendIcon} from '../components/SvgIcons';
+import {CameraIcon, ImageIcon, CheckCircleIcon, CheckIcon, LightbulbIcon, TrashIcon, SaveIcon, SendIcon, FileIcon} from '../components/SvgIcons';
 import {notifySuccess} from '../utils/haptics';
+import {Attachment} from '../types';
+import {isImageAttachment, isImageUrl} from '../utils/imageUtils';
 
 // 在 Android 上启用 LayoutAnimation（仅需启用一次）
 if (
@@ -51,9 +53,21 @@ interface RouteParams {
   mode?: 'create' | 'reply' | 'edit'; // 发帖模式
   quotedContent?: string; // 引用的内容
   articleId?: string; // 编辑模式下的帖子ID
+  topicId?: string; // 编辑页面的主题ID（Referer 使用）
   editTitle?: string; // 编辑模式下的原始标题
   editContent?: string; // 编辑模式下的原始内容
+  editAttachments?: Attachment[]; // 编辑模式下的原始附件
 }
+
+const getAttachmentFileName = (attachment: Attachment): string | null => {
+  const rawAttachment = attachment as Attachment & {
+    fileName?: string;
+    filename?: string;
+    key?: string;
+  };
+  const fileName = rawAttachment.name || rawAttachment.fileName || rawAttachment.filename || rawAttachment.key;
+  return typeof fileName === 'string' && fileName.trim() ? fileName.trim() : null;
+};
 
 const CreatePostScreen: React.FC = () => {
   const navigation = useNavigation<any>();
@@ -78,6 +92,10 @@ const CreatePostScreen: React.FC = () => {
   const [uploading, setUploading] = useState(false); // 是否正在上传图片
   const [uploadProgress, setUploadProgress] = useState<number>(0); // 上传进度（0-100）
   const [showImageSourceModal, setShowImageSourceModal] = useState(false); // 显示图片来源选择弹窗
+  const [existingAttachments, setExistingAttachments] = useState<Attachment[]>(params.editAttachments || []);
+  const [deletedAttachmentNames, setDeletedAttachmentNames] = useState<string[]>([]);
+
+  const attachmentCount = (isEditMode ? existingAttachments.length : 0) + selectedImages.length;
   
   // 键盘工具栏ID - 使用useRef生成唯一ID，确保组件实例间不冲突，且在组件生命周期内保持不变
   const inputAccessoryViewID = useRef(`createPostKeyboardAccessory_${Date.now()}`).current;
@@ -104,13 +122,15 @@ const CreatePostScreen: React.FC = () => {
         </ThemedHeaderButton>
       ),
     });
-  }, [navigation, isReplyMode, isEditMode, submitting, title, content, captchaVerified, captchaTicket, captchaRandstr, selectedImages, uploadToken, uploading, theme, styles]);
+  }, [navigation, isReplyMode, isEditMode, submitting, title, content, captchaVerified, captchaTicket, captchaRandstr, selectedImages, uploadToken, uploading, existingAttachments, deletedAttachmentNames, theme, styles]);
 
   // 加载草稿 / 编辑模式填充原始内容
   useEffect(() => {
     const loadDraft = async () => {
       // 编辑模式：填充原始标题和内容
       if (isEditMode) {
+        setExistingAttachments(params.editAttachments || []);
+        setDeletedAttachmentNames([]);
         if (params.editTitle) {
           setTitle(params.editTitle);
         }
@@ -155,7 +175,7 @@ const CreatePostScreen: React.FC = () => {
       setLoadingDraft(false);
     };
     loadDraft();
-  }, [params.boardId, isReplyMode, isEditMode, params.reTitle, params.quotedContent, params.editTitle, params.editContent]);
+  }, [params.boardId, isReplyMode, isEditMode, params.reTitle, params.quotedContent, params.editTitle, params.editContent, params.editAttachments]);
 
   // 自动保存草稿（编辑模式下不保存草稿）
   useEffect(() => {
@@ -189,8 +209,8 @@ const CreatePostScreen: React.FC = () => {
       return;
     }
 
-    // 如果有选中的图片但还未上传完成，不允许发布
-    if (selectedImages.length > 0 && (!uploadToken || uploading)) {
+    // 新发帖时，选中的图片需要先完成上传；编辑模式会在保存时统一处理附件。
+    if (!isEditMode && selectedImages.length > 0 && (!uploadToken || uploading)) {
       Alert.alert('提示', uploading ? '图片正在上传中，请稍候' : '请先完成人机验证以上传图片');
       return;
     }
@@ -213,12 +233,38 @@ const CreatePostScreen: React.FC = () => {
     setSubmitting(true);
     try {
       if (isEditMode) {
-        // 编辑模式：调用 updateArticle 接口
+        // 编辑模式：在同一个附件 token 上先删除旧附件、再上传新增图片，最后更新文章。
+        const articleId = params.articleId!;
+        const topicId = params.topicId || articleId;
+        const editUploadToken = await getArticleFileToken(articleId, topicId);
+        if (deletedAttachmentNames.length > 0) {
+          await deleteUploadedFiles(editUploadToken, deletedAttachmentNames);
+        }
+        if (selectedImages.length > 0) {
+          setUploading(true);
+          setUploadProgress(0);
+          try {
+            await uploadImages(
+              params.boardId,
+              editUploadToken,
+              selectedImages,
+              progress => {
+                setUploadProgress(progress);
+              },
+              `https://wap.newsmth.net/post?id=${encodeURIComponent(topicId)}`,
+            );
+            setUploadProgress(100);
+          } finally {
+            setUploading(false);
+          }
+        }
+
         await updateArticle({
-          articleId: params.articleId!,
+          articleId,
+          topicId,
           subject: title.trim(),
           body: content.trim(),
-          uploadToken: uploadToken || undefined,
+          uploadToken: editUploadToken,
         });
       } else {
         const postParams = {
@@ -291,8 +337,8 @@ const CreatePostScreen: React.FC = () => {
 
   // 显示图片来源选择
   const handleShowImageSourcePicker = () => {
-    if (selectedImages.length >= 9) {
-      Alert.alert('提示', '最多只能选择9张图片');
+    if (attachmentCount >= 9) {
+      Alert.alert('提示', '附件总数最多为9个');
       return;
     }
     
@@ -322,15 +368,15 @@ const CreatePostScreen: React.FC = () => {
     setShowImageSourceModal(false);
 
     // 最多选择9张图片
-    if (selectedImages.length >= 9) {
-      Alert.alert('提示', '最多只能选择9张图片');
+    if (attachmentCount >= 9) {
+      Alert.alert('提示', '附件总数最多为9个');
       return;
     }
 
     try {
       const images = await ImageCropPicker.openPicker({
         multiple: true,
-        maxFiles: 9 - selectedImages.length, // 剩余可选数量
+        maxFiles: 9 - attachmentCount, // 剩余可选数量
         mediaType: 'photo',
         compressImageQuality: 0.8,
         includeBase64: false,
@@ -368,8 +414,8 @@ const CreatePostScreen: React.FC = () => {
     setShowImageSourceModal(false);
 
     // 最多选择9张图片
-    if (selectedImages.length >= 9) {
-      Alert.alert('提示', '最多只能选择9张图片');
+    if (attachmentCount >= 9) {
+      Alert.alert('提示', '附件总数最多为9个');
       return;
     }
 
@@ -426,6 +472,37 @@ const CreatePostScreen: React.FC = () => {
     }
   };
 
+  // 标记已有附件，保存时从服务端删除
+  const handleRemoveExistingAttachment = (index: number) => {
+    if (submitting || uploading) {
+      return;
+    }
+
+    const attachment = existingAttachments[index];
+    if (!attachment) {
+      return;
+    }
+
+    const fileName = getAttachmentFileName(attachment);
+    if (!fileName) {
+      Alert.alert('提示', '无法识别该附件的文件名，暂不支持删除');
+      return;
+    }
+
+    Alert.alert('删除附件', `保存后将删除“${fileName}”，是否继续？`, [
+      {text: '取消', style: 'cancel'},
+      {
+        text: '删除',
+        style: 'destructive',
+        onPress: () => {
+          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+          setExistingAttachments(prev => prev.filter((_, attachmentIndex) => attachmentIndex !== index));
+          setDeletedAttachmentNames(prev => prev.includes(fileName) ? prev : [...prev, fileName]);
+        },
+      },
+    ]);
+  };
+
   // 上传图片（批量上传）
   const handleUploadImages = async () => {
     if (selectedImages.length === 0) {
@@ -448,19 +525,31 @@ const CreatePostScreen: React.FC = () => {
     setUploading(true);
     setUploadProgress(0);
     try {
+      const pageReferer = isReplyMode
+        ? buildReplyPostReferer(params.reId!, params.boardName)
+        : buildCreatePostReferer(params.boardId, params.boardName);
+
       // 先检查发帖权限
-      await checkPublish(params.boardId);
+      await checkPublish(params.boardId, pageReferer);
       
-      // 请求两次token，使用第二次的结果
-      await getUploadToken(params.boardId);
-      const token2 = await getUploadToken(params.boardId);
+      // 回复场景请求一次 token；新发帖保留 WAP 的两次 token 请求流程。
+      const firstToken = await getUploadToken(params.boardId, pageReferer);
+      const uploadTokenForRequest = isReplyMode
+        ? firstToken
+        : await getUploadToken(params.boardId, pageReferer);
       
       // 批量上传所有图片（一次HTTP请求），并监听进度
-      await uploadImages(params.boardId, token2, validImages, (progress) => {
-        setUploadProgress(progress);
-      });
+      await uploadImages(
+        params.boardId,
+        uploadTokenForRequest,
+        validImages,
+        progress => {
+          setUploadProgress(progress);
+        },
+        pageReferer,
+      );
 
-      setUploadToken(token2);
+      setUploadToken(uploadTokenForRequest);
       setUploadProgress(100);
     } catch (error: any) {
       console.error('上传图片失败:', error);
@@ -547,6 +636,47 @@ const CreatePostScreen: React.FC = () => {
     );
   };
 
+  const renderExistingAttachments = () => {
+    if (!isEditMode || existingAttachments.length === 0) {
+      return null;
+    }
+
+    return (
+      <View style={styles.inputGroup}>
+        <View style={styles.imageListHeader}>
+          <Text style={styles.sectionTitle}>已有附件 {existingAttachments.length}/9</Text>
+          <Text style={styles.attachmentHint}>点击删除，保存后生效</Text>
+        </View>
+        <ScrollView horizontal style={styles.imageList} showsHorizontalScrollIndicator={false}>
+          {existingAttachments.map((attachment, index) => {
+            const fileName = getAttachmentFileName(attachment) || '附件';
+            const isImage = isImageAttachment(attachment) || isImageUrl(attachment.url || '', fileName);
+
+            return (
+              <View key={`${attachment.id || fileName}-${index}`} style={styles.existingAttachmentItem}>
+                {isImage && attachment.url ? (
+                  <Image source={{uri: attachment.url}} style={styles.imagePreview} resizeMode="cover" />
+                ) : (
+                  <View style={styles.existingAttachmentFile}>
+                    <FileIcon size={28} color={theme.secondaryText} />
+                    <Text style={styles.existingAttachmentFileLabel}>附件</Text>
+                  </View>
+                )}
+                <TouchableOpacity
+                  style={styles.removeImageButton}
+                  onPress={() => handleRemoveExistingAttachment(index)}
+                  disabled={submitting || uploading}>
+                  <TrashIcon size={14} color="#fff" />
+                </TouchableOpacity>
+                <Text style={styles.existingAttachmentName} numberOfLines={2}>{fileName}</Text>
+              </View>
+            );
+          })}
+        </ScrollView>
+      </View>
+    );
+  };
+
   return (
     <View style={styles.container}>
       {renderCaptchaModal()}
@@ -599,7 +729,7 @@ const CreatePostScreen: React.FC = () => {
           <View style={styles.inputGroup}>
             <View style={styles.contentInputContainer}>
               <TextInput
-                style={[styles.contentInput, isEditMode && {paddingBottom: SPACING.md}]}
+                style={styles.contentInput}
                 value={content}
                 onChangeText={setContent}
                 placeholder="请输入内容"
@@ -610,26 +740,30 @@ const CreatePostScreen: React.FC = () => {
                 editable={!submitting}
                 inputAccessoryViewID={inputAccessoryViewID}
               />
-              {/* 图片选择按钮（左下角），编辑模式下不显示 */}
-              {!isEditMode && (
-                <TouchableOpacity
-                  style={styles.imagePickerButton}
-                  onPress={handleShowImageSourcePicker}
-                  disabled={submitting || uploading || selectedImages.length >= 9}
-                  activeOpacity={0.6}>
-                  <ImageIcon size={22} color={theme.secondaryText} />
-                </TouchableOpacity>
-              )}
+              {/* 图片选择按钮（左下角） */}
+              <TouchableOpacity
+                style={styles.imagePickerButton}
+                onPress={handleShowImageSourcePicker}
+                disabled={submitting || uploading || attachmentCount >= 9}
+                activeOpacity={0.6}>
+                <ImageIcon size={22} color={theme.secondaryText} />
+              </TouchableOpacity>
             </View>
             <Text style={styles.counter}>{content.length}/10000</Text>
           </View>
 
-          {/* 已选择的图片列表（编辑模式下不显示） */}
-          {!isEditMode && selectedImages.length > 0 && (
+          {renderExistingAttachments()}
+
+          {/* 待新增的图片列表 */}
+          {selectedImages.length > 0 && (
             <View style={styles.inputGroup}>
               <View style={styles.imageListHeader}>
-                <Text style={styles.sectionTitle}>已选择 {selectedImages.length}/9 张图片</Text>
-                {uploadToken && (
+                <Text style={styles.sectionTitle}>
+                  {isEditMode
+                    ? `待新增 ${selectedImages.length} 张图片（共 ${attachmentCount}/9）`
+                    : `已选择 ${selectedImages.length}/9 张图片`}
+                </Text>
+                {!isEditMode && uploadToken && (
                   <View style={styles.uploadSuccessContent}>
                     <CheckIcon size={14} color={theme.primary} />
                     <Text style={styles.uploadSuccessText}> 上传完成</Text>
@@ -657,7 +791,7 @@ const CreatePostScreen: React.FC = () => {
                       disabled={uploading}>
                       <TrashIcon size={14} color="#fff" />
                     </TouchableOpacity>
-                    {uploadToken && (
+                    {!isEditMode && uploadToken && (
                       <View style={styles.uploadedBadge}>
                       <CheckIcon size={12} color="#fff" />
                       </View>
@@ -708,6 +842,8 @@ const CreatePostScreen: React.FC = () => {
             {isEditMode ? (
               <>
                 <Text style={styles.tipText}>• 修改标题和内容后点击右上角保存</Text>
+                <Text style={styles.tipText}>• 可删除已有附件或添加图片，附件总数最多9个</Text>
+                <Text style={styles.tipText}>• 附件修改会在保存时生效</Text>
               </>
             ) : (
               <>
@@ -848,6 +984,10 @@ const createStyles = (theme: ThemeColors) => StyleSheet.create({
     alignItems: 'center',
     marginBottom: SPACING.sm,
   },
+  attachmentHint: {
+    fontSize: FONT_SIZE.sm,
+    color: theme.secondaryText,
+  },
   uploadSuccessContent: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -888,6 +1028,31 @@ const createStyles = (theme: ThemeColors) => StyleSheet.create({
   imageItem: {
     position: 'relative',
     marginRight: SPACING.sm,
+  },
+  existingAttachmentItem: {
+    position: 'relative',
+    width: scaleModerate(100),
+    marginRight: SPACING.sm,
+    paddingBottom: SPACING.xs,
+  },
+  existingAttachmentFile: {
+    width: scaleModerate(80),
+    height: scaleModerate(80),
+    borderRadius: BORDER_RADIUS.md,
+    backgroundColor: theme.placeholderBackground,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  existingAttachmentFileLabel: {
+    fontSize: FONT_SIZE.xs,
+    color: theme.secondaryText,
+    marginTop: SPACING.xs,
+  },
+  existingAttachmentName: {
+    width: scaleModerate(88),
+    fontSize: FONT_SIZE.xs,
+    color: theme.secondaryText,
+    marginTop: SPACING.xs,
   },
   imagePreview: {
     width: scaleModerate(80),

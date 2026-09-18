@@ -33,6 +33,25 @@ export interface PostParams {
 }
 
 /**
+ * 构造 WAP 新发帖页面 Referer。
+ * 浏览器实际请求会带上版面标题；版面名缺失时保留无 title 的兼容格式。
+ */
+export const buildCreatePostReferer = (boardId: string, boardName?: string): string => {
+  const title = boardName ? `&title=${encodeURIComponent(boardName)}` : '';
+  return `https://wap.newsmth.net/post?boardId=${encodeURIComponent(boardId)}${title}`;
+};
+
+/**
+ * 构造 WAP 回复页面 Referer。
+ */
+export const buildReplyPostReferer = (articleId: string, boardName?: string): string => {
+  const query = boardName
+    ? `?title=${encodeURIComponent(boardName)}&from=board`
+    : '?from=board';
+  return `https://wap.newsmth.net/article/${encodeURIComponent(articleId)}${query}`;
+};
+
+/**
  * 发帖响应接口
  */
 export interface PostResponse {
@@ -73,7 +92,7 @@ export const createPost = async (params: PostParams): Promise<PostResponse> => {
     const headers = buildPostHeaders(
       cookies,
       'application/x-www-form-urlencoded',
-      `https://wap.newsmth.net/post?boardId=${params.boardId}`
+      buildCreatePostReferer(params.boardId, params.boardName)
     );
 
     // 构建Form Data格式的请求体（基于抓包结果）
@@ -182,7 +201,7 @@ export const replyPost = async (params: PostParams): Promise<PostResponse> => {
     const headers = buildPostHeaders(
       cookies,
       'application/x-www-form-urlencoded',
-      `https://wap.newsmth.net/article/${params.reId}?title=${encodeURIComponent(params.subject || '')}&from=board`
+      buildReplyPostReferer(params.reId, params.boardName)
     );
 
     // 构建Form Data
@@ -264,9 +283,10 @@ export const replyPost = async (params: PostParams): Promise<PostResponse> => {
  */
 export interface UpdateArticleParams {
   articleId: string; // 帖子ID
+  topicId?: string; // 编辑页面的主题ID（Referer 使用）
   subject: string; // 帖子标题
   body: string; // 帖子内容
-  uploadToken?: string; // 上传图片的token（可选）
+  uploadToken?: string; // 上传图片的token（未传时自动加载原附件token）
 }
 
 /**
@@ -274,7 +294,7 @@ export interface UpdateArticleParams {
  * 
  * - URL: https://wap.newsmth.net/wap/api/topic/updateArticle
  * - Content-Type: application/x-www-form-urlencoded
- * - 参数: articleId, body, subject, t, uploadToken(可选)
+ * - 参数: articleId, body, subject, t, uploadToken(可选；未传时自动加载原附件token)
  * 
  * @param params 编辑帖子参数
  * @returns 编辑响应
@@ -304,10 +324,12 @@ export const updateArticle = async (params: UpdateArticleParams): Promise<PostRe
     formData.append('body', params.body);
     formData.append('t', String(timestamp));
 
-    // 添加图片上传token（如果有）
-    if (params.uploadToken) {
-      formData.append('uploadToken', params.uploadToken);
-    }
+    // 编辑时必须带上已加载原附件的token，否则服务端会清空原附件。
+    const uploadToken = params.uploadToken || await getArticleFileToken(
+      params.articleId,
+      params.topicId || params.articleId,
+    );
+    formData.append('uploadToken', uploadToken);
 
     logRequest.start(API_URL, 'POST');
     logRequest.params({
@@ -389,19 +411,14 @@ export const clearDraft = async (boardId: string): Promise<void> => {
 };
 
 /**
- * 获取图片上传token
- * 
- * @param boardId 版面ID（用于Referer）
- * @returns 上传token
- */
-/**
  * 检查发帖权限
  * 在获取上传token前调用，验证用户是否有发帖权限
  * 
  * @param boardId 版面ID
+ * @param referer WAP 页面 Referer
  * @returns 检查结果，成功返回true，失败抛出错误
  */
-export const checkPublish = async (boardId?: string): Promise<boolean> => {
+export const checkPublish = async (boardId?: string, referer?: string): Promise<boolean> => {
   try {
     const API_URL = 'https://wap.newsmth.net/wap/api/topic/publish/check';
 
@@ -414,9 +431,7 @@ export const checkPublish = async (boardId?: string): Promise<boolean> => {
     // 构建请求头（使用封装好的函数）
     const headers = buildGetHeaders(
       cookies,
-      boardId 
-        ? `https://wap.newsmth.net/post?boardId=${boardId}` 
-        : 'https://wap.newsmth.net/'
+      referer || (boardId ? buildCreatePostReferer(boardId) : 'https://wap.newsmth.net/')
     );
 
     logRequest.start(API_URL, 'GET');
@@ -446,7 +461,14 @@ export const checkPublish = async (boardId?: string): Promise<boolean> => {
   }
 };
 
-export const getUploadToken = async (boardId?: string): Promise<string> => {
+/**
+ * 获取图片上传token
+ *
+ * @param boardId 版面ID（用于默认 Referer）
+ * @param referer WAP 页面 Referer
+ * @returns 上传token
+ */
+export const getUploadToken = async (boardId?: string, referer?: string): Promise<string> => {
   try {
     const API_URL = 'https://wap.newsmth.net/wap/api/file/token';
 
@@ -459,9 +481,7 @@ export const getUploadToken = async (boardId?: string): Promise<string> => {
     // 构建请求头（使用封装好的函数）
     const headers = buildGetHeaders(
       cookies,
-      boardId 
-        ? `https://wap.newsmth.net/post?boardId=${boardId}` 
-        : 'https://wap.newsmth.net/'
+      referer || (boardId ? buildCreatePostReferer(boardId) : 'https://wap.newsmth.net/')
     );
 
     logRequest.start(API_URL, 'GET');
@@ -487,6 +507,120 @@ export const getUploadToken = async (boardId?: string): Promise<string> => {
     }
   } catch (error: any) {
     console.error('获取上传token错误:', error);
+    throw error;
+  }
+};
+
+/**
+ * 获取编辑帖子时用于保留原附件的 token
+ *
+ * 水木 WAP 编辑流程会先加载文章已有附件，再将返回的 token 传给
+ * updateArticle。若直接提交编辑请求而不带该 token，服务端会按空附件集合
+ * 处理，从而清掉原帖附件。
+ *
+ * @param articleId 文章ID（用于 files/load 路径和更新参数）
+ * @param topicId 主题ID（用于编辑页 Referer）
+ * @returns 已加载原附件的 token
+ */
+export const getArticleFileToken = async (articleId: string, topicId: string): Promise<string> => {
+  try {
+    const API_URL = `https://wap.newsmth.net/wap/api/topic/${encodeURIComponent(articleId)}/files/load`;
+
+    const cookies = await AsyncStorage.getItem('cookies');
+    if (!cookies) {
+      throw new Error('未登录，请先登录');
+    }
+
+    const headers = buildGetHeaders(
+      cookies,
+      `https://wap.newsmth.net/post?id=${encodeURIComponent(topicId)}`
+    );
+
+    logRequest.start(API_URL, 'GET');
+
+    const response = await fetchWithRetry(API_URL, {
+      method: 'GET',
+      headers,
+    }, DEFAULT_TIMEOUT);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      logRequest.error(API_URL, new Error(`HTTP ${response.status}: ${errorText}`));
+      throw new Error(`获取原附件token失败: ${response.status}`);
+    }
+
+    const result = await response.json();
+    logRequest.success(API_URL, result);
+
+    const token = typeof result.data === 'string'
+      ? result.data
+      : result.data?.token || result.data?.uploadToken;
+
+    if ((result.code === 0 || result.code === 1) && token) {
+      return token;
+    }
+
+    throw new Error(result.message || '获取原附件token失败');
+  } catch (error: any) {
+    console.error('获取原附件token错误:', error);
+    throw error;
+  }
+};
+
+/**
+ * 删除编辑 token 中指定的附件
+ *
+ * 水木 WAP 编辑流程使用附件文件名删除附件，而不是文章附件 ID。
+ * 删除会在最终更新文章前执行，更新请求仍需携带同一个 token。
+ *
+ * @param token 编辑文章时加载到的附件 token
+ * @param fileNames 要删除的附件文件名
+ */
+export const deleteUploadedFiles = async (
+  token: string,
+  fileNames: string[],
+): Promise<void> => {
+  if (!fileNames.length) {
+    return;
+  }
+
+  try {
+    const API_URL = `https://wap.newsmth.net/wap/api/file/delete/${encodeURIComponent(token)}`;
+
+    const cookies = await AsyncStorage.getItem('cookies');
+    if (!cookies) {
+      throw new Error('未登录，请先登录');
+    }
+
+    const headers = buildPostHeaders(
+      cookies,
+      'application/json',
+      'https://wap.newsmth.net/'
+    );
+
+    logRequest.start(API_URL, 'DELETE');
+    logRequest.params({fileCount: fileNames.length});
+
+    const response = await fetchWithRetry(API_URL, {
+      method: 'DELETE',
+      headers,
+      body: JSON.stringify(fileNames),
+    }, 20000);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      logRequest.error(API_URL, new Error(`HTTP ${response.status}: ${errorText || '删除附件失败'}`));
+      throw new Error(`HTTP ${response.status}: ${errorText || '删除附件失败'}`);
+    }
+
+    const result = await response.json();
+    logRequest.success(API_URL, result);
+
+    if (!((result.code === 0 || result.code === 1) && (result.kbsCode === 0 || result.kbsCode === undefined))) {
+      throw new Error(result.message || result.error || '删除附件失败');
+    }
+  } catch (error: any) {
+    console.error('删除附件错误:', error);
     throw error;
   }
 };
@@ -521,7 +655,8 @@ export const uploadImages = async (
   boardId: string,
   token: string,
   imageAssets: ImageAsset[],
-  onProgress?: (progress: number) => void
+  onProgress?: (progress: number) => void,
+  referer?: string,
 ): Promise<string> => {
   try {
     const API_URL = `https://wap.newsmth.net/wap/api/file/upload/${boardId}/${token}`;
@@ -619,13 +754,14 @@ export const uploadImages = async (
     const requestHeaders = buildPostHeaders(
       cookies,
       '',
-      `https://wap.newsmth.net/post?boardId=${boardId}`
+      referer || `https://wap.newsmth.net/post?boardId=${boardId}`
     );
 
     const responseText = await new Promise<string>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', API_URL);
-      xhr.timeout = 30000;
+      // 批量上传超时按图片数量增加：20 秒基础时间 + 每张图片 10 秒。
+      xhr.timeout = 20000 + validImageCount * 10000;
       xhr.withCredentials = true;
 
       Object.entries(requestHeaders).forEach(([key, value]) => {
@@ -667,7 +803,7 @@ export const uploadImages = async (
     //   "kbsCode": 0,
     //   "message": "操作成功"
     // }
-    if (result.code === 1) {
+    if (result.code === 1 && result.kbsCode === 0) {
       // result.data 是一个数组，包含每张图片的信息
       // 返回 token（调用方实际使用 URL 中的 token 来关联图片）
       // 这里返回 token 以保持接口兼容性

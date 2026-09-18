@@ -1204,8 +1204,10 @@ const PostDetailScreen: React.FC = () => {
       boardId: board,
       boardName: post.boardName || board,
       articleId: post.articleId || post.id,
+      topicId: post.id,
       editTitle: post.title,
       editContent: post.contentText || post.content || '',
+      editAttachments: post.attachments || [],
       mode: 'edit',
     });
   };

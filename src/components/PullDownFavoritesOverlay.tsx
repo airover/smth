@@ -23,10 +23,7 @@ import {SPACING, FONT_SIZE} from '../utils/responsive';
 
 // 手势区间
 const REFRESH_THRESHOLD = 45;
-const FAVORITES_THRESHOLD = 111;
-// iOS UIScrollView 的 onScrollEndDrag velocity 单位是 points/second。
-// 与 onScroll 中按时间差计算出的速度统一单位，避免把 1.1 误当成 points/second。
-const FAST_VELOCITY = 1100;
+const FAVORITES_THRESHOLD = 124;
 
 export type PullDownState = 'idle' | 'pulling' | 'refresh-ready' | 'favorites-ready';
 
@@ -74,9 +71,12 @@ export const PullDownFavoritesOverlay: React.FC<PullDownFavoritesOverlayProps> =
 
 /**
  * Hook: 下拉手势状态管理
- * 同时判断距离 + 速度：
- * - 快速下拉松手（高速）→ 刷新（无论距离）
- * - 慢速下拉超过阈值松手 → 收藏
+ * 只按松手时的下拉距离分段：
+ * - 刷新区（45~110pt）→ 刷新
+ * - 收藏区（≥111pt）→ 收藏
+ *
+ * 不使用 onScrollEndDrag 的 velocity 做二次判断。UIScrollView 在回弹边界
+ * 附近的速度受采样时机影响很大，同一段手势可能被判成不同操作。
  */
 export function usePullDownFavorites(
   onTriggerFavorites: () => void,
@@ -86,18 +86,26 @@ export function usePullDownFavorites(
   const [pullOffset, setPullOffset] = useState(0);
   const [state, setState] = useState<PullDownState>('idle');
   const isRefreshingRef = useRef(false);
-  const velocityRef = useRef(0);
   const pullOffsetRef = useRef(0);
-  // 上一帧的 {offset, time} 采样，用于在 onScroll 里自己估算速度。
-  const lastSampleRef = useRef<{offset: number; time: number} | null>(null);
+  // iOS 的 RefreshControl 与自定义收藏手势共用同一个 UIScrollView。
+  // 一旦本次手势进入收藏区，松手时原生控件仍可能派发 onRefresh，需消费掉它。
+  const suppressNativeRefreshRef = useRef(false);
 
   const reset = useCallback(() => {
     setState('idle');
     setPullOffset(0);
     pullOffsetRef.current = 0;
-    velocityRef.current = 0;
-    lastSampleRef.current = null;
   }, []);
+
+  const onScrollBeginDrag = useCallback(() => {
+    if (!enabled || isRefreshingRef.current) return;
+
+    // 新手势开始后，上一轮收藏手势留下的“消费原生刷新”标记失效。
+    suppressNativeRefreshRef.current = false;
+    pullOffsetRef.current = 0;
+    setState('idle');
+    setPullOffset(0);
+  }, [enabled]);
 
   const setRefreshing = useCallback((refreshing: boolean) => {
     isRefreshingRef.current = refreshing;
@@ -110,27 +118,15 @@ export function usePullDownFavorites(
     if (!enabled || isRefreshingRef.current) return;
 
     const offsetY = event.nativeEvent.contentOffset.y;
-    const now = Date.now();
-
-    // iOS 的 velocity 字段在 onScroll 事件里不可靠，用相邻两帧
-    // contentOffset 的差值 / 时间差保留一个兜底速度；它与松手时的
-    // event.nativeEvent.velocity.y 统一为 points/second。
-    const lastSample = lastSampleRef.current;
-    const vy = lastSample && now > lastSample.time
-      ? ((offsetY - lastSample.offset) / (now - lastSample.time)) * 1000
-      : 0;
-    lastSampleRef.current = {offset: offsetY, time: now};
-    velocityRef.current = vy;
 
     if (Platform.OS === 'ios' && offsetY < 0) {
       const amount = Math.abs(offsetY);
       setPullOffset(amount);
       pullOffsetRef.current = amount;
 
-      // 达到收藏距离后保持 ready，避免某一帧速度变快导致状态又退回刷新区。
-      // 是否是快速下拉，交给松手时的原生 velocity 最终判断。
       if (amount >= FAVORITES_THRESHOLD) {
         setState('favorites-ready');
+        suppressNativeRefreshRef.current = true;
       } else if (amount >= REFRESH_THRESHOLD) {
         setState('refresh-ready');
       } else if (amount > 15) {
@@ -139,43 +135,48 @@ export function usePullDownFavorites(
         setState('idle');
       }
     } else {
-      if (state !== 'idle') {
-        reset();
+      // 回弹时先隐藏提示，但不要清空 pullOffsetRef：onScrollEndDrag 可能
+      // 紧接着到达，仍需依据用户刚刚松手的位置完成判定。
+      if (pullOffsetRef.current > 0) {
+        setState('idle');
+        setPullOffset(0);
       }
     }
-  }, [enabled, state, reset]);
+  }, [enabled]);
 
-  const onScrollEndDrag = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+  const onScrollEndDrag = useCallback(() => {
     if (isRefreshingRef.current) return;
 
-    // 原生 velocity 与上面的采样速度都已经统一为 points/second。
-    const nativeVelocity = event.nativeEvent.velocity?.y;
-    const vy = Math.abs(
-      typeof nativeVelocity === 'number' ? nativeVelocity : velocityRef.current,
-    );
     const amount = pullOffsetRef.current;
 
-    if (amount >= FAVORITES_THRESHOLD && vy < FAST_VELOCITY) {
-      // 慢速 + 超过距离 → 收藏
+    if (amount >= FAVORITES_THRESHOLD) {
+      // 收藏手势优先于原生 RefreshControl；标记必须在回调前设置，
+      // 因为打开抽屉会立即触发 HomeScreen 重渲染并重置视觉状态。
+      suppressNativeRefreshRef.current = true;
       onTriggerFavorites();
       reset();
     } else if (amount >= REFRESH_THRESHOLD) {
-      // 快速下拉或处于刷新区 → 刷新
+      // 未进入收藏区的下拉统一触发刷新。
       onTriggerRefresh();
     } else {
       reset();
     }
   }, [onTriggerFavorites, onTriggerRefresh, reset]);
 
-  const isTriggered = state === 'favorites-ready';
+  const consumeNativeRefreshSuppression = useCallback(() => {
+    if (!suppressNativeRefreshRef.current) return false;
+    suppressNativeRefreshRef.current = false;
+    return true;
+  }, []);
 
   return {
     pullOffset,
     state,
+    onScrollBeginDrag,
     onScroll,
     onScrollEndDrag,
     setRefreshing,
-    isTriggered,
+    consumeNativeRefreshSuppression,
     reset,
   };
 }

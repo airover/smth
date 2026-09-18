@@ -181,10 +181,11 @@ const HomeScreen: React.FC = () => {
   const {
     pullOffset,
     state: pullDownState,
+    onScrollBeginDrag: pullDownOnScrollBeginDrag,
     onScroll: pullDownOnScroll,
     onScrollEndDrag: pullDownOnScrollEndDrag,
     setRefreshing: setPullDownRefreshing,
-    isTriggered: isPullDownTriggered,
+    consumeNativeRefreshSuppression,
   } = usePullDownFavorites(handleOpenDrawer, handlePullRefresh);
 
   const canApplySilentRefreshToUI = useCallback(() => {
@@ -459,12 +460,13 @@ const HomeScreen: React.FC = () => {
 
   const handleScrollBeginDrag = useCallback(() => {
     isDraggingRef.current = true;
-  }, []);
+    pullDownOnScrollBeginDrag();
+  }, [pullDownOnScrollBeginDrag]);
 
   const handleScrollEndDrag = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     isDraggingRef.current = false;
     scrollOffsetYRef.current = event.nativeEvent.contentOffset.y;
-    pullDownOnScrollEndDrag(event);
+    pullDownOnScrollEndDrag();
     applyPendingSilentUpdate();
   }, [applyPendingSilentUpdate, pullDownOnScrollEndDrag]);
 
@@ -546,8 +548,8 @@ const HomeScreen: React.FC = () => {
   // 绑定 ref 供 handlePullRefresh 调用
   onRefreshRef.current = onRefreshInternal;
 
-  const onRefresh = async () => {
-    if (isPullDownTriggered) return;
+  const onRefresh = () => {
+    if (consumeNativeRefreshSuppression()) return;
     onRefreshInternal();
   };
 

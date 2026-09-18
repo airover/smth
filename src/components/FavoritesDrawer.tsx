@@ -23,11 +23,9 @@ import {
   SPACING,
   FONT_SIZE,
   BORDER_RADIUS,
-  getStatusBarHeight,
 } from '../utils/responsive';
 
 const {height: SCREEN_HEIGHT, width: SCREEN_WIDTH} = Dimensions.get('window');
-const STATUS_BAR = getStatusBarHeight();
 const PANEL_HEIGHT = Math.round(SCREEN_HEIGHT * 0.9);
 const GRID_COLS = 4;
 const GRID_GAP = SPACING.md;
@@ -136,7 +134,7 @@ const FavoritesDrawer: React.FC<FavoritesDrawerProps> = ({visible, onClose, cont
 
   return (
     <Animated.View
-      style={[styles.panel, {height: PANEL_HEIGHT, paddingTop: STATUS_BAR, backgroundColor: theme.background, transform: [{translateY: panelY}]}]}
+      style={[styles.panel, {height: PANEL_HEIGHT, backgroundColor: theme.background, transform: [{translateY: panelY}]}]}
       {...pan.panHandlers}>
 
       {/* ── 顶部 ── */}
