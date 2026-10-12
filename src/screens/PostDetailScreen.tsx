@@ -55,8 +55,9 @@ import {
   FilterIcon,
   UserFilterIcon,
 } from '../components/SvgIcons';
-import {normalizeImageUrl, isImageAttachment, isVideoAttachment} from '../utils/imageUtils';
+import {extractImagesFromHtml, normalizeImageUrl, isImageAttachment, isVideoAttachment} from '../utils/imageUtils';
 import {impactLight, impactMedium, notifySuccess} from '../utils/haptics';
+import type {AiReplyContext, AiReplyImage} from '../services/aiReply';
 import {
   getTopicReadingProgress,
   saveTopicReadingProgress,
@@ -107,6 +108,38 @@ const REPLY_VIEWABILITY_CONFIG = {
   // 使用视口覆盖率，长回复只要占据了一小部分屏幕也能被记录。
   viewAreaCoveragePercentThreshold: 1,
   minimumViewTime: 350,
+};
+
+const extractAiReplyTargetImages = (
+  attachments?: Attachment[],
+  rawContent?: string,
+): AiReplyImage[] => {
+  const images: AiReplyImage[] = [];
+  const seen = new Set<string>();
+  const addImage = (url: string, name?: string, mimeType?: string) => {
+    if (/^(?:data:|file:|blob:)/i.test(url.trim())) return;
+    const normalizedUrl = normalizeImageUrl(url);
+    if (!normalizedUrl || !/^https:\/\//i.test(normalizedUrl) || seen.has(normalizedUrl)) return;
+    seen.add(normalizedUrl);
+    images.push({
+      url: normalizedUrl,
+      ...(name ? {name} : {}),
+      ...(mimeType ? {mimeType} : {}),
+    });
+  };
+
+  (attachments || []).forEach(attachment => {
+    const url = attachment.url
+      || (attachment.id ? `https://wap.newsmth.net/wap/api/attachment/download/${encodeURIComponent(attachment.id)}` : '');
+    const imagePathPattern = /\.(?:jpe?g|png|gif|webp|bmp|svg)(?:[?#/\s]|$)/i;
+    const isNamedImage = imagePathPattern.test(attachment.name || '') || imagePathPattern.test(url);
+    if (isImageAttachment(attachment) || isNamedImage) {
+      addImage(url, attachment.name, attachment.type);
+    }
+  });
+
+  extractImagesFromHtml(rawContent || '').forEach(url => addImage(url));
+  return images;
 };
 
 const getAvatarUri = (avatar?: string | null): string => normalizeImageUrl(avatar);
@@ -1163,7 +1196,14 @@ const PostDetailScreen: React.FC = () => {
       boardName: post.boardName || board,
       reId: post.articleId || post.id,
       reTitle: post.title,
-      mode: 'reply'
+      mode: 'reply',
+      aiContext: {
+        targetKind: 'topic',
+        boardName: post.boardName || board,
+        topicTitle: post.title,
+        topicContent: post.contentText || post.content || '',
+        targetImages: extractAiReplyTargetImages(post.attachments, post.content),
+      } satisfies AiReplyContext,
     });
   };
 
@@ -1193,6 +1233,13 @@ const PostDetailScreen: React.FC = () => {
       reTitle: post.title,
       mode: 'reply',
       quotedContent: buildQuotedContent(post.author, post.contentText || post.content || ''),
+      aiContext: {
+        targetKind: 'quoted_post',
+        boardName: post.boardName || board,
+        topicTitle: post.title,
+        topicContent: post.contentText || post.content || '',
+        targetImages: extractAiReplyTargetImages(post.attachments, post.content),
+      } satisfies AiReplyContext,
     });
   };
 
@@ -1259,6 +1306,14 @@ const PostDetailScreen: React.FC = () => {
       reTitle: post.title,
       mode: 'reply',
       quotedContent: quotedContent, // 传递引用内容
+      aiContext: {
+        targetKind: 'quoted_reply',
+        boardName: post.boardName || board,
+        topicTitle: post.title,
+        quotedAuthor: reply.author,
+        quotedContent: reply.content,
+        targetImages: extractAiReplyTargetImages(reply.attachments, reply.content),
+      } satisfies AiReplyContext,
     });
   };
 

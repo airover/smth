@@ -31,11 +31,15 @@ import {
 } from '../utils/responsive';
 import {ThemedHeaderButton, useFloatingHeader} from '../components/ThemeHeader';
 import {useTheme} from '../components/ThemedComponents';
-import {getCardElevation, ThemeColors} from '../utils/theme';
+import {useSettings} from '../context/SettingsContext';
+import {getCardElevation, getFontSizes, ThemeColors} from '../utils/theme';
 import {CameraIcon, ImageIcon, CheckCircleIcon, CheckIcon, LightbulbIcon, TrashIcon, SaveIcon, SendIcon, FileIcon} from '../components/SvgIcons';
 import {notifySuccess} from '../utils/haptics';
 import {Attachment} from '../types';
 import {isImageAttachment, isImageUrl} from '../utils/imageUtils';
+import AiReplyConfigModal from '../components/AiReplyConfigModal';
+import AiReplyDraftModal from '../components/AiReplyDraftModal';
+import type {AiReplyContext} from '../services/aiReply';
 
 // 在 Android 上启用 LayoutAnimation（仅需启用一次）
 if (
@@ -52,6 +56,7 @@ interface RouteParams {
   reTitle?: string; // 被回复的帖子标题
   mode?: 'create' | 'reply' | 'edit'; // 发帖模式
   quotedContent?: string; // 引用的内容
+  aiContext?: AiReplyContext; // AI 回复目标与必要上下文
   articleId?: string; // 编辑模式下的帖子ID
   topicId?: string; // 编辑页面的主题ID（Referer 使用）
   editTitle?: string; // 编辑模式下的原始标题
@@ -74,7 +79,9 @@ const CreatePostScreen: React.FC = () => {
   const route = useRoute();
   const params = (route.params as RouteParams) || {};
   const theme = useTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
+  const {settings} = useSettings();
+  const fontSizes = useMemo(() => getFontSizes(settings.fontSize), [settings.fontSize]);
+  const styles = useMemo(() => createStyles(theme, fontSizes), [theme, fontSizes]);
 
   const isReplyMode = params.mode === 'reply' || !!params.reId;
   const isEditMode = params.mode === 'edit' && !!params.articleId;
@@ -92,13 +99,25 @@ const CreatePostScreen: React.FC = () => {
   const [uploading, setUploading] = useState(false); // 是否正在上传图片
   const [uploadProgress, setUploadProgress] = useState<number>(0); // 上传进度（0-100）
   const [showImageSourceModal, setShowImageSourceModal] = useState(false); // 显示图片来源选择弹窗
+  const [showAiDraftModal, setShowAiDraftModal] = useState(false);
+  const [showAiConfigModal, setShowAiConfigModal] = useState(false);
   const [existingAttachments, setExistingAttachments] = useState<Attachment[]>(params.editAttachments || []);
   const [deletedAttachmentNames, setDeletedAttachmentNames] = useState<string[]>([]);
 
   const attachmentCount = (isEditMode ? existingAttachments.length : 0) + selectedImages.length;
+
+  // 引用回复的正文结构为 `${用户输入}\n${引用}`，与手工在首行输入保持一致
+  const quotedSuffix = params.quotedContent ? `\n${params.quotedContent}` : '';
+  const splitReplyContent = (value: string): {draft: string; hasQuote: boolean} => (
+    quotedSuffix && value.endsWith(quotedSuffix)
+      ? {draft: value.slice(0, value.length - quotedSuffix.length), hasQuote: true}
+      : {draft: value, hasQuote: false}
+  );
+  const getEditableReplyDraft = (value: string): string => splitReplyContent(value).draft;
   
   // 键盘工具栏ID - 使用useRef生成唯一ID，确保组件实例间不冲突，且在组件生命周期内保持不变
   const inputAccessoryViewID = useRef(`createPostKeyboardAccessory_${Date.now()}`).current;
+  const contentInputRef = useRef<TextInput>(null);
 
   // 设置导航栏
   const setHeaderOptions = useFloatingHeader();
@@ -309,6 +328,31 @@ const CreatePostScreen: React.FC = () => {
       }
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleAiReplyApply = (generatedText: string, mode: 'replace' | 'prepend' | 'append') => {
+    const generated = generatedText.trim();
+    setContent(current => {
+      const {draft, hasQuote} = splitReplyContent(current);
+
+      let nextDraft: string;
+      if (mode === 'prepend') {
+        nextDraft = draft.trim() ? `${generated}\n\n${draft.trimStart()}` : generated;
+      } else if (mode === 'replace') {
+        nextDraft = generated;
+      } else {
+        const existingDraft = draft.trimEnd();
+        nextDraft = existingDraft ? `${existingDraft}\n\n${generated}` : generated;
+      }
+
+      return hasQuote ? `${nextDraft}${quotedSuffix}` : nextDraft;
+    });
+
+    if (mode === 'prepend') {
+      requestAnimationFrame(() => {
+        contentInputRef.current?.setNativeProps({selection: {start: 0, end: 0}});
+      });
     }
   };
 
@@ -681,6 +725,24 @@ const CreatePostScreen: React.FC = () => {
     <View style={styles.container}>
       {renderCaptchaModal()}
       {renderImageSourceModal()}
+      <AiReplyConfigModal
+        visible={showAiConfigModal}
+        onClose={() => {
+          setShowAiConfigModal(false);
+          setShowAiDraftModal(true);
+        }}
+      />
+      <AiReplyDraftModal
+        visible={showAiDraftModal}
+        context={params.aiContext}
+        draftText={getEditableReplyDraft(content)}
+        onClose={() => setShowAiDraftModal(false)}
+        onRequestConfiguration={() => {
+          setShowAiDraftModal(false);
+          setShowAiConfigModal(true);
+        }}
+        onApply={handleAiReplyApply}
+      />
       
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -727,8 +789,26 @@ const CreatePostScreen: React.FC = () => {
 
           {/* 内容输入 */}
           <View style={styles.inputGroup}>
+            <View style={styles.contentHeading}>
+              <Text style={styles.sectionTitle}>{isReplyMode ? '回复内容' : '内容'}</Text>
+              {isReplyMode ? (
+                <TouchableOpacity
+                  style={styles.aiReplyButton}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setShowAiDraftModal(true);
+                  }}
+                  disabled={submitting || uploading}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="AI 帮写回复">
+                  <Text style={styles.aiReplyButtonText}>✦ AI 帮写</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
             <View style={styles.contentInputContainer}>
               <TextInput
+                ref={contentInputRef}
                 style={styles.contentInput}
                 value={content}
                 onChangeText={setContent}
@@ -860,7 +940,7 @@ const CreatePostScreen: React.FC = () => {
   );
 };
 
-const createStyles = (theme: ThemeColors) => StyleSheet.create({
+const createStyles = (theme: ThemeColors, fontSizes: ReturnType<typeof getFontSizes>) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: theme.background,
@@ -893,6 +973,25 @@ const createStyles = (theme: ThemeColors) => StyleSheet.create({
   inputGroup: {
     marginBottom: SPACING.lg,
   },
+  contentHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: SPACING.sm,
+  },
+  aiReplyButton: {
+    borderWidth: 1,
+    borderColor: theme.primary,
+    backgroundColor: theme.quoteBackground,
+    borderRadius: BORDER_RADIUS.xl,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.xs,
+  },
+  aiReplyButtonText: {
+    color: theme.primary,
+    fontSize: FONT_SIZE.sm,
+    fontWeight: '700',
+  },
   titleInput: {
     backgroundColor: theme.cardBackground,
     borderRadius: BORDER_RADIUS.md,
@@ -910,7 +1009,8 @@ const createStyles = (theme: ThemeColors) => StyleSheet.create({
     borderRadius: BORDER_RADIUS.md,
     padding: SPACING.md,
     paddingBottom: responsiveSize(44, 48, 52, 56), // 为左下角按钮留出空间
-    fontSize: FONT_SIZE.lg,
+    fontSize: fontSizes.content,
+    lineHeight: fontSizes.lineHeight,
     color: theme.text,
     borderWidth: 1,
     borderColor: theme.border,

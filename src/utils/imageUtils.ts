@@ -147,17 +147,23 @@ export const isValidImageUrl = (url: string): boolean => {
 export const extractImagesFromHtml = (html: string): string[] => {
   if (!html) return [];
   
-  const imgRegex = /<img[^>]+src="([^"]+)"/gi;
+  const imgRegex = /<img\b[^>]*?\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
   const urls: string[] = [];
   let match;
   
   while ((match = imgRegex.exec(html)) !== null) {
-    if (match[1]) {
-      urls.push(normalizeImageUrl(match[1]));
+    const source = String(match[1] || match[2] || match[3] || '').trim();
+    if (source) {
+      // M-site attachment images use relative /att paths; keep them on the
+      // host that serves those files instead of rewriting them to file.mysmth.net.
+      const normalized = source.startsWith('/att/')
+        ? `https://m.newsmth.net${source.replace(/\/middle$/, '')}`
+        : normalizeImageUrl(source.replace(/&amp;/gi, '&'));
+      if (normalized) urls.push(normalized);
     }
   }
   
-  return urls;
+  return Array.from(new Set(urls));
 };
 
 /**
