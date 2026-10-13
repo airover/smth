@@ -68,9 +68,12 @@ const AiReplyDraftModal: React.FC<AiReplyDraftModalProps> = ({
   const styles = useMemo(() => createStyles(theme, fontSizes), [theme, fontSizes]);
   const abortControllerRef = useRef<AbortController | null>(null);
   const scrollViewRef = useRef<ScrollView | null>(null);
+  // 触摸事件由内向外冒泡：风格选择区先标记，弹窗容器据此判断是否点在了菜单外部
+  const touchInStylePickerRef = useRef(false);
   const [config, setConfig] = useState<AiReplyConfigSummary | null>(null);
   const [loadingSettings, setLoadingSettings] = useState(false);
-  const [style, setStyle] = useState<AiReplyStyle>('concise');
+  const [style, setStyle] = useState<AiReplyStyle>('brief');
+  const [showStyleMenu, setShowStyleMenu] = useState(false);
   const [customStyle, setCustomStyle] = useState('');
   const [customInstruction, setCustomInstruction] = useState('');
   const [showCustomInstruction, setShowCustomInstruction] = useState(false);
@@ -87,6 +90,7 @@ const AiReplyDraftModal: React.FC<AiReplyDraftModalProps> = ({
       abortControllerRef.current?.abort();
       abortControllerRef.current = null;
       setGenerating(false);
+      setShowStyleMenu(false);
       return;
     }
     let active = true;
@@ -96,6 +100,7 @@ const AiReplyDraftModal: React.FC<AiReplyDraftModalProps> = ({
     setResultStale(false);
     setGeneratedText('');
     setEditingGeneratedText(false);
+    setShowStyleMenu(false);
     setError('');
     setCustomInstruction('');
     setShowCustomInstruction(false);
@@ -120,23 +125,9 @@ const AiReplyDraftModal: React.FC<AiReplyDraftModalProps> = ({
     };
   }, [visible, draftText]);
 
-  useEffect(() => {
-    if (!visible || !editingGeneratedText) return;
-
-    const scrollToResultInput = () => {
-      requestAnimationFrame(() => scrollViewRef.current?.scrollToEnd({animated: true}));
-    };
-    const keyboardSubscription = Keyboard.addListener('keyboardDidShow', scrollToResultInput);
-    const initialScrollTimer = setTimeout(scrollToResultInput, 250);
-
-    return () => {
-      keyboardSubscription.remove();
-      clearTimeout(initialScrollTimer);
-    };
-  }, [visible, editingGeneratedText]);
-
   // 修改选项时保留已生成的内容，只提示需要重新生成，避免误触丢失结果
   const markResultStale = () => {
+    setShowStyleMenu(false);
     if (generatedText.trim()) setResultStale(true);
     setError('');
   };
@@ -162,6 +153,7 @@ const AiReplyDraftModal: React.FC<AiReplyDraftModalProps> = ({
     setResultStale(false);
     setGeneratedText('');
     setEditingGeneratedText(false);
+    setShowStyleMenu(false);
     setError('');
     scrollToResult();
     try {
@@ -199,6 +191,7 @@ const AiReplyDraftModal: React.FC<AiReplyDraftModalProps> = ({
 
   const targetPreview = getTargetPreview(context);
   const targetImageCount = context?.targetImages?.length || 0;
+  const selectedStyleLabel = AI_REPLY_STYLE_OPTIONS.find(option => option.value === style)?.label || '简洁直接';
   const hasQuotedInput = context?.targetKind === 'quoted_post' || context?.targetKind === 'quoted_reply';
   const hasDraft = Boolean(draftText.trim());
   const primaryApplyMode: ApplyMode = hasDraft || hasQuotedInput ? 'prepend' : 'replace';
@@ -214,6 +207,7 @@ const AiReplyDraftModal: React.FC<AiReplyDraftModalProps> = ({
 
   const finishEditingGeneratedText = () => {
     Keyboard.dismiss();
+    setShowStyleMenu(false);
     setEditingGeneratedText(false);
   };
 
@@ -222,7 +216,15 @@ const AiReplyDraftModal: React.FC<AiReplyDraftModalProps> = ({
       <View style={styles.overlay}>
         <TouchableOpacity style={StyleSheet.absoluteFillObject} activeOpacity={1} onPress={onClose} disabled={generating} />
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.keyboardArea}>
-          <View style={styles.container}>
+          <View
+            style={styles.container}
+            onTouchStart={() => {
+              if (touchInStylePickerRef.current) {
+                touchInStylePickerRef.current = false;
+              } else if (showStyleMenu) {
+                setShowStyleMenu(false);
+              }
+            }}>
             <View style={styles.header}>
               <View style={styles.headerCopy}>
                 <Text style={styles.title}>AI 帮写回复</Text>
@@ -239,11 +241,39 @@ const AiReplyDraftModal: React.FC<AiReplyDraftModalProps> = ({
               <ActivityIndicator color={theme.primary} style={styles.loader} />
             ) : (
               <>
+                {editingGeneratedText ? (
+                  // 编辑态不放在 ScrollView 里，避免外层滚动与输入框自身滚动抢手势
+                  <View style={styles.editingBody}>
+                    <View style={styles.resultHeader}>
+                      <Text style={styles.resultTitle}>编辑回复</Text>
+                      <TouchableOpacity
+                        onPress={finishEditingGeneratedText}
+                        accessibilityRole="button"
+                        accessibilityLabel="完成编辑生成结果">
+                        <Text style={styles.resultEditAction}>完成</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <View style={[styles.resultArea, styles.editingResultArea]}>
+                      <TextInput
+                        value={generatedText}
+                        onChangeText={setGeneratedText}
+                        autoFocus
+                        multiline
+                        scrollEnabled
+                        maxLength={10000}
+                        editable={!generating}
+                        textAlignVertical="top"
+                        style={[styles.input, styles.resultInput]}
+                      />
+                    </View>
+                  </View>
+                ) : (
                 <ScrollView
                   ref={scrollViewRef}
                   style={styles.scrollView}
                   keyboardShouldPersistTaps="handled"
                   keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                  onScrollBeginDrag={() => setShowStyleMenu(false)}
                   showsVerticalScrollIndicator={false}
                   contentContainerStyle={styles.content}>
                   <View style={styles.targetCard}>
@@ -287,46 +317,12 @@ const AiReplyDraftModal: React.FC<AiReplyDraftModalProps> = ({
                     </View>
                   ) : null}
 
-                  <Text style={styles.sectionTitle}>回复风格</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.styleOptions}>
-                    {AI_REPLY_STYLE_OPTIONS.map(option => (
-                      <TouchableOpacity
-                        key={option.value}
-                        style={[styles.styleChip, style === option.value && styles.selectedStyleChip]}
-                        onPress={() => {
-                          setStyle(option.value);
-                          markResultStale();
-                        }}
-                        disabled={generating}
-                        accessibilityRole="button"
-                        accessibilityState={{selected: style === option.value}}>
-                        <Text style={[styles.styleText, style === option.value && styles.selectedChipText]}>{option.label}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-
-                  {style === 'custom' ? (
-                    <TextInput
-                      value={customStyle}
-                      onChangeText={value => {
-                        setCustomStyle(value);
-                        markResultStale();
-                      }}
-                      multiline
-                      maxLength={500}
-                      placeholder="描述希望采用的语气和表达方式，例如：像耐心的老版友交流，先说结论，避免说教。"
-                      placeholderTextColor={theme.secondaryText}
-                      editable={!generating}
-                      style={[styles.input, styles.customStyleInput]}
-                    />
-                  ) : null}
-                  {style === 'custom' && !customStyle.trim() ? (
-                    <Text style={styles.modelHint}>请先描述自定义回复风格，再生成。</Text>
-                  ) : null}
-
                   <TouchableOpacity
                     style={styles.instructionToggle}
-                    onPress={() => setShowCustomInstruction(value => !value)}
+                    onPress={() => {
+                      setShowStyleMenu(false);
+                      setShowCustomInstruction(value => !value);
+                    }}
                     disabled={generating}
                     accessibilityRole="button"
                     accessibilityState={{expanded: showCustomInstruction}}>
@@ -338,6 +334,7 @@ const AiReplyDraftModal: React.FC<AiReplyDraftModalProps> = ({
                   {showCustomInstruction ? (
                     <TextInput
                       value={customInstruction}
+                      onFocus={() => setShowStyleMenu(false)}
                       onChangeText={value => {
                         setCustomInstruction(value);
                         markResultStale();
@@ -358,50 +355,102 @@ const AiReplyDraftModal: React.FC<AiReplyDraftModalProps> = ({
                     </View>
                   ) : null}
 
+                  {style === 'custom' ? (
+                    <>
+                      <Text style={styles.sectionTitle}>自定义风格描述</Text>
+                      <TextInput
+                        value={customStyle}
+                        onFocus={() => setShowStyleMenu(false)}
+                        onChangeText={value => {
+                          setCustomStyle(value);
+                          markResultStale();
+                        }}
+                        multiline
+                        maxLength={500}
+                        placeholder="描述希望采用的语气和表达方式，例如：像耐心的老版友交流，先说结论，避免说教。"
+                        placeholderTextColor={theme.secondaryText}
+                        editable={!generating}
+                        style={[styles.input, styles.customStyleInput]}
+                      />
+                      {!customStyle.trim() ? (
+                        <Text style={styles.modelHint}>请先描述自定义回复风格，再生成。</Text>
+                      ) : null}
+                    </>
+                  ) : null}
+
                   <View style={styles.resultHeader}>
                     <Text style={styles.resultTitle}>生成结果</Text>
                     <View style={styles.resultHeaderActions}>
-                      {generatedText.trim() && !generating && !editingGeneratedText ? (
+                      {generatedText.trim() && !generating ? (
                         <TouchableOpacity
-                          onPress={() => setEditingGeneratedText(true)}
+                          onPress={() => {
+                            setShowStyleMenu(false);
+                            setEditingGeneratedText(true);
+                          }}
                           accessibilityRole="button"
                           accessibilityLabel="编辑生成结果">
                           <Text style={styles.resultEditAction}>编辑</Text>
                         </TouchableOpacity>
                       ) : null}
-                      {generatedText.trim() && !generating && editingGeneratedText ? (
-                        <TouchableOpacity
-                          onPress={finishEditingGeneratedText}
-                          accessibilityRole="button"
-                          accessibilityLabel="完成编辑生成结果">
-                          <Text style={styles.resultEditAction}>完成</Text>
-                        </TouchableOpacity>
-                      ) : null}
                     </View>
                   </View>
-                  {editingGeneratedText ? (
-                    <TextInput
-                      value={generatedText}
-                      onChangeText={setGeneratedText}
-                      onFocus={() => requestAnimationFrame(() => scrollViewRef.current?.scrollToEnd({animated: true}))}
-                      multiline
-                      maxLength={10000}
-                      editable={!generating}
-                      textAlignVertical="top"
-                      style={[styles.input, styles.resultInput]}
-                    />
-                  ) : (
-                    <View style={[styles.input, styles.resultPreview]}>
+                  <View style={styles.resultArea}>
+                    <View style={styles.resultPreview}>
                       <Text selectable style={generatedText ? styles.resultText : styles.resultPlaceholder}>
                         {generatedText || (generating ? '正在生成…' : '生成后可在这里查看回复。')}
                       </Text>
                     </View>
-                  )}
+                    <View
+                      style={styles.stylePickerAnchor}
+                      onTouchStart={() => {
+                        touchInStylePickerRef.current = true;
+                      }}>
+                      {showStyleMenu ? (
+                        <View style={styles.styleMenu}>
+                          {AI_REPLY_STYLE_OPTIONS.map(option => (
+                            <TouchableOpacity
+                              key={option.value}
+                              style={styles.styleMenuItem}
+                              onPress={() => {
+                                setStyle(option.value);
+                                setShowStyleMenu(false);
+                                markResultStale();
+                                if (option.value === 'custom') scrollToResult();
+                              }}
+                              disabled={generating}
+                              accessibilityRole="button"
+                              accessibilityState={{selected: style === option.value}}>
+                              <Text style={[styles.styleMenuText, style === option.value && styles.selectedStyleMenuText]}>{option.label}</Text>
+                              {style === option.value ? <Text style={styles.styleMenuCheck}>✓</Text> : null}
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      ) : null}
+                      <TouchableOpacity
+                        style={styles.stylePickerButton}
+                        onPress={() => {
+                          if (!showStyleMenu) {
+                            Keyboard.dismiss();
+                            scrollToResult();
+                          }
+                          setShowStyleMenu(current => !current);
+                        }}
+                        disabled={generating}
+                        accessibilityRole="button"
+                        accessibilityLabel={`回复风格，当前${selectedStyleLabel}`}
+                        accessibilityState={{expanded: showStyleMenu}}>
+                        <Text style={styles.stylePickerCaption}>风格</Text>
+                        <Text style={styles.stylePickerValue}>{selectedStyleLabel}</Text>
+                        <Text style={styles.stylePickerChevron}>{showStyleMenu ? '⌄' : '⌃'}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
 
                   {resultStale && !generating ? <Text style={styles.stoppedHint}>选项已修改，点“重新生成”后生效。</Text> : null}
                   {error ? <Text style={styles.error}>{error}</Text> : null}
                   {stopped && !generating ? <Text style={styles.stoppedHint}>生成已停止，已生成内容仍可编辑或采用。</Text> : null}
                 </ScrollView>
+                )}
 
                 {!editingGeneratedText ? (
                   <View style={styles.footer}>
@@ -489,7 +538,7 @@ const createStyles = (theme: ReturnType<typeof useTheme>, fontSizes: ReturnType<
   close: {color: theme.secondaryText, fontSize: 30, lineHeight: 32, paddingHorizontal: SPACING.xs},
   loader: {flex: 1, alignSelf: 'center'},
   scrollView: {flex: 1},
-  content: {paddingHorizontal: SPACING.lg, paddingBottom: SPACING.md},
+  content: {flexGrow: 1, paddingHorizontal: SPACING.lg, paddingBottom: SPACING.md},
   targetCard: {
     padding: SPACING.md,
     marginTop: SPACING.sm,
@@ -531,17 +580,68 @@ const createStyles = (theme: ReturnType<typeof useTheme>, fontSizes: ReturnType<
   resultHeaderActions: {flexDirection: 'row', alignItems: 'center', gap: SPACING.xs},
   resultTitle: {color: theme.text, fontSize: FONT_SIZE.md, fontWeight: '700'},
   resultEditAction: {color: theme.primary, fontSize: FONT_SIZE.sm, fontWeight: '600', paddingVertical: SPACING.xs, paddingHorizontal: SPACING.sm},
-  styleOptions: {flexDirection: 'row', gap: SPACING.sm, paddingRight: SPACING.lg},
-  styleChip: {
-    paddingHorizontal: SPACING.md,
+  // 结果区撑满弹窗剩余高度，避免下方留出大块空白
+  resultArea: {
+    flexGrow: 1,
+    minHeight: 200,
+    padding: SPACING.md,
+    backgroundColor: theme.background,
+    borderColor: theme.border,
+    borderWidth: 1,
+    borderRadius: BORDER_RADIUS.md,
+    overflow: 'visible',
+  },
+  stylePickerAnchor: {
+    alignSelf: 'flex-start',
+    position: 'relative',
+    zIndex: 20,
+    elevation: 20,
+    marginTop: SPACING.sm,
+  },
+  stylePickerButton: {
+    minHeight: 34,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.xs,
+    paddingHorizontal: SPACING.sm,
     paddingVertical: SPACING.xs,
     backgroundColor: theme.placeholderBackground,
     borderRadius: BORDER_RADIUS.xl,
     borderWidth: 1,
     borderColor: theme.border,
   },
-  selectedStyleChip: {backgroundColor: theme.primary, borderColor: theme.primary},
-  styleText: {color: theme.text, fontSize: FONT_SIZE.sm},
+  stylePickerCaption: {color: theme.secondaryText, fontSize: FONT_SIZE.xs},
+  stylePickerValue: {color: theme.text, fontSize: FONT_SIZE.sm, fontWeight: '600'},
+  stylePickerChevron: {color: theme.primary, fontSize: FONT_SIZE.sm, fontWeight: '700'},
+  styleMenu: {
+    position: 'absolute',
+    left: 0,
+    bottom: '100%',
+    marginBottom: SPACING.xs,
+    minWidth: 170,
+    paddingVertical: SPACING.xs,
+    backgroundColor: theme.cardBackground,
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: 1,
+    borderColor: theme.border,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 3},
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 12,
+    zIndex: 21,
+  },
+  styleMenuItem: {
+    minHeight: 36,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.xs,
+  },
+  styleMenuText: {color: theme.text, fontSize: FONT_SIZE.sm},
+  selectedStyleMenuText: {color: theme.primary, fontWeight: '700'},
+  styleMenuCheck: {color: theme.primary, fontSize: FONT_SIZE.sm, fontWeight: '700'},
   input: {
     color: theme.text,
     backgroundColor: theme.background,
@@ -560,10 +660,21 @@ const createStyles = (theme: ReturnType<typeof useTheme>, fontSizes: ReturnType<
   draftPreview: {marginTop: SPACING.xs, padding: SPACING.sm, backgroundColor: theme.background, borderRadius: BORDER_RADIUS.md},
   draftPreviewLabel: {color: theme.secondaryText, fontSize: FONT_SIZE.xs, marginBottom: SPACING.xs},
   draftText: {color: theme.secondaryText, fontSize: fontSizes.content, lineHeight: fontSizes.lineHeight},
-  resultPreview: {minHeight: 124},
+  editingBody: {flex: 1, paddingHorizontal: SPACING.lg, paddingBottom: SPACING.md},
+  editingResultArea: {flex: 1, minHeight: 0},
+  resultPreview: {flexGrow: 1, minHeight: 140},
   resultText: {color: theme.text, fontSize: fontSizes.content, lineHeight: fontSizes.lineHeight},
   resultPlaceholder: {color: theme.secondaryText, fontSize: fontSizes.content, lineHeight: fontSizes.lineHeight},
-  resultInput: {minHeight: 124, maxHeight: 190, fontSize: fontSizes.content, lineHeight: fontSizes.lineHeight, textAlignVertical: 'top'},
+  resultInput: {
+    flex: 1,
+    borderWidth: 0,
+    backgroundColor: 'transparent',
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    fontSize: fontSizes.content,
+    lineHeight: fontSizes.lineHeight,
+    textAlignVertical: 'top',
+  },
   generationStatus: {flexDirection: 'row', alignItems: 'center', gap: SPACING.sm},
   stopButton: {marginLeft: 'auto', paddingHorizontal: SPACING.md, paddingVertical: SPACING.xs},
   stopButtonText: {color: theme.error, fontSize: FONT_SIZE.sm, fontWeight: '600'},

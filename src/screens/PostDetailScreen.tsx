@@ -8,14 +8,12 @@ import {
   Image,
   TouchableOpacity,
   ScrollView,
-  Dimensions,
   Alert,
   Modal,
   TextInput,
   KeyboardAvoidingView,
   Platform,
   Animated,
-  Easing,
   Share,
   ActionSheetIOS,
   AppState,
@@ -23,6 +21,7 @@ import {
   LayoutAnimation,
   UIManager,
 } from 'react-native';
+import type {GestureResponderEvent} from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {useRoute, useNavigation} from '@react-navigation/native';
 import {WebView} from 'react-native-webview';
@@ -34,6 +33,7 @@ import {Post, Reply, Attachment, Like} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import ImageViewer from '../components/ImageViewer';
+import EggThrowEffect from '../components/EggThrowEffect';
 import {cacheManager} from '../services/cacheManager';
 import {saveBrowsingHistory} from './BrowsingHistoryScreen';
 import {sendMessage} from '../services/dataFetcher';
@@ -377,17 +377,9 @@ const PostDetailScreen: React.FC = () => {
   const [permissions, setPermissions] = useState<PostPermissions | null>(null);
   const [webViewKey, setWebViewKey] = useState(0); // 用于强制刷新WebView
   const appStateRef = useRef(AppState.currentState);
-  const [throwingEgg, setThrowingEgg] = useState(false);
-  const [exploding, setExploding] = useState(false);
-  const [eggButtonLayout, setEggButtonLayout] = useState({x: 0, y: 0});
-  const [explosionPosition, setExplosionPosition] = useState({x: 0, y: 0});
-  const eggButtonRef = useRef<any>(null);
-  const eggAnimX = useRef(new Animated.Value(0)).current;
-  const eggAnimY = useRef(new Animated.Value(0)).current;
-  const eggOpacity = useRef(new Animated.Value(0)).current;
-  const eggRotate = useRef(new Animated.Value(0)).current;
-  const explosionScale = useRef(new Animated.Value(0)).current;
-  const explosionOpacity = useRef(new Animated.Value(0)).current;
+  const [eggThrowOrigin, setEggThrowOrigin] = useState<{x: number; y: number} | null>(null);
+  const eggButtonRef = useRef<View>(null);
+  const eggButtonCenterRef = useRef<{x: number; y: number} | null>(null);
   const modalAnim = useRef(new Animated.Value(0)).current;
   const filterToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const filterToggleAnchorRef = useRef<View>(null);
@@ -426,24 +418,6 @@ const PostDetailScreen: React.FC = () => {
   useEffect(() => {
     ratingCommentRef.current = ratingComment;
   }, [ratingComment]);
-
-  // 蛋清飞溅粒子动画（20个方向，模拟蛋黄和蛋清）
-  const splashParticles = useRef(
-    Array.from({length: 20}, () => ({
-      x: new Animated.Value(0),
-      y: new Animated.Value(0),
-      opacity: new Animated.Value(0),
-      scale: new Animated.Value(1),
-    }))
-  ).current;  // 蛋壳碎片动画（6个碎片）
-  const shellParticles = useRef(
-    Array.from({length: 6}, () => ({
-      x: new Animated.Value(0),
-      y: new Animated.Value(0),
-      opacity: new Animated.Value(0),
-      rotate: new Animated.Value(0),
-    }))
-  ).current;
 
   useEffect(() => {
     if (settingsLoading) return;
@@ -1423,7 +1397,17 @@ const PostDetailScreen: React.FC = () => {
     }).start();
   };
 
-  const handleDislikePress = () => {
+  const measureEggButton = useCallback(() => {
+    // 按下时刷新，避免使用滚动或吸顶前的旧位置；松手后不再等待测量。
+    eggButtonCenterRef.current = null;
+    eggButtonRef.current?.measureInWindow((x, y, width, height) => {
+      if (width > 0 && height > 0) {
+        eggButtonCenterRef.current = {x: x + width / 2, y: y + height / 2};
+      }
+    });
+  }, []);
+
+  const handleDislikePress = (event: GestureResponderEvent) => {
     // 检查写权限
     // if (permissions && !permissions.write.hasPerm) {
     //   Alert.alert(
@@ -1434,20 +1418,15 @@ const PostDetailScreen: React.FC = () => {
     //   return;
     // }
     
-    // 获取按钮在屏幕上的绝对位置
-    if (eggButtonRef.current) {
-      eggButtonRef.current.measureInWindow((x: number, y: number, width: number, height: number) => {
-        setEggButtonLayout({x, y});
-        impactMedium();
-        // 播放扔鸡蛋动画，直接传递坐标值
-        playThrowEggAnimation(x, y);
-      });
-    } else {
-      // 如果ref不可用，使用默认位置播放动画
-      impactMedium();
-      playThrowEggAnimation(eggButtonLayout.x, eggButtonLayout.y);
-    }
-    
+    const center = eggButtonCenterRef.current;
+    // 极快的点击尚未完成测量时，直接从本次触点发射，不额外等待原生回调。
+    const touch = event?.nativeEvent;
+    const touchOrigin = touch && Number.isFinite(touch.pageX) && Number.isFinite(touch.pageY)
+      ? {x: touch.pageX, y: touch.pageY}
+      : {x: SCREEN_WIDTH * 0.75, y: SCREEN_HEIGHT * 0.65};
+    setEggThrowOrigin(center ? {...center} : touchOrigin);
+    impactMedium();
+
     // 同时显示弹窗
     setRatingType('dislike');
     setRatingScore(null); // 默认不选择评分
@@ -1460,208 +1439,6 @@ const PostDetailScreen: React.FC = () => {
     }).start();
   };
 
-  const playThrowEggAnimation = (buttonX: number, buttonY: number) => {
-    // 重置动画值
-    eggAnimX.setValue(0);
-    eggAnimY.setValue(0);
-    eggRotate.setValue(0);
-    eggOpacity.setValue(1);
-    explosionScale.setValue(0);
-    explosionOpacity.setValue(0);
-    splashParticles.forEach(particle => {
-      particle.x.setValue(0);
-      particle.y.setValue(0);
-      particle.opacity.setValue(0);
-      particle.scale.setValue(1);
-    });
-    shellParticles.forEach(particle => {
-      particle.x.setValue(0);
-      particle.y.setValue(0);
-      particle.opacity.setValue(0);
-      particle.rotate.setValue(0);
-    });
-    setThrowingEgg(true);
-    setExploding(false);
-
-    // 定义飞行距离
-    const flyDistanceX = -180;
-    const flyDistanceY = -300;
-
-    // 抛物线动画：向左上方飞向主帖子内容（带旋转）
-    Animated.parallel([
-      // X轴移动（向左，使用线性让水平速度恒定）
-      Animated.timing(eggAnimX, {
-        toValue: flyDistanceX,
-        duration: 800,
-        easing: Easing.linear,
-        useNativeDriver: true,
-      }),
-      // Y轴移动（模拟向上抛出受重力影响减速）
-      Animated.timing(eggAnimY, {
-        toValue: flyDistanceY,
-        duration: 800,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
-      }),
-      // 旋转动画（逆时针旋转2圈）
-      Animated.timing(eggRotate, {
-        toValue: 1,
-        duration: 800,
-        easing: Easing.linear,
-        useNativeDriver: true,
-      }),
-      // 透明度动画（飞行过程保持可见）
-      Animated.sequence([
-        Animated.delay(700),
-        Animated.timing(eggOpacity, {
-          toValue: 0,
-          duration: 100,
-          useNativeDriver: true,
-        }),
-      ]),
-    ]).start(() => {
-      // 计算爆炸位置（鸡蛋最终位置），直接使用传入的坐标
-      const explosionX = buttonX + flyDistanceX;
-      const explosionY = buttonY + flyDistanceY;
-      setExplosionPosition({x: explosionX, y: explosionY});
-      
-      // 鸡蛋消失后播放爆炸动画
-      setThrowingEgg(false);
-      setExploding(true);
-      impactMedium();
-      
-      // 20个方向的蛋清/蛋黄飞溅粒子
-      const splashAnimations = splashParticles.map((particle, index) => {
-        // 前5个是蛋黄（大，粘稠），后15个是蛋清（小，飞得远）
-        const isYolk = index < 5;
-        const angle = (Math.random() * 360) * Math.PI / 180; 
-        const distance = isYolk ? 30 + Math.random() * 30 : 60 + Math.random() * 80;
-        
-        const targetX = Math.cos(angle) * distance;
-        const targetY = Math.sin(angle) * distance;
-        
-        const particleSize = isYolk ? 1.2 + Math.random() * 0.5 : 0.5 + Math.random() * 0.8;
-        
-        // 模拟流体效果：飞溅 -> 停顿 -> 缓慢流下并消失
-        return Animated.sequence([
-          // 1. 快速飞溅
-          Animated.parallel([
-            Animated.timing(particle.x, {
-              toValue: targetX,
-              duration: 300,
-              easing: Easing.out(Easing.cubic),
-              useNativeDriver: true,
-            }),
-            Animated.timing(particle.y, {
-              toValue: targetY,
-              duration: 300,
-              easing: Easing.out(Easing.cubic),
-              useNativeDriver: true,
-            }),
-            Animated.timing(particle.opacity, {
-              toValue: 0.9, // 略微透明
-              duration: 50,
-              useNativeDriver: true,
-            }),
-            Animated.timing(particle.scale, {
-              toValue: particleSize,
-              duration: 300,
-              useNativeDriver: true,
-            }),
-          ]),
-          // 2. 粘在屏幕上稍微停顿
-          Animated.delay(100 + Math.random() * 200),
-          // 3. 缓慢流下并消失
-          Animated.parallel([
-            Animated.timing(particle.y, {
-              toValue: targetY + 50 + Math.random() * 50, // 向下流淌
-              duration: 800,
-              easing: Easing.in(Easing.quad),
-              useNativeDriver: true,
-            }),
-            Animated.timing(particle.opacity, {
-              toValue: 0,
-              duration: 800,
-              useNativeDriver: true,
-            }),
-          ])
-        ]);
-      });
-      
-      // 6个蛋壳碎片（白色，带旋转）
-      const shellAnimations = shellParticles.map((particle, index) => {
-        const angle = (Math.random() * 360) * Math.PI / 180;
-        const distance = 50 + Math.random() * 60;
-        const targetX = Math.cos(angle) * distance;
-        const targetY = Math.sin(angle) * distance;
-        const rotation = (Math.random() - 0.5) * 720;
-        
-        return Animated.parallel([
-          Animated.timing(particle.x, {
-            toValue: targetX,
-            duration: 600,
-            easing: Easing.out(Easing.cubic),
-            useNativeDriver: true,
-          }),
-          Animated.timing(particle.y, {
-            toValue: targetY + 100, // 蛋壳受重力影响更大，落得更远
-            duration: 600,
-            easing: Easing.bezier(0.25, 0.46, 0.45, 0.94),
-            useNativeDriver: true,
-          }),
-          Animated.sequence([
-            Animated.timing(particle.opacity, {
-              toValue: 1,
-              duration: 50,
-              useNativeDriver: true,
-            }),
-            Animated.delay(300),
-            Animated.timing(particle.opacity, {
-              toValue: 0,
-              duration: 300,
-              useNativeDriver: true,
-            }),
-          ]),
-          Animated.timing(particle.rotate, {
-            toValue: rotation,
-            duration: 600,
-            easing: Easing.out(Easing.quad),
-            useNativeDriver: true,
-          }),
-        ]);
-      });
-      
-      Animated.parallel([
-        // 爆炸放大
-        Animated.timing(explosionScale, {
-          toValue: 1.5,
-          duration: 300,
-          easing: Easing.out(Easing.back(1.5)),
-          useNativeDriver: true,
-        }),
-        // 爆炸透明度
-        Animated.sequence([
-          Animated.timing(explosionOpacity, {
-            toValue: 1,
-            duration: 50,
-            useNativeDriver: true,
-          }),
-          Animated.delay(100),
-          Animated.timing(explosionOpacity, {
-            toValue: 0,
-            duration: 200,
-            useNativeDriver: true,
-          }),
-        ]),
-        // 蛋清飞溅
-        ...splashAnimations,
-        // 蛋壳碎片
-        ...shellAnimations,
-      ]).start(() => {
-        setExploding(false);
-      });
-    });
-  };
   const closeModal = () => {
     Animated.timing(modalAnim, {
       toValue: 0,
@@ -2915,6 +2692,8 @@ const PostDetailScreen: React.FC = () => {
         <TouchableOpacity
           ref={eggButtonRef}
           style={[styles.actionIconButton, {backgroundColor: theme.background, borderColor: theme.border}]}
+          onLayout={measureEggButton}
+          onPressIn={measureEggButton}
           onPress={handleDislikePress}
           activeOpacity={0.7}
           accessibilityRole="button"
@@ -3215,109 +2994,8 @@ const PostDetailScreen: React.FC = () => {
         animationType="none"
         onRequestClose={closeModal}
       >
-        {/* 飞行的鸡蛋动画（带旋转） */}
-        {throwingEgg && eggButtonLayout.x !== 0 && (
-          <Animated.View
-            style={[
-              styles.flyingEgg,
-              {
-                left: eggButtonLayout.x,
-                top: eggButtonLayout.y,
-                opacity: eggOpacity,
-                transform: [
-                  { translateX: eggAnimX },
-                  { translateY: eggAnimY },
-                  { rotate: eggRotate.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: ['0deg', '-720deg']
-                    }) 
-                  }
-                ]
-              }
-            ]}
-          >
-            <Text style={styles.flyingEggEmoji}>🥚</Text>
-          </Animated.View>
-        )}
-        
-        {/* 爆炸效果 */}
-        {exploding && (
-          <>
-            <Animated.View
-              style={[
-                styles.explosion,
-                {
-                  left: explosionPosition.x - 20,
-                  top: explosionPosition.y - 20,
-                  opacity: explosionOpacity,
-                  transform: [
-                    { scale: explosionScale }
-                  ]
-                }
-              ]}
-            >
-              <Text style={styles.explosionEmoji}>💥</Text>
-            </Animated.View>
-            
-            {/* 蛋清飞溅粒子（前5个蛋黄，后15个蛋清） */}
-            {splashParticles.map((particle, index) => {
-              const isYolk = index < 5;
-              return (
-                <Animated.View
-                  key={`splash-${index}`}
-                  style={[
-                    styles.splashParticle,
-                    {
-                      left: explosionPosition.x,
-                      top: explosionPosition.y,
-                      opacity: particle.opacity,
-                      transform: [
-                        { translateX: particle.x },
-                        { translateY: particle.y },
-                        { scale: particle.scale },
-                      ]
-                    }
-                  ]}
-                >
-                  <View style={[
-                    styles.splashDot,
-                    { 
-                      backgroundColor: isYolk ? '#FF8C00' : '#FFFFE0', // 深橙色蛋黄，淡黄色蛋清
-                      width: isYolk ? 16 : 10,
-                      height: isYolk ? 16 : 10,
-                      borderRadius: isYolk ? 8 : 5,
-                      opacity: isYolk ? 1 : 0.8,
-                    }
-                  ]} />
-                </Animated.View>
-              );
-            })}
-            
-            {/* 蛋壳碎片（白色） */}
-            {shellParticles.map((particle, index) => (
-              <Animated.View
-                key={`shell-${index}`}
-                style={[
-                  styles.shellParticle,
-                  {
-                    left: explosionPosition.x,
-                    top: explosionPosition.y,
-                    opacity: particle.opacity,
-                    transform: [
-                      { translateX: particle.x },
-                      { translateY: particle.y },
-                      { rotate: particle.rotate.interpolate({
-                        inputRange: [0, 360],
-                        outputRange: ['0deg', '360deg']
-                      })},
-                    ]
-                  }
-                ]}
-              >
-                <View style={styles.shellFragment} />
-              </Animated.View>
-            ))}
-          </>
+        {ratingModalVisible && ratingType === 'dislike' && eggThrowOrigin && (
+          <EggThrowEffect origin={eggThrowOrigin} />
         )}
 
         <KeyboardAvoidingView
@@ -4123,62 +3801,6 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZE.sm,
     lineHeight: FONT_SIZE.xl,
     marginBottom: SPACING.xs,
-  },
-  flyingEgg: {
-    position: 'absolute',
-    zIndex: 99999,
-    elevation: 99999,
-  },
-  flyingEggEmoji: {
-    fontSize: responsiveSize(32, 36, 40, 44),
-  },
-  explosion: {
-    position: 'absolute',
-    zIndex: 100000,
-    elevation: 100000,
-  },
-  explosionEmoji: {
-    fontSize: responsiveSize(48, 56, 64, 72),
-  },
-  splashParticle: {
-    position: 'absolute',
-    zIndex: 100001,
-    elevation: 100001,
-  },
-  splashDot: {
-    width: responsiveSize(10, 12, 14, 16),
-    height: responsiveSize(10, 12, 14, 16),
-    borderRadius: responsiveSize(5, 6, 7, 8),
-    backgroundColor: '#FFD700',
-    shadowColor: '#FFA500',
-    shadowOffset: {
-      width: 0,
-      height: 0,
-    },
-    shadowOpacity: 0.9,
-    shadowRadius: 6,
-    elevation: 8,
-  },
-  shellParticle: {
-    position: 'absolute',
-    zIndex: 100002,
-    elevation: 100002,
-  },
-  shellFragment: {
-    width: responsiveSize(12, 14, 16, 18),
-    height: responsiveSize(8, 10, 12, 14),
-    borderRadius: 2,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#F0F0F0',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.3,
-    shadowRadius: 3,
-    elevation: 5,
   },
   captchaModalOverlay: {
     flex: 1,
