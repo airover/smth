@@ -22,6 +22,7 @@ import {useAuth} from '../context/AuthContext'; // 导入 useAuth
 import {loginMSite, logoutMSite, checkMSiteLoginStatus, verifyMSiteLoginStatus} from '../services/api';
 import {isMSiteEnabled, setMSiteEnabled} from '../services/auth';
 import {getSavedCredentials} from '../utils/storage';
+import {APP_VERSION} from '../utils/appVersion';
 import CaptchaScreen from './CaptchaScreen';
 import AiReplyConfigModal from '../components/AiReplyConfigModal';
 import {useTheme} from '../components/ThemedComponents';
@@ -198,7 +199,7 @@ const SettingsDetailScreen: React.FC = () => {
     const email = 'airover@gmail.com';
 const subject = encodeURIComponent('海月水母用户反馈');
     const body = encodeURIComponent(
-      `感谢您使用海月水母！\n\n请在下方描述您的问题或建议：\n\n\n\n---\n应用版本：1.0.6\n用户ID：${username || '未登录'}\n系统信息：${Platform.OS} ${Platform.Version}`
+      `感谢您使用海月水母！\n\n请在下方描述您的问题或建议：\n\n\n\n---\n应用版本：${APP_VERSION}\n用户ID：${username || '未登录'}\n系统信息：${Platform.OS} ${Platform.Version}`
     );    
     const mailtoUrl = `mailto:${email}?subject=${subject}&body=${body}`;
     
@@ -442,7 +443,7 @@ const subject = encodeURIComponent('海月水母用户反馈');
           <View style={[styles.card, {backgroundColor: theme.cardBackground}]}>
             <View style={styles.infoRow}>
               <Text style={[styles.infoLabel, {color: theme.text}]}>应用版本</Text>
-              <Text style={[styles.infoValue, {color: theme.secondaryText}]}>1.0.6</Text>
+              <Text style={[styles.infoValue, {color: theme.secondaryText}]}>{APP_VERSION}</Text>
             </View>
             <View style={[styles.divider, {backgroundColor: theme.border}]} />
             <TouchableOpacity 

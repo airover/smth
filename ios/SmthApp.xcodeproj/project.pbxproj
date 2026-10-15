@@ -17,6 +17,7 @@
 		AA000003SPLASH000000000003 /* SplashScreenManagerBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = AA000004SPLASH000000000004 /* SplashScreenManagerBridge.m */; };
 		ACCA055EF22E0B08ECDF2ACA /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = 3A913EB68DAF10D62269CDCD /* InfoPlist.strings */; };
 		D302282B9126727FD73D3346 /* QRCodeScanner.m in Sources */ = {isa = PBXBuildFile; fileRef = E66E8A3D03B802227B1737AF /* QRCodeScanner.m */; };
+		F5A8C70B6D2E4A1C8F9032AB /* AppInfoModule.m in Sources */ = {isa = PBXBuildFile; fileRef = F5A8C70B6D2E4A1C8F9032AC /* AppInfoModule.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -36,6 +37,7 @@
 		E66E8A3D03B802227B1737AF /* QRCodeScanner.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = QRCodeScanner.m; path = SmthApp/QRCodeScanner.m; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		F2C424E27E67934B81ABDF8C /* InfoPlist.strings */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = InfoPlist.strings; path = "SmthApp/zh-Hans.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
+		F5A8C70B6D2E4A1C8F9032AC /* AppInfoModule.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SmthApp/AppInfoModule.m; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -62,6 +64,7 @@
 				F2C424E27E67934B81ABDF8C /* InfoPlist.strings */,
 				E032B04DB695BF4599B759B8 /* QRCodeScanner.h */,
 				E66E8A3D03B802227B1737AF /* QRCodeScanner.m */,
+				F5A8C70B6D2E4A1C8F9032AC /* AppInfoModule.m */,
 				AA000002SPLASH000000000002 /* SplashScreenManager.swift */,
 				AA000004SPLASH000000000004 /* SplashScreenManagerBridge.m */,
 			);
@@ -272,6 +275,7 @@
 			files = (
 				761780ED2CA45674006654EE /* AppDelegate.swift in Sources */,
 				D302282B9126727FD73D3346 /* QRCodeScanner.m in Sources */,
+				F5A8C70B6D2E4A1C8F9032AB /* AppInfoModule.m in Sources */,
 				AA000001SPLASH000000000001 /* SplashScreenManager.swift in Sources */,
 				AA000003SPLASH000000000003 /* SplashScreenManagerBridge.m in Sources */,
 			);
