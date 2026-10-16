@@ -8,12 +8,13 @@ import {
   RefreshControl,
 } from 'react-native';
 import {useNavigation, useFocusEffect} from '@react-navigation/native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import {getLocalCacheContext, isAccountCacheCurrent, readAccountItem, writeAccountItem, removeAccountItem, subscribeAccountCacheChange} from '../services/accountCache';
 import {SwipeListView} from 'react-native-swipe-list-view';
 import {formatRelativeTime} from '../utils/timeFormat';
 import {useTheme, SkeletonList, EmptyState} from '../components/ThemedComponents';
 import {HistoryIcon, ChevronRightIcon} from '../components/SvgIcons';
 import {getCardElevation} from '../utils/theme';
+import {useReadPosts} from '../context/ReadPostsContext';
 import {
   SPACING,
   FONT_SIZE,
@@ -37,6 +38,7 @@ const MAX_HISTORY_ITEMS = 100; // 最多保存100条历史记录
 
 const BrowsingHistoryScreen: React.FC = () => {
   const navigation = useNavigation<any>();
+  const {refreshReadPosts} = useReadPosts();
   const theme = useTheme();
   const [history, setHistory] = useState<BrowsingHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -44,6 +46,10 @@ const BrowsingHistoryScreen: React.FC = () => {
 
   useEffect(() => {
     loadHistory();
+    return subscribeAccountCacheChange(() => {
+      setHistory([]);
+      loadHistory();
+    });
   }, []);
 
   // 页面获得焦点时重新加载
@@ -55,12 +61,16 @@ const BrowsingHistoryScreen: React.FC = () => {
 
   const loadHistory = async () => {
     try {
-      const jsonValue = await AsyncStorage.getItem(BROWSING_HISTORY_KEY);
+      const context = await getLocalCacheContext();
+      const jsonValue = await readAccountItem(BROWSING_HISTORY_KEY, context);
+      if (context && !isAccountCacheCurrent(context)) return;
       if (jsonValue != null) {
         const historyData: BrowsingHistoryItem[] = JSON.parse(jsonValue);
         // 按时间倒序排序
         historyData.sort((a, b) => b.timestamp - a.timestamp);
         setHistory(historyData);
+      } else {
+        setHistory([]);
       }
     } catch (e) {
       console.error('Failed to load browsing history:', e);
@@ -86,8 +96,11 @@ const BrowsingHistoryScreen: React.FC = () => {
           style: 'destructive',
           onPress: async () => {
             try {
-              await AsyncStorage.removeItem(BROWSING_HISTORY_KEY);
-              await AsyncStorage.removeItem(READ_POSTS_IDS_KEY);
+              const context = await getLocalCacheContext();
+              await removeAccountItem(BROWSING_HISTORY_KEY, context);
+              await removeAccountItem(READ_POSTS_IDS_KEY, context);
+              if (context && !isAccountCacheCurrent(context)) return;
+              await refreshReadPosts();
               setHistory([]);
               Alert.alert('成功', '浏览历史已清除');
             } catch (error) {
@@ -102,18 +115,25 @@ const BrowsingHistoryScreen: React.FC = () => {
 
   const handleDeleteItem = async (postId: string) => {
     try {
+      const context = await getLocalCacheContext();
+      if (!context) return;
       // 1. 从详细信息中删除
-      const newHistory = history.filter(item => item.postId !== postId);
-      await AsyncStorage.setItem(BROWSING_HISTORY_KEY, JSON.stringify(newHistory));
+      const storedHistory = await readAccountItem(BROWSING_HISTORY_KEY, context);
+      if (!isAccountCacheCurrent(context)) return;
+      const currentHistory: BrowsingHistoryItem[] = storedHistory ? JSON.parse(storedHistory) : [];
+      const newHistory = currentHistory.filter(item => item.postId !== postId);
+      await writeAccountItem(BROWSING_HISTORY_KEY, JSON.stringify(newHistory), context);
+      if (!isAccountCacheCurrent(context)) return;
       setHistory(newHistory);
       
       // 2. 从已读ID集合中删除
-      const idsJsonValue = await AsyncStorage.getItem(READ_POSTS_IDS_KEY);
+      const idsJsonValue = await readAccountItem(READ_POSTS_IDS_KEY, context);
       if (idsJsonValue) {
         const readPostsIds: string[] = JSON.parse(idsJsonValue);
         const newIds = readPostsIds.filter(id => id !== postId);
-        await AsyncStorage.setItem(READ_POSTS_IDS_KEY, JSON.stringify(newIds));
+        await writeAccountItem(READ_POSTS_IDS_KEY, JSON.stringify(newIds), context);
       }
+      await refreshReadPosts();
     } catch (error) {
       console.error('Delete history item error:', error);
       Alert.alert('错误', '删除失败');
@@ -315,8 +335,10 @@ export default BrowsingHistoryScreen;
 // 导出保存浏览历史的工具函数
 export const saveBrowsingHistory = async (item: Omit<BrowsingHistoryItem, 'timestamp'>) => {
   try {
+    const context = await getLocalCacheContext();
+    if (!context) return;
     // 1. 更新详细信息存储
-    const jsonValue = await AsyncStorage.getItem(BROWSING_HISTORY_KEY);
+    const jsonValue = await readAccountItem(BROWSING_HISTORY_KEY, context);
     let history: BrowsingHistoryItem[] = jsonValue ? JSON.parse(jsonValue) : [];
     
     // 移除已存在的相同帖子（如果有）
@@ -333,15 +355,17 @@ export const saveBrowsingHistory = async (item: Omit<BrowsingHistoryItem, 'times
       history = history.slice(0, MAX_HISTORY_ITEMS);
     }
     
-    await AsyncStorage.setItem(BROWSING_HISTORY_KEY, JSON.stringify(history));
+    if (!isAccountCacheCurrent(context)) return;
+    await writeAccountItem(BROWSING_HISTORY_KEY, JSON.stringify(history), context);
     
     // 2. 使用读-改-写模式同步更新已读帖子ID集合，避免数据丢失
-    const idsJsonValue = await AsyncStorage.getItem(READ_POSTS_IDS_KEY);
+    const idsJsonValue = await readAccountItem(READ_POSTS_IDS_KEY, context);
     const readPostsIds: string[] = idsJsonValue ? JSON.parse(idsJsonValue) : [];
     
     if (!readPostsIds.includes(item.postId)) {
       readPostsIds.push(item.postId);
-      await AsyncStorage.setItem(READ_POSTS_IDS_KEY, JSON.stringify(readPostsIds));
+      if (!isAccountCacheCurrent(context)) return;
+      await writeAccountItem(READ_POSTS_IDS_KEY, JSON.stringify(readPostsIds), context);
     }
     
     console.log('[BrowsingHistory] Saved:', item.title);

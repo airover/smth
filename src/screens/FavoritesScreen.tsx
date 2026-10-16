@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useCallback, useMemo} from 'react';
+import React, {useState, useEffect, useCallback, useMemo, useRef} from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
 import {SwipeListView} from 'react-native-swipe-list-view';
 import {useNavigation} from '@react-navigation/native';
 import {getFavoriteTopics, getFavoriteBoards} from '../services/dataFetcher';
+import {getAccountCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
 import {markFavoriteTopicRead, removeFavoriteTopic} from '../services/api';
 import {Board} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
@@ -71,16 +72,32 @@ const FavoritesScreen: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('topics');
   const [topics, setTopics] = useState<any[]>([]);
   const [boards, setBoards] = useState<Board[]>([]);
+  const [topicsLoadError, setTopicsLoadError] = useState(false);
+  const [boardsLoadError, setBoardsLoadError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [topicsPage, setTopicsPage] = useState(0);
   const [hasMoreTopics, setHasMoreTopics] = useState(false);
   const [removingTopic, setRemovingTopic] = useState<string | null>(null);
+  const reloadForAccountRef = useRef<() => void>(() => {});
+
+  useEffect(() => subscribeAccountCacheChange(() => {
+    setTopics([]);
+    setBoards([]);
+    setTopicsPage(0);
+    setTopicsLoadError(false);
+    setBoardsLoadError(false);
+    void getAccountCacheContext().then(context => {
+      if (context) reloadForAccountRef.current();
+    });
+  }), []);
 
   // 加载收藏的文章
   const loadTopics = useCallback(async (page: number = 0, _isRefresh: boolean = false) => {
     try {
+      const accountContext = await getAccountCacheContext();
+      if (!accountContext) return;
       if (page === 0) {
         setLoading(true);
       } else {
@@ -88,9 +105,11 @@ const FavoritesScreen: React.FC = () => {
       }
       
       const result = await getFavoriteTopics(page, 20);
+      if (!isAccountCacheCurrent(accountContext)) return;
       
       if (page === 0) {
         setTopics(result.topics);
+        setTopicsLoadError(false);
       } else {
         setTopics(prev => [...prev, ...result.topics]);
       }
@@ -100,7 +119,7 @@ const FavoritesScreen: React.FC = () => {
     } catch (error: any) {
       console.error('Load favorite topics error:', error);
       
-      if (error.message === 'NOT_LOGGED_IN') {
+      if (error.message === 'NOT_LOGGED_IN' || error.message === 'LOGIN_EXPIRED') {
         Alert.alert(
           '未登录',
           '请先登录后查看收藏',
@@ -116,8 +135,8 @@ const FavoritesScreen: React.FC = () => {
             },
           ]
         );
-      } else {
-        Alert.alert('加载失败', error.message || '请稍后重试');
+      } else if (page === 0) {
+        setTopicsLoadError(true);
       }
     } finally {
       setLoading(false);
@@ -129,15 +148,21 @@ const FavoritesScreen: React.FC = () => {
   // 加载收藏的版面
   const loadBoards = useCallback(async (forceRefresh: boolean = false, silent: boolean = false) => {
     try {
+      const accountContext = await getAccountCacheContext();
+      if (!accountContext) return;
       if (!silent) {
         setLoading(true);
       }
       const result = await getFavoriteBoards(forceRefresh);
-      setBoards(result);
+      if (isAccountCacheCurrent(accountContext)) {
+        setBoards(result);
+        setBoardsLoadError(false);
+      }
     } catch (error: any) {
       console.error('Load favorite boards error:', error);
+      if (error.message === 'CACHE_REQUEST_INVALIDATED') return;
       
-      if (error.message === 'NOT_LOGGED_IN' && !silent) {
+      if ((error.message === 'NOT_LOGGED_IN' || error.message === 'LOGIN_EXPIRED') && !silent) {
         Alert.alert(
           '未登录',
           '请先登录后查看收藏',
@@ -153,14 +178,19 @@ const FavoritesScreen: React.FC = () => {
             },
           ]
         );
-      } else if (!silent) {
-        Alert.alert('加载失败', error.message || '请稍后重试');
+      } else {
+        setBoardsLoadError(true);
       }
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   }, [navigation]);
+
+  reloadForAccountRef.current = () => {
+    if (activeTab === 'topics') void loadTopics(0);
+    else void loadBoards(false, true);
+  };
 
   // 初始加载
   useEffect(() => {
@@ -397,6 +427,9 @@ const FavoritesScreen: React.FC = () => {
     }
 
     if (activeTab === 'topics') {
+      if (topicsLoadError) {
+        return <EmptyState title="加载失败" subtitle="下拉重试" actionLabel="重试" onAction={() => loadTopics(0)} />;
+      }
       return (
         <EmptyState
           icon={<StarIcon size={48} color={theme.secondaryText} />}
@@ -410,6 +443,9 @@ const FavoritesScreen: React.FC = () => {
       );
     }
 
+    if (boardsLoadError) {
+      return <EmptyState title="加载失败" subtitle="下拉重试" actionLabel="重试" onAction={() => loadBoards(true)} />;
+    }
     return (
       <EmptyState
         icon={<BoardIcon size={48} color={theme.secondaryText} />}

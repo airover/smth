@@ -1,6 +1,10 @@
 import React, {createContext, useContext, useState, useEffect, ReactNode} from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {AppState} from 'react-native';
 import {logout as apiLogout} from '../services/api';
+import {checkIsLoggedIn, recoverAuthenticatedUsername} from '../services/auth';
+import {activateAccountCache} from '../services/accountCache';
+import {clearCache} from '../services/cacheManager';
 
 interface AuthContextType {
   isLoggedIn: boolean;
@@ -17,13 +21,15 @@ export const AuthProvider: React.FC<{children: ReactNode}> = ({children}) => {
 
   useEffect(() => {
     checkLoginStatus();
+    const subscription = AppState.addEventListener('change', state => {
+      if (state === 'active') void recoverAuthenticatedUsername();
+    });
+    return () => subscription.remove();
   }, []);
 
   const checkLoginStatus = async () => {
     try {
-      const loggedIn = await AsyncStorage.getItem('isLoggedIn');
-      const cookies = await AsyncStorage.getItem('cookies');
-      setIsLoggedIn(loggedIn === 'true' && !!cookies);
+      setIsLoggedIn(await checkIsLoggedIn());
     } catch (error) {
       console.error('Check login status error:', error);
       setIsLoggedIn(false);
@@ -42,11 +48,14 @@ export const AuthProvider: React.FC<{children: ReactNode}> = ({children}) => {
     } catch (error) {
       console.error('Logout API error:', error);
     } finally {
-      // 无论 API 是否成功，本地都执行退出
-      await AsyncStorage.removeItem('isLoggedIn');
-      // 可以在这里清除其他用户相关的数据，如 username 等，视需求而定
-      // await AsyncStorage.removeItem('username'); 
-      setIsLoggedIn(false);
+      // 即使持久层清理失败，也立即终止当前会话和内存缓存。
+      activateAccountCache(null);
+      clearCache();
+      try {
+        await AsyncStorage.multiRemove(['isLoggedIn', 'username', 'cookies']);
+      } finally {
+        setIsLoggedIn(false);
+      }
     }
   };
 

@@ -12,6 +12,7 @@ import {
 import {useRoute, useNavigation, useFocusEffect} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {getFavoriteBoards} from '../services/api';
+import {getAccountCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
 import {removeBoardFavorite} from '../services/dataFetcher';
 import {Board} from '../types';
 import {useTheme} from '../components/ThemedComponents';
@@ -33,6 +34,15 @@ const BoardListScreen: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
+  const reloadForAccountRef = React.useRef<() => void>(() => {});
+
+  useEffect(() => subscribeAccountCacheChange(() => {
+    setBoards([]);
+    setDataLoaded(false);
+    void getAccountCacheContext().then(context => {
+      if (context) reloadForAccountRef.current();
+    });
+  }), []);
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
@@ -85,10 +95,13 @@ const BoardListScreen: React.FC = () => {
 
   const loadFavoriteBoards = async (forceRefresh: boolean = false, silent: boolean = false) => {
     try {
-      if (!silent) {
+      const accountContext = await getAccountCacheContext();
+      if (!accountContext) return;
+      if (!silent && !forceRefresh && boards.length === 0) {
         setLoading(true);
       }
       const data = await getFavoriteBoards(forceRefresh);
+      if (!isAccountCacheCurrent(accountContext)) return;
       setBoards(data);
       setDataLoaded(true);
     } catch (error: any) {
@@ -116,8 +129,13 @@ const BoardListScreen: React.FC = () => {
       }
       // 接口失败时不设置dataLoaded，避免显示"暂无收藏版面"
     } finally {
+      setLoading(false);
       setRefreshing(false);
     }
+  };
+
+  reloadForAccountRef.current = () => {
+    if (favorites) void loadFavoriteBoards(false, true);
   };
 
   useFocusRefresh(
@@ -244,7 +262,11 @@ const BoardListScreen: React.FC = () => {
             <View style={styles.emptyContainer}>
               <Text style={[styles.emptyText, {color: theme.secondaryText}]}>暂无收藏版面</Text>
             </View>
-          ) : null
+          ) : (
+            <View style={styles.emptyContainer}>
+              <Text style={[styles.emptyText, {color: theme.secondaryText}]}>加载失败，下拉重试</Text>
+            </View>
+          )
         }
         contentContainerStyle={styles.content}
         columnWrapperStyle={styles.columnWrapper}

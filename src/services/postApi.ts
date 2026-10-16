@@ -1,4 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {getAccountCacheContext, readAccountItem, writeAccountItem, removeAccountItem} from './accountCache';
+import {invalidateContentCache} from './contentCache';
 import RNFetchBlob from 'rn-fetch-blob';
 import {
   fetchWithRetry,
@@ -22,6 +24,7 @@ export interface CaptchaParams {
 
 export interface PostParams {
   boardId: string; // 版面ID (hash格式)
+  topicId?: string; // 回复所属主题ID，用于精确刷新缓存
   boardName?: string; // 版面名称（用于显示）
   subject: string; // 帖子标题
   body: string; // 帖子内容
@@ -81,6 +84,7 @@ export interface PostResponse {
 export const createPost = async (params: PostParams): Promise<PostResponse> => {
   try {
     const API_URL = 'https://wap.newsmth.net/wap/api/topic/publish';
+    const accountContext = await getAccountCacheContext();
 
     // 获取登录凭证
     const cookies = await AsyncStorage.getItem('cookies'); // 修复：使用正确的key 'cookies'
@@ -154,6 +158,7 @@ export const createPost = async (params: PostParams): Promise<PostResponse> => {
     // - kbsCode: 0 表示业务逻辑成功，非0表示业务失败
     // - 需要同时检查 kbsCode 来判断真正的成功/失败
     if ((result.code === 0 || result.code === 1) && (result.kbsCode === 0 || result.kbsCode === undefined)) {
+      await invalidateContentCache(accountContext, 'article', {boardId: params.boardId});
       return {
         code: 1,
         message: result.message || '发帖成功',
@@ -186,6 +191,7 @@ export const createPost = async (params: PostParams): Promise<PostResponse> => {
 export const replyPost = async (params: PostParams): Promise<PostResponse> => {
   try {
     const API_URL = 'https://wap.newsmth.net/wap/api/topic/reply';
+    const accountContext = await getAccountCacheContext();
 
     if (!params.reId) {
       throw new Error('缺少回复目标ID');
@@ -259,6 +265,7 @@ export const replyPost = async (params: PostParams): Promise<PostResponse> => {
     // - kbsCode: 0 表示业务逻辑成功，非0表示业务失败
     // - 需要同时检查 kbsCode 来判断真正的成功/失败
     if ((result.code === 0 || result.code === 1) && (result.kbsCode === 0 || result.kbsCode === undefined)) {
+      await invalidateContentCache(accountContext, 'reply', {boardId: params.boardId, topicId: params.topicId});
       return {
         code: 1,
         message: result.message || '回复成功',
@@ -284,6 +291,7 @@ export const replyPost = async (params: PostParams): Promise<PostResponse> => {
 export interface UpdateArticleParams {
   articleId: string; // 帖子ID
   topicId?: string; // 编辑页面的主题ID（Referer 使用）
+  boardId?: string;
   subject: string; // 帖子标题
   body: string; // 帖子内容
   uploadToken?: string; // 上传图片的token（未传时自动加载原附件token）
@@ -302,6 +310,7 @@ export interface UpdateArticleParams {
 export const updateArticle = async (params: UpdateArticleParams): Promise<PostResponse> => {
   try {
     const API_URL = 'https://wap.newsmth.net/wap/api/topic/updateArticle';
+    const accountContext = await getAccountCacheContext();
 
     // 获取登录凭证
     const cookies = await AsyncStorage.getItem('cookies');
@@ -355,6 +364,7 @@ export const updateArticle = async (params: UpdateArticleParams): Promise<PostRe
     logRequest.success(API_URL, result);
 
     if ((result.code === 0 || result.code === 1) && (result.kbsCode === 0 || result.kbsCode === undefined)) {
+      await invalidateContentCache(accountContext, 'article', {boardId: params.boardId, topicId: params.topicId});
       return {
         code: 1,
         message: result.message || '编辑成功',
@@ -374,8 +384,7 @@ export const updateArticle = async (params: UpdateArticleParams): Promise<PostRe
  */
 export const getDraft = async (boardId: string): Promise<PostParams | null> => {
   try {
-    const draftKey = `draft_${boardId}`;
-    const draftStr = await AsyncStorage.getItem(draftKey);
+    const draftStr = await readAccountItem(`draft_${boardId}`);
     if (draftStr) {
       return JSON.parse(draftStr);
     }
@@ -391,8 +400,7 @@ export const getDraft = async (boardId: string): Promise<PostParams | null> => {
  */
 export const saveDraft = async (params: PostParams): Promise<void> => {
   try {
-    const draftKey = `draft_${params.boardId}`;
-    await AsyncStorage.setItem(draftKey, JSON.stringify(params));
+    await writeAccountItem(`draft_${params.boardId}`, JSON.stringify(params));
   } catch (error) {
     console.error('保存草稿失败:', error);
   }
@@ -403,8 +411,7 @@ export const saveDraft = async (params: PostParams): Promise<void> => {
  */
 export const clearDraft = async (boardId: string): Promise<void> => {
   try {
-    const draftKey = `draft_${boardId}`;
-    await AsyncStorage.removeItem(draftKey);
+    await removeAccountItem(`draft_${boardId}`);
   } catch (error) {
     console.error('清除草稿失败:', error);
   }
@@ -847,9 +854,10 @@ export const uploadImage = async (
  * @param articleId 要删除的帖子/回复ID
  * @returns 删除响应
  */
-export const deleteArticle = async (articleId: string): Promise<PostResponse> => {
+export const deleteArticle = async (articleId: string, boardId?: string, topicId?: string): Promise<PostResponse> => {
   try {
     const API_URL = `https://wap.newsmth.net/wap/api/topic/delete/article/${articleId}`;
+    const accountContext = await getAccountCacheContext();
 
     // 获取登录凭证
     const cookies = await AsyncStorage.getItem('cookies');
@@ -883,6 +891,7 @@ export const deleteArticle = async (articleId: string): Promise<PostResponse> =>
     logRequest.success(API_URL, result);
 
     if ((result.code === 0 || result.code === 1) && (result.kbsCode === 0 || result.kbsCode === undefined)) {
+      await invalidateContentCache(accountContext, 'reply', {boardId, topicId});
       return {
         code: 1,
         message: result.message || '删除成功',

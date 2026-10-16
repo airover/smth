@@ -68,7 +68,7 @@ export const checkLoginScript = `
 export const handleWebViewMessage = async (
   event: any,
   onCookiesReceived?: (cookies: string) => void,
-  onLoginStatusChanged?: (isLoggedIn: boolean, username?: string) => void,
+  onLoginStatusChanged?: (isLoggedIn: boolean, username?: string, cookies?: string) => void | Promise<void>,
   onTencentCaptchaResult?: (ticket: string, randstr: string, appid?: string) => void,
 ) => {
   try {
@@ -76,8 +76,6 @@ export const handleWebViewMessage = async (
     
     if (message.type === 'cookies' && message.data) {
       const cookies = message.data;
-      console.log('Saving cookies from getCookieScript:', cookies.substring(0, 100));
-      await AsyncStorage.setItem('cookies', cookies);
       onCookiesReceived?.(cookies);
     }
     
@@ -86,22 +84,8 @@ export const handleWebViewMessage = async (
       
       console.log('Login status message:', {isLoggedIn, username, hasCookies: !!cookies});
       
-      // 保存 Cookie（如果提供了）
-      if (cookies) {
-        console.log('Saving cookies from loginStatus:', cookies.substring(0, 100));
-        await AsyncStorage.setItem('cookies', cookies);
-      }
-      
-      // 保存用户名和登录状态
-      if (isLoggedIn) {
-        if (username) {
-          await AsyncStorage.setItem('username', username);
-        }
-        await AsyncStorage.setItem('isLoggedIn', 'true');
-        console.log('Login status saved:', {username, isLoggedIn});
-      }
-      
-      onLoginStatusChanged?.(isLoggedIn, username);
+      // 账号和 Cookie 交由调用方确认后一起保存。
+      await onLoginStatusChanged?.(isLoggedIn, username, cookies);
     }
     
     // 处理腾讯验证码结果
@@ -113,6 +97,7 @@ export const handleWebViewMessage = async (
     }
   } catch (error) {
     console.error('Handle webview message error:', error);
+    throw error;
   }
 };
 

@@ -11,6 +11,8 @@ import {
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {getAccountCacheContext, isAccountCacheCurrent, readAccountSnapshot, subscribeAccountCacheChange} from '../services/accountCache';
+import {getCacheRevision} from '../services/cacheManager';
 import {getUserInfo, logout} from '../services/api';
 import {getMessages, getReplyNotifications} from '../services/dataFetcher';
 import {User} from '../types';
@@ -52,6 +54,14 @@ const SettingsScreen: React.FC = () => {
     loadUserInfo(false);
     loadUnreadMailCount();
   }, []);
+
+  useEffect(() => subscribeAccountCacheChange(() => {
+    setUser(null);
+    setUsername('');
+    setUnreadMailCount(0);
+    unreadMailFetchedAtRef.current = 0;
+    loadUserInfo(false, true);
+  }), []);
 
   // 获取未读邮件数量
   const loadUnreadMailCount = async (force: boolean = false): Promise<void> => {
@@ -152,16 +162,21 @@ const SettingsScreen: React.FC = () => {
       
       // 出错时保持本地存储的状态不变（遵循项目规则）
       try {
-        const storedUserInfo = await AsyncStorage.getItem('userInfo');
+        const accountContext = await getAccountCacheContext();
+        const revision = getCacheRevision('userInfo');
+        const storedUserInfo = accountContext
+          ? await readAccountSnapshot<User>('userInfo', accountContext, 7 * 24 * 60 * 60 * 1000,
+            () => getCacheRevision('userInfo') === revision)
+          : null;
         const storedUsername = await AsyncStorage.getItem('username');
         
-        if (storedUserInfo) {
+        if (storedUserInfo && !storedUserInfo.isExpired && isAccountCacheCurrent(accountContext)) {
           // 优先使用完整的用户信息缓存
-          const cachedUser = JSON.parse(storedUserInfo);
+          const cachedUser = storedUserInfo.data;
           setUser(cachedUser);
           setUsername(cachedUser.username);
           setIsLoggedIn(true);
-        } else if (storedUsername) {
+        } else if (storedUsername && isAccountCacheCurrent(accountContext)) {
           // 降级方案：只有用户名
           setUsername(storedUsername);
           setUser({username: storedUsername});

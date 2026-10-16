@@ -12,12 +12,11 @@ import {useNavigation} from '@react-navigation/native';
 import {getMyArticles, getMyLikes, MyArticle} from '../services/api';
 import {
   getCacheWithTimestamp,
-  readPersistedSnapshot,
+  getCacheRevision,
   setCache,
   setCacheWithTimestamp,
-  writePersistedSnapshot,
 } from '../services/cacheManager';
-import {getCurrentUsername} from '../services/auth';
+import {AccountCacheContext, getAccountCacheContext, isAccountCacheCurrent, readAccountSnapshot, subscribeAccountCacheChange, writeAccountSnapshot} from '../services/accountCache';
 import {formatRelativeTime} from '../utils/timeFormat';
 import {useTheme} from '../components/ThemedComponents';
 import {useSettings} from '../context/SettingsContext';
@@ -74,6 +73,7 @@ const MyArticlesScreen: React.FC = () => {
   
   // Tab状态：0=帖子, 1=回复, 2=喜欢
   const [activeTab, setActiveTab] = useState<0 | 1 | 2>(0);
+  const [loadErrors, setLoadErrors] = useState<Record<MyArticlesTab, boolean>>({0: false, 1: false, 2: false});
   
   // 帖子数据
   const [articles, setArticles] = useState<MyArticle[]>([]);
@@ -104,6 +104,7 @@ const MyArticlesScreen: React.FC = () => {
 
   // 防止重复加载
   const isLoadingRef = useRef(false);
+  const requestIdRef = useRef(0);
 
   // 加载缓存数据
   // 把一份快照（本地状态或缓存里取出的）应用到对应 tab 的 state 上
@@ -149,9 +150,15 @@ const MyArticlesScreen: React.FC = () => {
     }
 
     isLoadingRef.current = true;
+    const requestId = ++requestIdRef.current;
+    let requestContext: AccountCacheContext | null = null;
 
     try {
-      const currentUsername = page === 1 ? await getCurrentUsername() : null;
+      const accountContext = await getAccountCacheContext();
+      requestContext = accountContext;
+      const currentUsername = accountContext?.username || null;
+      if (!accountContext) return;
+      const revision = getCacheRevision(CATEGORY_BY_TAB[type]);
 
       let shouldRequest = true;
 
@@ -171,11 +178,14 @@ const MyArticlesScreen: React.FC = () => {
           cachedTimestamp = cached.timestamp;
         } else if (currentUsername) {
           // 持久化缓存允许比内存新鲜期更久的兜底，但超过最大兜底期就不再展示。
-          const persisted = await readPersistedSnapshot<ArticlesSnapshot>(
+          const persisted = await readAccountSnapshot<ArticlesSnapshot>(
             STORAGE_KEY_BY_TAB[type],
+            accountContext,
             MY_ARTICLES_PERSIST_MAX_STALE,
+            () => getCacheRevision(CATEGORY_BY_TAB[type]) === revision,
           );
           if (
+            isAccountCacheCurrent(accountContext) &&
             persisted?.data &&
             !persisted.isExpired &&
             persisted.data.owner === currentUsername &&
@@ -206,6 +216,8 @@ const MyArticlesScreen: React.FC = () => {
       }
 
       const result = type === 2 ? await getMyLikes(page) : await getMyArticles(type, page);
+      if (!isAccountCacheCurrent(accountContext) || getCacheRevision(CATEGORY_BY_TAB[type]) !== revision) return;
+      if (page === 1) setLoadErrors(previous => ({...previous, [type]: false}));
 
       if (page === 1) {
         // 第一页，替换数据
@@ -219,7 +231,8 @@ const MyArticlesScreen: React.FC = () => {
         applySnapshot(type, snapshot);
         setCache(CATEGORY_BY_TAB[type], undefined, snapshot);
         if (currentUsername) {
-          await writePersistedSnapshot(STORAGE_KEY_BY_TAB[type], snapshot);
+          await writeAccountSnapshot(STORAGE_KEY_BY_TAB[type], accountContext, snapshot,
+            () => getCacheRevision(CATEGORY_BY_TAB[type]) === revision);
         }
       } else {
         // 加载更多，追加数据
@@ -239,15 +252,33 @@ const MyArticlesScreen: React.FC = () => {
       }
     } catch (error) {
       console.error('loadData error:', error);
+      if (page === 1 && isAccountCacheCurrent(requestContext)) {
+        setLoadErrors(previous => ({...previous, [type]: true}));
+      }
     } finally {
       // 不管成功还是失败都标记为“已尝试加载过”，避免请求失败时永远卡在骨架屏；
       // 失败时如果也没有缓存可用，会落到空状态而不是转不停的菊花。
-      setLoadedFlag(type, true);
-      setRefreshing(false);
-      setLoadingMore(false);
-      isLoadingRef.current = false;
+      // 旧账号请求结束时，不能把新账号的页面标记为已加载。
+      if (requestIdRef.current === requestId && isAccountCacheCurrent(requestContext)) {
+        setLoadedFlag(type, true);
+        setRefreshing(false);
+        setLoadingMore(false);
+        isLoadingRef.current = false;
+      }
     }
   }, [applySnapshot, setLoadedFlag]);
+
+  useEffect(() => subscribeAccountCacheChange(() => {
+    requestIdRef.current += 1;
+    isLoadingRef.current = false;
+    setArticles([]);
+    setReplies([]);
+    setLikes([]);
+    setArticlesLoaded(false);
+    setRepliesLoaded(false);
+    setLikesLoaded(false);
+    setLoadErrors({0: false, 1: false, 2: false});
+  }), []);
 
   // 首次挂载和 Tab 切换都会命中下面这个 effect（activeTab 的“首次渲染”本身就算
   // 一次依赖变化），不需要再单独加一个只在挂载时跑的效果。是否需要加载改判断
@@ -367,6 +398,11 @@ const MyArticlesScreen: React.FC = () => {
 
   // 渲染空状态（只有当前 tab 已经加载完成时才会被渲染到，见下方 FlatList 的条件）
   const renderEmpty = () => {
+    if (loadErrors[activeTab]) {
+      return <View style={styles.emptyContainer}>
+        <Text style={[styles.emptyText, {color: theme.secondaryText}]}>加载失败，下拉重试</Text>
+      </View>;
+    }
     return (
       <View style={styles.emptyContainer}>
         <View style={styles.emptyIcon}>

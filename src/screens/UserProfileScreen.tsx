@@ -35,7 +35,8 @@ import {useTheme, useThemedStyles} from '../components/ThemedComponents';
 import {getCardElevation, ThemeColors} from '../utils/theme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import RNFetchBlob from 'rn-fetch-blob';
-import {setCache, getCacheWithTimestamp} from '../services/cacheManager';
+import {setCache, setCacheWithTimestamp, getCacheRevision, getCacheWithTimestamp} from '../services/cacheManager';
+import {AccountCacheContext, getAccountCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
 import {
   RESPONSIVE,
   scaleWidth,
@@ -57,22 +58,56 @@ const PROFILE_REFRESH_THRESHOLD = 60 * 1000;
 const PROFILE_MAX_STALE_AGE = 24 * 60 * 60 * 1000;
 const profileRefreshRequests = new Map<string, Promise<any>>();
 
-const refreshUserProfileOnce = async (username: string): Promise<any> => {
-  const existing = profileRefreshRequests.get(username);
+// 他人资料可共享；关系状态属于当前账号，不能放进共享快照。
+const publicUserProfile = (profile: User): User => {
+  const publicProfile = {...profile};
+  delete publicProfile.isFollowing;
+  delete publicProfile.isBlack;
+  delete publicProfile.isFans;
+  return publicProfile;
+};
+
+const refreshUserProfileOnce = async (username: string, requestKey: string): Promise<any> => {
+  const existing = profileRefreshRequests.get(requestKey);
   if (existing) {
     return existing;
   }
 
   const promise = fetchUserInfo(username).finally(() => {
-    profileRefreshRequests.delete(username);
+    profileRefreshRequests.delete(requestKey);
   });
-  profileRefreshRequests.set(username, promise);
+  profileRefreshRequests.set(requestKey, promise);
   return promise;
 };
 
 // 用户数据目录（独立于缓存，不会被清除）
 const USER_DATA_DIR = `${RNFetchBlob.fs.dirs.DocumentDir}/user_data`;
-const BACKGROUND_IMAGE_PATH = `${USER_DATA_DIR}/profile_background.jpg`;
+const LEGACY_BACKGROUND_IMAGE_PATH = `${USER_DATA_DIR}/profile_background.jpg`;
+const backgroundImagePath = (username: string): string =>
+  `${USER_DATA_DIR}/profile_background_${encodeURIComponent(username.trim().toLowerCase())}.jpg`;
+
+const migrateBackgroundImage = async (context: AccountCacheContext): Promise<string> => {
+  const target = backgroundImagePath(context.username);
+  if (await RNFetchBlob.fs.exists(target) || !(await RNFetchBlob.fs.exists(USER_DATA_DIR))) return target;
+
+  // 兼容旧版共享文件及此前用原始大小写命名的账号文件。
+  const files = await RNFetchBlob.fs.ls(USER_DATA_DIR);
+  const variant = files.find(file => {
+    if (!file.startsWith('profile_background_') || !file.endsWith('.jpg')) return false;
+    try {
+      const owner = decodeURIComponent(file.slice('profile_background_'.length, -'.jpg'.length));
+      return owner.trim().toLowerCase() === context.username.trim().toLowerCase();
+    } catch {
+      return false;
+    }
+  });
+  const source = variant ? `${USER_DATA_DIR}/${variant}`
+    : files.includes('profile_background.jpg') ? LEGACY_BACKGROUND_IMAGE_PATH : null;
+  if (!source || !isAccountCacheCurrent(context)) return target;
+  await RNFetchBlob.fs.cp(source, target);
+  if (await RNFetchBlob.fs.exists(target)) await RNFetchBlob.fs.unlink(source);
+  return target;
+};
 
 // 辅助函数：计算字符串长度（中文算2，英文算1）
 const getStringLength = (str: string): number => {
@@ -135,15 +170,21 @@ const UserProfileScreen: React.FC = () => {
     try {
       // 检查是否查看自己的资料
       const currentUsername = await AsyncStorage.getItem('username');
-      const isSelf = !username || username === currentUsername;
+      const isSelf = !username || username.trim().toLowerCase() === currentUsername?.trim().toLowerCase();
       setIsCurrentUser(isSelf);
       
       // 加载背景图片配置
       if (isSelf) {
-        const bgExists = await RNFetchBlob.fs.exists(BACKGROUND_IMAGE_PATH);
+        const context = await getAccountCacheContext();
+        const path = context ? await migrateBackgroundImage(context) : null;
+        const bgExists = path ? await RNFetchBlob.fs.exists(path) : false;
         if (bgExists) {
-          setBackgroundImage(`file://${BACKGROUND_IMAGE_PATH}`);
+          if (context && isAccountCacheCurrent(context)) setBackgroundImage(`file://${path}`);
+        } else {
+          setBackgroundImage(null);
         }
+      } else {
+        setBackgroundImage(null);
       }
       
       const userInfo = await loadUserInfo(isSelf);
@@ -163,6 +204,8 @@ const UserProfileScreen: React.FC = () => {
   // userInfo参数用于传入刚获取的用户信息，避免user状态未更新的问题
   const checkBlacklistStatus = async (targetUsername: string, forceRefresh: boolean = false, userInfo?: User | null) => {
     try {
+      const accountContext = await getAccountCacheContext();
+      if (!accountContext) return;
       const currentUsername = await AsyncStorage.getItem('username');
       if (!currentUsername) {
         console.log('Not logged in, skip checking blacklist status');
@@ -170,7 +213,7 @@ const UserProfileScreen: React.FC = () => {
       }
       
       const result = await getBlackList(forceRefresh);
-      if (result.success && result.blacklist) {
+      if (result.success && result.blacklist && isAccountCacheCurrent(accountContext)) {
         // 检查目标用户的ID或用户名是否在黑名单中
         // 优先使用传入的userInfo，其次使用user状态
         const targetUserId = userInfo?.id || user?.id || '';
@@ -189,6 +232,8 @@ const UserProfileScreen: React.FC = () => {
   // userInfo参数用于传入刚获取的用户信息，避免user状态未更新的问题
   const checkFollowingStatus = async (targetUsername: string, forceRefresh: boolean = false, userInfo?: User | null) => {
     try {
+      const accountContext = await getAccountCacheContext();
+      if (!accountContext) return;
       const currentUsername = await AsyncStorage.getItem('username');
       if (!currentUsername) {
         console.log('Not logged in, skip checking following status');
@@ -196,7 +241,7 @@ const UserProfileScreen: React.FC = () => {
       }
       
       const result = await getFriendsList(currentUsername, 1, forceRefresh);
-      if (result.success && result.friends) {
+      if (result.success && result.friends && isAccountCacheCurrent(accountContext)) {
         // 检查目标用户的ID或用户名是否在关注列表中
         // friends现在是用户对象数组，包含id和username字段
         // 优先使用传入的userInfo，其次使用user状态
@@ -403,6 +448,15 @@ const UserProfileScreen: React.FC = () => {
     checkAndLoadUserInfo();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [username]);
+
+  useEffect(() => subscribeAccountCacheChange(() => {
+    setUser(null);
+    setIsFollowing(false);
+    setIsInBlacklist(false);
+    setBackgroundImage(null);
+    checkAndLoadUserInfo();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [username]);
 
   // 检查相机权限
   useEffect(() => {
@@ -679,6 +733,8 @@ const UserProfileScreen: React.FC = () => {
       } else {
         // 查看他人资料，使用fetchUserInfo
         console.log('Fetching user info for:', username);
+        const accountContext = await getAccountCacheContext();
+        const cacheRevision = getCacheRevision('otherUserInfo');
         
         // 如果不是强制刷新，先尝试从缓存获取
         if (!forceRefresh) {
@@ -687,37 +743,45 @@ const UserProfileScreen: React.FC = () => {
             const age = Date.now() - cachedData.timestamp;
             console.log('UserProfileScreen: Using cached data for', username, 'age:', Math.floor(age / 1000), 's');
             if (age < PROFILE_MAX_STALE_AGE) {
-              setUser(cachedData.data);
+              const publicProfile = publicUserProfile(cachedData.data);
+              if ('isFollowing' in cachedData.data || 'isBlack' in cachedData.data || 'isFans' in cachedData.data) {
+                setCacheWithTimestamp('otherUserInfo', username!, publicProfile, cachedData.timestamp);
+              }
+              setUser(publicProfile);
               if (!silent) {
                 setLoading(false);
               }
             
               if (age > PROFILE_REFRESH_THRESHOLD) {
-                refreshUserProfileOnce(username!).then(freshData => {
-                  if (freshData) {
+                const requestKey = `${accountContext?.generation ?? 'guest'}:${cacheRevision}:${username}`;
+                refreshUserProfileOnce(username!, requestKey).then(freshData => {
+                  if (freshData && getCacheRevision('otherUserInfo') === cacheRevision
+                    && (!accountContext || isAccountCacheCurrent(accountContext))) {
                     console.log('UserProfileScreen: Background update for', username);
                     // 如果积分为负数，不更新界面和缓存（数据可能异常）
                     if (freshData.score !== undefined && freshData.score < 0) {
                       console.log('UserProfileScreen: Skip update due to negative score:', freshData.score);
                       return;
                     }
-                    setUser(freshData);
-                    setCache('otherUserInfo', username!, freshData);
+                    const publicFreshData = publicUserProfile(freshData);
+                    setUser(publicFreshData);
+                    setCache('otherUserInfo', username!, publicFreshData);
                     // 使用新数据重新检查关注状态，确保状态同步
-                    checkFollowingStatus(username!, false, freshData);
+                    checkFollowingStatus(username!, false, publicFreshData);
                   }
                 }).catch(err => {
                   console.error('Background update error:', err);
                 });
               }
             
-              return cachedData.data; // 返回缓存数据
+              return publicProfile; // 返回不含账号关系状态的共享数据
             }
           }
         }
         
         // 没有缓存或强制刷新，从API获取
         userInfo = await fetchUserInfo(username!);
+        if (accountContext && !isAccountCacheCurrent(accountContext)) return null;
         console.log('UserProfileScreen fetchUserInfo result:', userInfo);
         
         // 如果积分为负数，不更新界面和缓存（数据可能异常）
@@ -728,12 +792,19 @@ const UserProfileScreen: React.FC = () => {
             const cachedData = getCacheWithTimestamp<any>('otherUserInfo', username!);
             if (cachedData && cachedData.data) {
               console.log('UserProfileScreen: Using cached data due to negative score');
-              setUser(cachedData.data);
-              return cachedData.data;
+              const publicProfile = publicUserProfile(cachedData.data);
+              if ('isFollowing' in cachedData.data || 'isBlack' in cachedData.data || 'isFans' in cachedData.data) {
+                setCacheWithTimestamp('otherUserInfo', username!, publicProfile, cachedData.timestamp);
+              }
+              setUser(publicProfile);
+              return publicProfile;
             }
             // 没有缓存数据，仍然显示当前数据，但不保存缓存
           } else {
-            setCache('otherUserInfo', username!, userInfo);
+            if (getCacheRevision('otherUserInfo') === cacheRevision
+              && (!accountContext || isAccountCacheCurrent(accountContext))) {
+              setCache('otherUserInfo', username!, publicUserProfile(userInfo));
+            }
           }
         }
       }
@@ -829,10 +900,14 @@ const UserProfileScreen: React.FC = () => {
           style: 'destructive',
           onPress: async () => {
             try {
-              const exists = await RNFetchBlob.fs.exists(BACKGROUND_IMAGE_PATH);
+              const context = await getAccountCacheContext();
+              if (!context) return;
+              const path = await migrateBackgroundImage(context);
+              const exists = await RNFetchBlob.fs.exists(path);
               if (exists) {
-                await RNFetchBlob.fs.unlink(BACKGROUND_IMAGE_PATH);
+                await RNFetchBlob.fs.unlink(path);
               }
+              if (!isAccountCacheCurrent(context)) return;
               setBackgroundImage(null);
               Alert.alert('成功', '背景图片已删除');
             } catch (error) {
@@ -914,6 +989,9 @@ const UserProfileScreen: React.FC = () => {
   // 保存背景图片到独立目录
   const saveBackgroundImage = async (sourcePath: string) => {
     try {
+      const context = await getAccountCacheContext();
+      if (!context) return;
+      const path = await migrateBackgroundImage(context);
       // 确保用户数据目录存在
       const dirExists = await RNFetchBlob.fs.exists(USER_DATA_DIR);
       if (!dirExists) {
@@ -921,9 +999,9 @@ const UserProfileScreen: React.FC = () => {
       }
 
       // 如果旧图片存在，先删除
-      const oldImageExists = await RNFetchBlob.fs.exists(BACKGROUND_IMAGE_PATH);
+      const oldImageExists = await RNFetchBlob.fs.exists(path);
       if (oldImageExists) {
-        await RNFetchBlob.fs.unlink(BACKGROUND_IMAGE_PATH);
+        await RNFetchBlob.fs.unlink(path);
         console.log('已删除旧背景图片');
       }
 
@@ -931,9 +1009,10 @@ const UserProfileScreen: React.FC = () => {
       const cleanPath = sourcePath.replace('file://', '');
 
       // 复制新图片到用户数据目录
-      await RNFetchBlob.fs.cp(cleanPath, BACKGROUND_IMAGE_PATH);
+      await RNFetchBlob.fs.cp(cleanPath, path);
       
-      setBackgroundImage(`file://${BACKGROUND_IMAGE_PATH}`);
+      if (!isAccountCacheCurrent(context)) return;
+      setBackgroundImage(`file://${path}`);
       Alert.alert('成功', '背景图片已更换');
     } catch (error) {
       console.error('保存背景图片失败:', error);

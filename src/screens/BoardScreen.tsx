@@ -23,7 +23,8 @@ import {useNavigation, useRoute} from '@react-navigation/native';
 import {getBoards, getFavoriteBoards, getBoardPosts} from '../services/api';
 import {getSubBoards, checkBoardFavorite, addBoardFavorite, removeBoardFavorite, getMSitePostIdForTopic, getStaticAttachmentUrlsForTopic} from '../services/dataFetcher';
 import {Board, Post} from '../types';
-import {setCache, getCacheWithTimestamp} from '../services/cacheManager';
+import {setCache, getCacheRevision, getCacheWithTimestamp} from '../services/cacheManager';
+import {getAccountCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
 import {formatRelativeTime} from '../utils/timeFormat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useSettings} from '../context/SettingsContext';
@@ -49,6 +50,7 @@ import {useReadPosts} from '../context/ReadPostsContext';
 import {SPACING, FONT_SIZE, BORDER_RADIUS, RESPONSIVE, lineHeight} from '../utils/responsive';
 import {getCardElevation} from '../utils/theme';
 import {useFocusRefresh} from '../hooks/useFocusRefresh';
+import {fetchWithRetry} from '../utils/requestUtils';
 
 
 const {width: SCREEN_WIDTH} = Dimensions.get('window');
@@ -222,6 +224,7 @@ const BoardScreen: React.FC = () => {
   }), [theme]);
 
   const [boards, setBoards] = useState<Board[]>([]);
+  const [boardLoadError, setBoardLoadError] = useState(false);
   // loadFavoriteBoards 用于刷新收藏版面列表
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_favoriteBoards, setFavoriteBoards] = useState<Board[]>([]);
@@ -244,11 +247,18 @@ const BoardScreen: React.FC = () => {
   const [loadingChannelPosts, setLoadingChannelPosts] = useState(false);
   const [postsDataLoaded, setPostsDataLoaded] = useState(false);
   const [channelPostsDataLoaded, setChannelPostsDataLoaded] = useState(false);
+  const [postsLoadError, setPostsLoadError] = useState(false);
+  const [channelPostsLoadError, setChannelPostsLoadError] = useState(false);
   const [sortByReplyTime, setSortByReplyTime] = useState(settings.defaultBoardSort === 'reply'); // 从全局配置初始化
   const [postMode, setPostMode] = useState<'all' | 'essence'>('all');
   const [showFabMenu, setShowFabMenu] = useState(false); // 浮动按钮菜单显示状态
   const [sortRefreshing, setSortRefreshing] = useState(false); // 排序刷新状态
   const [isBoardFavorited, setIsBoardFavorited] = useState(false); // 当前版面是否已收藏
+
+  useEffect(() => subscribeAccountCacheChange(() => {
+    setFavoriteBoards([]);
+    setIsBoardFavorited(false);
+  }), []);
   // checkingFavorite 用于显示加载状态
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_checkingFavorite, setCheckingFavorite] = useState(false); // 正在检查收藏状态
@@ -670,6 +680,7 @@ const BoardScreen: React.FC = () => {
 
   const loadBoards = async (forceRefresh: boolean = false) => {
     let hasCachedData = false;
+    const revision = getCacheRevision('boards');
     try {
       if (!forceRefresh) {
         const cachedData = getCacheWithTimestamp<any[]>('boards');
@@ -691,34 +702,25 @@ const BoardScreen: React.FC = () => {
 
       // 1. 先拉取一级目录
       const firstLevelSections = await getBoards();
+      if (firstLevelSections.length === 0) throw new Error('EMPTY_BOARD_TREE');
 
       // 2. 遍历一级目录，拉取各分区内容（自动构建多级层级）
       const boardTreePromises = firstLevelSections.map(async (section) => {
-        try {
-          const subBoards = await getSubBoards(section.id);
-          
-          // 将子版面挂载到一级目录上（层级关系已在 getSubBoards 中通过 groupId 构建）
-          return {
-            ...section,
-            children: subBoards,
-          };
-        } catch (error) {
-          console.error(`拉取分区 "${section.chineseName || section.name}" 子版面失败:`, error);
-          return {
-            ...section,
-            children: [],
-          };
-        }
+        const subBoards = await getSubBoards(section.id);
+        return {...section, children: subBoards};
       });
 
       // 3. 等待所有分区内容加载完成
       const completeTree = await Promise.all(boardTreePromises);
+      if (getCacheRevision('boards') !== revision) return;
 
       // 4. 缓存完整的目录树
       setCache('boards', undefined, completeTree);
       setBoards(completeTree);
+      setBoardLoadError(false);
     } catch (error) {
       console.error('Load boards error:', error);
+      setBoardLoadError(true);
     } finally {
       // 版面树在当前内容页不可见时不应覆盖帖子列表自己的 loading 状态。
       if (!selectedBoardRef.current && !selectedChannelRef.current) {
@@ -729,8 +731,10 @@ const BoardScreen: React.FC = () => {
 
   const loadFavoriteBoards = async (forceRefresh: boolean = false) => {
     try {
+      const accountContext = await getAccountCacheContext();
+      if (!accountContext) return;
       const data = await getFavoriteBoards(forceRefresh);
-      setFavoriteBoards(data);
+      if (isAccountCacheCurrent(accountContext)) setFavoriteBoards(data);
     } catch (error) {
       console.error('Load favorite boards error:', error);
     }
@@ -739,9 +743,11 @@ const BoardScreen: React.FC = () => {
   // 检查版面收藏状态
   const checkBoardFavoriteStatus = async (boardId: string) => {
     try {
+      const accountContext = await getAccountCacheContext();
+      if (!accountContext) return;
       setCheckingFavorite(true);
       const isFavorited = await checkBoardFavorite(boardId);
-      setIsBoardFavorited(isFavorited);
+      if (isAccountCacheCurrent(accountContext)) setIsBoardFavorited(isFavorited);
     } catch (error) {
       console.error('Check board favorite status error:', error);
       setIsBoardFavorited(false);
@@ -780,6 +786,7 @@ const BoardScreen: React.FC = () => {
   };
 
   const loadChannels = async (forceRefresh: boolean = false) => {
+    const revision = getCacheRevision('channels');
     try {
       if (!forceRefresh) {
         const cached = getCacheWithTimestamp<Channel[]>('channels');
@@ -819,7 +826,7 @@ const BoardScreen: React.FC = () => {
         }
       }
 
-      const response = await fetch('https://wap.newsmth.net/wap/api/profile/navigation', {
+      const response = await fetchWithRetry('https://wap.newsmth.net/wap/api/profile/navigation', {
         method: 'GET',
         headers: {
           'accept': 'application/json, text/plain, */*',
@@ -838,9 +845,10 @@ const BoardScreen: React.FC = () => {
           'test-uin-only': '1',
           'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
         }
-      });
+      }, 10000, 1);
 
       const result = await response.json();
+      if (getCacheRevision('channels') !== revision) return;
       if (result.code === 1 && result.data && result.data.data) {
         const channelsData = result.data.data;
         // 过滤掉"热贴"频道（包括"热帖"的不同写法）
@@ -880,6 +888,7 @@ const BoardScreen: React.FC = () => {
     try {
       let shouldUseCache = false;
       const cacheKey = `global`;
+      const cacheRevision = getCacheRevision('albumPosts');
 
       if (pageNum === 1 && !forceRefresh) {
         try {
@@ -887,12 +896,12 @@ const BoardScreen: React.FC = () => {
           if (cached) {
             const { timestamp, data } = cached;
             const { data: topics, pager } = data;
-            if (topics && topics.length > 0) {
+            if (Array.isArray(topics)) {
               const age = Date.now() - timestamp;
               if (age < LIST_CACHE_MAX_STALE_AGE) {
                 setChannelPosts(topics);
                 setChannelPage(1);
-                const totalPages = Math.ceil(pager.items / pager.size);
+                const totalPages = Math.ceil((pager?.items ?? topics.length) / (pager?.size || 20));
                 setChannelHasMore(1 < totalPages);
                 setChannelPostsDataLoaded(true);
 
@@ -917,7 +926,7 @@ const BoardScreen: React.FC = () => {
       const timestamp = Date.now();
       const url = `https://wap.newsmth.net/wap/api/album/load/global?t=${timestamp}&page=${pageNum}&size=20`;
       
-      const response = await fetch(url, {
+      const response = await fetchWithRetry(url, {
         method: 'GET',
         headers: {
           'accept': 'application/json, text/plain, */*',
@@ -936,10 +945,13 @@ const BoardScreen: React.FC = () => {
           'test-uin-only': '1',
           'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
         }
-      });
+      }, 10000, 1);
 
       const result = await response.json();
-      if (result.code === 1 && result.data) {
+      if (result.code === 1 && (result.kbsCode === 0 || result.kbsCode === undefined)
+        && Array.isArray(result.data?.articles) && Number(result.data?.pager?.size) > 0
+        && Number.isFinite(Number(result.data?.pager?.items))) {
+        setChannelPostsLoadError(false);
         const { articles, pager } = result.data;
         
         // 调试：打印第一篇文章的数据结构
@@ -1066,7 +1078,7 @@ const BoardScreen: React.FC = () => {
               data: topicsWithStaticUrls,
               pager: pager
             };
-            setCache('albumPosts', cacheKey, cacheData);
+            if (getCacheRevision('albumPosts') === cacheRevision) setCache('albumPosts', cacheKey, cacheData);
           } catch (e) {
             console.error('Failed to save album cache:', e);
           }
@@ -1082,9 +1094,12 @@ const BoardScreen: React.FC = () => {
         const totalPages = Math.ceil(pager.items / pager.size);
         setChannelHasMore(pageNum < totalPages);
         setChannelPostsDataLoaded(true);
+      } else {
+        throw new Error('ALBUM_POSTS_RESPONSE_INVALID');
       }
     } catch (error) {
       console.error('Load album posts error:', error);
+      if (pageNum === 1) setChannelPostsLoadError(true);
     } finally {
       setLoading(false);
       if (pageNum > 1) {
@@ -1096,6 +1111,7 @@ const BoardScreen: React.FC = () => {
   const loadChannelPosts = async (channelId: string, pageNum: number = 1, forceRefresh: boolean = false) => {
     try {
       let shouldUseCache = false;
+      const cacheRevision = getCacheRevision('channelPosts');
       // const cacheKey = `cache_channel_${channelId}`;
 
       if (pageNum === 1 && !forceRefresh) {
@@ -1105,12 +1121,12 @@ const BoardScreen: React.FC = () => {
           if (cached) {
             const { timestamp, data } = cached;
             const { data: topics, pager } = data;
-            if (topics && topics.length > 0) {
+            if (Array.isArray(topics)) {
               const age = Date.now() - timestamp;
               if (age < LIST_CACHE_MAX_STALE_AGE) {
                 setChannelPosts(topics);
                 setChannelPage(1);
-                const totalPages = Math.ceil(pager.items / pager.size);
+                const totalPages = Math.ceil((pager?.items ?? topics.length) / (pager?.size || 20));
                 setChannelHasMore(1 < totalPages);
                 setChannelPostsDataLoaded(true);
 
@@ -1135,7 +1151,7 @@ const BoardScreen: React.FC = () => {
       const timestamp = Date.now();
       const url = `https://wap.newsmth.net/wap/api/channel/loadTopics?t=${timestamp}&channel=${channelId}&page=${pageNum}&size=20`;
       
-      const response = await fetch(url, {
+      const response = await fetchWithRetry(url, {
         method: 'GET',
         headers: {
           'accept': 'application/json, text/plain, */*',
@@ -1154,10 +1170,13 @@ const BoardScreen: React.FC = () => {
           'test-uin-only': '1',
           'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
         }
-      });
+      }, 10000, 1);
 
       const result = await response.json();
-      if (result.code === 1 && result.data) {
+      if (result.code === 1 && (result.kbsCode === 0 || result.kbsCode === undefined)
+        && Array.isArray(result.data?.topics) && Number(result.data?.pager?.size) > 0
+        && Number.isFinite(Number(result.data?.pager?.items))) {
+        setChannelPostsLoadError(false);
         const { topics, pager } = result.data;
         
         // 处理频道帖子的头像URL
@@ -1215,7 +1234,7 @@ const BoardScreen: React.FC = () => {
               data: topicsWithMSiteId,
               pager: pager
             };
-            setCache('channelPosts', channelId, cacheData);
+            if (getCacheRevision('channelPosts') === cacheRevision) setCache('channelPosts', channelId, cacheData);
           } catch (e) {
             console.error('Failed to save channel cache:', e);
           }
@@ -1232,9 +1251,12 @@ const BoardScreen: React.FC = () => {
         const totalPages = Math.ceil(pager.items / pager.size);
         setChannelHasMore(pageNum < totalPages);
         setChannelPostsDataLoaded(true);
+      } else {
+        throw new Error('CHANNEL_POSTS_RESPONSE_INVALID');
       }
     } catch (error) {
       console.error('Load channel posts error:', error);
+      if (pageNum === 1) setChannelPostsLoadError(true);
       // 接口失败时不设置channelPostsDataLoaded
     } finally {
       setLoading(false);
@@ -1257,6 +1279,7 @@ const BoardScreen: React.FC = () => {
     try {
       let shouldUseCache = false;
       const cacheKey = `${boardId}_${orderByFlushTime}_${isEssence ? 'essence_v2' : 'all'}`;
+      const cacheRevision = getCacheRevision('boardPosts');
 
       if (pageNum === 1 && !forceRefresh) {
         try {
@@ -1264,13 +1287,13 @@ const BoardScreen: React.FC = () => {
           if (cached) {
             const { timestamp, data } = cached;
             const { data: topics, tops, totalPages } = data;
-            if (topics && topics.length > 0) {
+            if (Array.isArray(topics)) {
               const age = Date.now() - timestamp;
               if (age < LIST_CACHE_MAX_STALE_AGE) {
                 const combinedPosts = [...(tops || []), ...topics];
                 setPosts(combinedPosts);
                 setPage(1);
-                setHasMore(true);
+                setHasMore(1 < totalPages);
                 setPostsDataLoaded(true);
                 hasCachedFallback = true;
               
@@ -1304,18 +1327,16 @@ const BoardScreen: React.FC = () => {
         setPosts(combinedPosts);
         setPage(1);
         
-        // Save cache - 只有成功获取到数据时才写入缓存
-        if (topics.length > 0 || tops.length > 0) {
-          try {
-            const cacheData = {
-              data: topics,
-              tops: tops,
-              totalPages: totalPages
-            };
-            setCache('boardPosts', cacheKey, cacheData);
-          } catch (e) {
-            console.error('Failed to save cache:', e);
-          }
+        // 接口成功返回的空版面也要覆盖旧快照，避免刷新后旧帖子再次出现。
+        try {
+          const cacheData = {
+            data: topics,
+            tops: tops,
+            totalPages: totalPages
+          };
+          if (getCacheRevision('boardPosts') === cacheRevision) setCache('boardPosts', cacheKey, cacheData);
+        } catch (e) {
+          console.error('Failed to save cache:', e);
         }
       } else {
         // 使用Set来去重，确保不会有重复的id
@@ -1328,17 +1349,12 @@ const BoardScreen: React.FC = () => {
       
       setHasMore(pageNum < totalPages);
       setPostsDataLoaded(true);
+      setPostsLoadError(false);
     } catch (error: any) {
       console.error('Load posts error:', error);
       console.error('版面ID:', boardId, '页码:', pageNum);
-      // 接口失败时不设置postsDataLoaded
-      // 如果是第一页且没有缓存数据，显示错误提示
-      if (pageNum === 1 && !hasCachedFallback && posts.length === 0) {
-        const message = error.message === 'LOGIN_EXPIRED'
-          ? '登录态已过期，请重新登录后重试'
-          : (error.message || '无法加载帖子列表，请稍后重试');
-        Alert.alert('加载失败', message);
-      }
+      // 自动刷新失败不弹窗；没有旧列表时在页面内提供重试入口。
+      if (pageNum === 1 && !hasCachedFallback) setPostsLoadError(true);
     } finally {
       setLoading(false);
       setSortRefreshing(false); // 清除排序刷新状态
@@ -1675,9 +1691,18 @@ const BoardScreen: React.FC = () => {
     );
   };
 
-  const renderBoardList = () => (
-    <BoardItemGroup items={boards} level={0} />
-  );
+  const renderBoardList = () => boards.length > 0
+    ? <BoardItemGroup items={boards} level={0} />
+    : boardLoadError
+      ? (
+        <View style={styles.emptyContainer}>
+          <Text style={[styles.emptyText, {color: theme.secondaryText}]}>版面目录加载失败</Text>
+          <TouchableOpacity onPress={() => loadBoards(true)} accessibilityRole="button" accessibilityLabel="重试加载版面目录">
+            <Text style={{color: theme.primary}}>点击重试</Text>
+          </TouchableOpacity>
+        </View>
+      )
+      : <View style={styles.emptyContainer}><Text style={[styles.emptyText, {color: theme.secondaryText}]}>正在加载版面目录</Text></View>;
 
   const renderPostItem = ({item}: {item: any}) => {
     const itemIsRead = isRead(item.id);
@@ -2122,9 +2147,11 @@ const BoardScreen: React.FC = () => {
               />
             }
             ListEmptyComponent={
-              !loading && !refreshing && channelPosts.length === 0 && channelPostsDataLoaded ? (
+              !loading && !refreshing && channelPosts.length === 0 && (channelPostsDataLoaded || channelPostsLoadError) ? (
                 <View style={styles.emptyContainer}>
-                  <Text style={[styles.emptyText, {color: theme.secondaryText}]}>暂无帖子</Text>
+                  <Text style={[styles.emptyText, {color: theme.secondaryText}]}>
+                    {channelPostsLoadError ? '加载失败，下拉重试' : '暂无帖子'}
+                  </Text>
                 </View>
               ) : null
             }
@@ -2146,9 +2173,11 @@ const BoardScreen: React.FC = () => {
               />
             }
             ListEmptyComponent={
-              !loading && !refreshing && posts.length === 0 && postsDataLoaded ? (
+              !loading && !refreshing && posts.length === 0 && (postsDataLoaded || postsLoadError) ? (
                 <View style={styles.emptyContainer}>
-                  <Text style={[styles.emptyText, {color: theme.secondaryText}]}>暂无帖子</Text>
+                  <Text style={[styles.emptyText, {color: theme.secondaryText}]}>
+                    {postsLoadError ? '加载失败，下拉重试' : '暂无帖子'}
+                  </Text>
                 </View>
               ) : null
             }

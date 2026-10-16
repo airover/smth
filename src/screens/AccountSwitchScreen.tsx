@@ -10,6 +10,11 @@ import {
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import RNFetchBlob from 'rn-fetch-blob';
+import {activateAccountCache, removeAllAccountData} from '../services/accountCache';
+import {waitForReadingProgressWrites} from '../utils/readingProgress';
+import {clearMSiteCookieJar, invalidateMSiteLogin, removeMSiteAccountData, setLoggedIn} from '../services/auth';
+import {getUserInfo} from '../services/api';
 // logout 功能暂时未使用
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {useTheme} from '../components/ThemedComponents';
@@ -28,6 +33,9 @@ interface SavedAccount {
   cookies: string;
   isCurrent: boolean;
 }
+
+const sameAccount = (left: string | null | undefined, right: string | null | undefined): boolean =>
+  !!left && !!right && left.trim().toLowerCase() === right.trim().toLowerCase();
 
 const AccountSwitchScreen: React.FC = () => {
   const navigation = useNavigation<any>();
@@ -56,12 +64,12 @@ const AccountSwitchScreen: React.FC = () => {
       // 标记当前账号
       savedAccounts = savedAccounts.map(acc => ({
         ...acc,
-        isCurrent: acc.username === username,
+        isCurrent: sameAccount(acc.username, username),
       }));
       
       // 如果当前登录的账号不在列表中，添加进去
       if (username && currentCookies) {
-        const currentAccountExists = savedAccounts.some(acc => acc.username === username);
+        const currentAccountExists = savedAccounts.some(acc => sameAccount(acc.username, username));
         if (!currentAccountExists) {
           savedAccounts.push({
             username,
@@ -85,19 +93,29 @@ const AccountSwitchScreen: React.FC = () => {
       return;
     }
 
+    invalidateMSiteLogin();
+
+    let previousUsername: string | null = null;
+    let previousCookies: string | null = null;
     try {
       // 保存当前账号信息
-      const currentCookies = await AsyncStorage.getItem('cookies');
-      const currentUsername = await AsyncStorage.getItem('username');
+      previousCookies = await AsyncStorage.getItem('cookies');
+      previousUsername = await AsyncStorage.getItem('username');
       
-      if (currentUsername && currentCookies) {
-        await saveCurrentAccount(currentUsername, currentCookies);
+      if (previousUsername && previousCookies) {
+        await saveCurrentAccount(previousUsername, previousCookies);
       }
 
       // 切换到选中的账号
-      await AsyncStorage.setItem('username', account.username);
-      await AsyncStorage.setItem('cookies', account.cookies);
-      await AsyncStorage.setItem('isLoggedIn', 'true');
+      await setLoggedIn(account.username, account.cookies);
+      // 绕过资料快照，后台重建当前账号的 set_identity Cookie。
+      void getUserInfo(true).catch(error => console.error('Refresh switched account identity error:', error));
+      try {
+        await AsyncStorage.multiRemove(['mSiteCookies', 'mSiteLoggedIn', 'mSiteCookiesExpiry', 'mSiteCookiesTimestamp']);
+        await clearMSiteCookieJar();
+      } catch (error) {
+        console.error('Clear previous M-site session error:', error);
+      }
 
       Alert.alert('成功', `已切换到账号 ${account.nickname || account.username}`, [
         {
@@ -109,6 +127,14 @@ const AccountSwitchScreen: React.FC = () => {
         },
       ]);
     } catch (error) {
+      if (previousUsername && previousCookies) {
+        try {
+          await setLoggedIn(previousUsername, previousCookies);
+        } catch (rollbackError) {
+          console.error('Restore previous account error:', rollbackError);
+        }
+      }
+      activateAccountCache(previousUsername);
       console.error('Switch account error:', error);
       Alert.alert('错误', '切换账号失败，请重试');
     }
@@ -120,7 +146,7 @@ const AccountSwitchScreen: React.FC = () => {
       let savedAccounts: SavedAccount[] = savedAccountsJson ? JSON.parse(savedAccountsJson) : [];
       
       // 检查是否已存在
-      const existingIndex = savedAccounts.findIndex(acc => acc.username === username);
+      const existingIndex = savedAccounts.findIndex(acc => sameAccount(acc.username, username));
       
       const accountInfo: SavedAccount = {
         username,
@@ -148,7 +174,7 @@ const AccountSwitchScreen: React.FC = () => {
   const handleRemoveAccount = (account: SavedAccount) => {
     Alert.alert(
       '确认删除',
-      `确定要删除账号 ${account.nickname || account.username} 吗？`,
+      `确定要删除账号 ${account.nickname || account.username} 吗？该账号在本机的历史记录、草稿、缓存和背景图也会清除。`,
       [
         {
           text: '取消',
@@ -158,17 +184,40 @@ const AccountSwitchScreen: React.FC = () => {
           text: '删除',
           style: 'destructive',
           onPress: async () => {
+            let savedAccountsJson: string | null = null;
             try {
-              const savedAccountsJson = await AsyncStorage.getItem('savedAccounts');
+              savedAccountsJson = await AsyncStorage.getItem('savedAccounts');
               let savedAccounts: SavedAccount[] = savedAccountsJson ? JSON.parse(savedAccountsJson) : [];
               
               // 删除指定账号
-              savedAccounts = savedAccounts.filter(acc => acc.username !== account.username);
+              savedAccounts = savedAccounts.filter(acc => !sameAccount(acc.username, account.username));
               await AsyncStorage.setItem('savedAccounts', JSON.stringify(savedAccounts));
+              await waitForReadingProgressWrites();
+              await removeAllAccountData(account.username);
+              await removeMSiteAccountData(account.username);
+              const userDataDir = `${RNFetchBlob.fs.dirs.DocumentDir}/user_data`;
+              if (await RNFetchBlob.fs.exists(userDataDir)) {
+                const files = await RNFetchBlob.fs.ls(userDataDir);
+                for (const file of files) {
+                  if (!file.startsWith('profile_background_') || !file.endsWith('.jpg')) continue;
+                  try {
+                    const fileOwner = decodeURIComponent(file.slice('profile_background_'.length, -'.jpg'.length));
+                    if (fileOwner.trim().toLowerCase() === account.username.trim().toLowerCase()) {
+                      await RNFetchBlob.fs.unlink(`${userDataDir}/${file}`);
+                    }
+                  } catch (error) {
+                    console.error('Skip invalid profile background filename:', error);
+                  }
+                }
+              }
               
               // 刷新列表
               await loadAccounts();
             } catch (error) {
+              if (savedAccountsJson !== null) {
+                await AsyncStorage.setItem('savedAccounts', savedAccountsJson).catch(rollbackError =>
+                  console.error('Restore account list error:', rollbackError));
+              }
               console.error('Remove account error:', error);
               Alert.alert('错误', '删除账号失败');
             }

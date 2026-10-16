@@ -9,6 +9,15 @@
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+export const PUBLIC_CONTENT_SNAPSHOT_KEYS = {
+  topTen: 'topTen_cache',
+  hotPostsFirstPage: 'hotPosts_page1_cache',
+} as const;
+export const PUBLIC_CONTENT_FRESH_AGES = {
+  topTen: 2 * 60 * 1000,
+  hotPostsFirstPage: 60 * 1000,
+} as const;
+
 interface CacheItem<T> {
   data: T;
   timestamp: number;
@@ -62,6 +71,7 @@ interface CacheStore {
 class CacheManager {
   private static instance: CacheManager;
   private cache: CacheStore;
+  private readonly revisions = new Map<keyof CacheStore, number>();
   private readonly DEFAULT_DURATION = 60 * 1000; // 默认1分钟
   private readonly DICT_CATEGORIES: Array<keyof CacheStore> = [
     'boardPosts',
@@ -296,6 +306,7 @@ class CacheManager {
    * 清除指定分类的缓存
    */
   clearCategory(category: keyof CacheStore): void {
+    this.revisions.set(category, this.getRevision(category) + 1);
     if (this.DICT_CATEGORIES.includes(category)) {
       (this.cache[category] as any) = {};
     } else {
@@ -307,6 +318,7 @@ class CacheManager {
   /** 清除字典分类下指定 key 前缀的缓存。 */
   clearByKeyPrefix(category: keyof CacheStore, keyPrefix: string): void {
     if (!this.DICT_CATEGORIES.includes(category)) return;
+    this.revisions.set(category, this.getRevision(category) + 1);
     const categoryCache = this.cache[category] as {[key: string]: CacheItem<any>};
     Object.keys(categoryCache).forEach(key => {
       if (key.startsWith(keyPrefix)) {
@@ -316,10 +328,35 @@ class CacheManager {
     console.log(`[Cache] Cleared ${category}[${keyPrefix}*]`);
   }
 
+  /** 使旧请求失去写入资格，但保留旧数据作为刷新失败时的兜底。 */
+  invalidateWrites(category: keyof CacheStore): void {
+    this.revisions.set(category, this.getRevision(category) + 1);
+  }
+
+  /** 让匹配的内存快照过期，同时保留内容供网络失败时展示。 */
+  markStale(category: keyof CacheStore, freshAge: number, keyMatches?: (key: string) => boolean): void {
+    this.invalidateWrites(category);
+    const staleBefore = Date.now() - freshAge - 1;
+    if (this.DICT_CATEGORIES.includes(category)) {
+      const entries = this.cache[category] as {[key: string]: CacheItem<any>};
+      Object.entries(entries).forEach(([key, item]) => {
+        if (!keyMatches || keyMatches(key)) {
+          item.timestamp = Math.min(item.timestamp, staleBefore);
+        }
+      });
+    } else if (!keyMatches) {
+      const item = this.cache[category] as CacheItem<any> | undefined;
+      if (item) item.timestamp = Math.min(item.timestamp, staleBefore);
+    }
+  }
+
   /**
    * 清除所有缓存
    */
   clearAll(): void {
+    [...this.DICT_CATEGORIES, ...this.SINGLE_CATEGORIES].forEach(category => {
+      this.revisions.set(category, this.getRevision(category) + 1);
+    });
     this.cache = {
       boardPosts: {},
       postDetail: {},
@@ -335,6 +372,11 @@ class CacheManager {
       msiteStaticUrl: {},
     };
     console.log('[Cache] Cleared all caches');
+  }
+
+  /** 清理代次，用于阻止清理前开始的异步回填。 */
+  getRevision(category: keyof CacheStore): number {
+    return this.revisions.get(category) || 0;
   }
 
   /**
@@ -412,7 +454,7 @@ class CacheManager {
   }
 
   private getDuration(category: keyof CacheStore, duration?: number, itemDuration?: number): number {
-    return duration || itemDuration || this.CACHE_DURATIONS[category as string] || this.DEFAULT_DURATION;
+    return duration ?? itemDuration ?? this.CACHE_DURATIONS[category as string] ?? this.DEFAULT_DURATION;
   }
 
   private pruneCategory(category: keyof CacheStore): void {
@@ -478,6 +520,12 @@ export const getCacheStats = () => {
   return cacheManager.getStats();
 };
 
+export const getCacheRevision = (category: keyof CacheStore): number =>
+  cacheManager.getRevision(category);
+
+export const markCacheStale = (category: keyof CacheStore, freshAge: number, keyMatches?: (key: string) => boolean): void =>
+  cacheManager.markStale(category, freshAge, keyMatches);
+
 export const cleanExpiredCache = (duration?: number) => {
   return cacheManager.cleanExpired(duration);
 };
@@ -495,6 +543,38 @@ interface PersistedSnapshot<T> {
   timestamp: number;
 }
 
+const pendingSnapshotWrites = new Map<string, Promise<void>>();
+const forcedStaleSnapshots = new Map<string, {since: number; minAge: number}>();
+
+/** 清理持久层前等待已提交的写入，避免删除后旧写入又落盘。 */
+export const flushPersistedSnapshotWrites = async (): Promise<void> => {
+  await Promise.all([...pendingSnapshotWrites.values()]);
+};
+
+/** 让快照失去新鲜度但继续作为离线兜底使用。 */
+export const makePersistedSnapshotStale = async (storageKey: string, freshAge: number): Promise<void> => {
+  const invalidatedAt = Date.now();
+  forcedStaleSnapshots.set(storageKey, {since: invalidatedAt, minAge: freshAge + 1});
+  const previous = pendingSnapshotWrites.get(storageKey);
+  const operation = (previous || Promise.resolve()).then(async () => {
+    const raw = await AsyncStorage.getItem(storageKey);
+    if (!raw) return;
+    const snapshot = JSON.parse(raw) as PersistedSnapshot<unknown>;
+    if (!snapshot || !Number.isFinite(snapshot.timestamp) || !('data' in snapshot)
+      || snapshot.timestamp > invalidatedAt) return;
+    const staleTimestamp = Date.now() - freshAge - 1;
+    if (snapshot.timestamp > staleTimestamp) {
+      await AsyncStorage.setItem(storageKey, JSON.stringify({...snapshot, timestamp: staleTimestamp}));
+    }
+  });
+  pendingSnapshotWrites.set(storageKey, operation);
+  try {
+    await operation;
+  } finally {
+    if (pendingSnapshotWrites.get(storageKey) === operation) pendingSnapshotWrites.delete(storageKey);
+  }
+};
+
 /** 从 AsyncStorage 读取一份带时间戳的快照，返回数据及其新鲜度信息；不存在或解析失败返回 null。 */
 export const readPersistedSnapshot = async <T>(
   storageKey: string,
@@ -507,11 +587,14 @@ export const readPersistedSnapshot = async <T>(
     }
 
     const parsed: PersistedSnapshot<T> = JSON.parse(raw);
-    if (!parsed || typeof parsed.timestamp !== 'number') {
+    const now = Date.now();
+    if (!parsed || !Number.isFinite(parsed.timestamp) || parsed.timestamp > now + 5 * 60 * 1000) {
       return null;
     }
 
-    const age = Date.now() - parsed.timestamp;
+    const forced = forcedStaleSnapshots.get(storageKey);
+    const age = Math.max(0, now - parsed.timestamp,
+      forced && parsed.timestamp <= forced.since ? forced.minAge : 0);
     return {data: parsed.data, age, isExpired: age >= maxAge};
   } catch (error) {
     console.error(`[Cache] readPersistedSnapshot failed for ${storageKey}:`, error);
@@ -524,10 +607,18 @@ export const writePersistedSnapshot = async <T>(
   storageKey: string,
   data: T,
 ): Promise<void> => {
-  try {
-    const snapshot: PersistedSnapshot<T> = {data, timestamp: Date.now()};
-    await AsyncStorage.setItem(storageKey, JSON.stringify(snapshot));
-  } catch (error) {
-    console.error(`[Cache] writePersistedSnapshot failed for ${storageKey}:`, error);
-  }
+  const snapshot: PersistedSnapshot<T> = {data, timestamp: Date.now()};
+  const previous = pendingSnapshotWrites.get(storageKey);
+  const write = (previous || Promise.resolve()).then(async () => {
+    try {
+      await AsyncStorage.setItem(storageKey, JSON.stringify(snapshot));
+      const forced = forcedStaleSnapshots.get(storageKey);
+      if (forced && snapshot.timestamp >= forced.since) forcedStaleSnapshots.delete(storageKey);
+    } catch (error) {
+      console.error(`[Cache] writePersistedSnapshot failed for ${storageKey}:`, error);
+    }
+  });
+  pendingSnapshotWrites.set(storageKey, write);
+  await write;
+  if (pendingSnapshotWrites.get(storageKey) === write) pendingSnapshotWrites.delete(storageKey);
 };

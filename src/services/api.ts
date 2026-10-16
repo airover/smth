@@ -15,9 +15,11 @@ import {
   buildDeleteHeaders,
   buildLoginHeaders,
 } from '../utils/requestUtils';
-import {getCookies, storeCookies, storeMSiteCookies, getMSiteCookies, extractAndStoreMSiteCookiesFromJar, clearMSiteCookieJar, isMSiteResponseLoggedIn, handleMSiteCookieExpired, setMSiteEnabled, resetMSiteBackoff} from './auth';
+import {fetchAuthenticatedUsername, getCookies, setLoggedIn, storeCookies, storeMSiteCookies, getMSiteCookies, extractAndStoreMSiteCookiesFromJar, clearMSiteCookieJar, getMSiteResponseStatus, handleMSiteCookieExpired, setMSiteEnabled, resetMSiteBackoff, beginMSiteLogin, getMSiteLoginContext, trackMSiteLogin, finishMSiteLogin, isMSiteLoginCurrent, invalidateMSiteLogin, getCurrentUsername, MSiteLoginContext} from './auth';
 import {buildHeaders} from '../utils/requestUtils';
-import {setCache, setCacheWithTimestamp, getCacheWithTimestamp, clearCache as clearCacheManager, readPersistedSnapshot, writePersistedSnapshot} from './cacheManager';
+import {setCache, setCacheWithTimestamp, getCacheWithTimestamp, getCacheRevision, clearCache as clearCacheManager} from './cacheManager';
+import {AccountCacheContext, activateAccountCache, getAccountCacheContext, isAccountCacheCurrent, readAccountSnapshot, writeAccountSnapshot, removeAccountSnapshotsForUser} from './accountCache';
+import {invalidateContentCache} from './contentCache';
 
 const BASE_URL = 'https://wap.newsmth.net';
 const WAP_BASE_URL = 'https://wap.newsmth.net';
@@ -27,17 +29,19 @@ const M_SITE_BASE_URL = 'https://m.newsmth.net';
 const DEFAULT_PAGE = 1; // 默认页码
 const DEFAULT_PAGE_SIZE = 20; // 默认每页数量
 const DEFAULT_SEARCH_STATUS = 0; // 默认搜索状态
-let userInfoRequest: Promise<any> | null = null;
+let userInfoRequest: {generation: number; revision: number; promise: Promise<any>} | null = null;
 
-const fetchUserInfoOnce = async (): Promise<any> => {
-  if (userInfoRequest) {
-    return userInfoRequest;
+const fetchUserInfoOnce = async (context: AccountCacheContext): Promise<any> => {
+  const revision = getCacheRevision('userInfo');
+  if (userInfoRequest?.generation === context.generation && userInfoRequest.revision === revision) {
+    return userInfoRequest.promise;
   }
 
-  userInfoRequest = fetchUserInfoFromServer().finally(() => {
-    userInfoRequest = null;
+  const promise = fetchUserInfoFromServer(context, revision).finally(() => {
+    if (userInfoRequest?.promise === promise) userInfoRequest = null;
   });
-  return userInfoRequest;
+  userInfoRequest = {generation: context.generation, revision, promise};
+  return promise;
 };
 
 // storeCookies 已移至 auth.ts 统一管理
@@ -204,18 +208,30 @@ export const login = async (
       const json = JSON.parse(responseText);
       console.log('login API response:', json);
       
-      // 保存 Cookie
-      const setCookie = response.headers.get('set-cookie');
-      if (setCookie) {
-        await storeCookies(setCookie);
-      }
-      
       // 检查响应格式: { code: 1, data: { account: {...}, url: "/" }, message: "操作成功" }
       if (json.code === 1) {
-        // 登录成功
-        const accountName = json.data?.account?.name || username;
-        await AsyncStorage.setItem('username', accountName);
-        await AsyncStorage.setItem('isLoggedIn', 'true');
+        const serverAccountName = json.data?.account?.name?.trim();
+        let loginCookies = response.headers.get('set-cookie');
+        try {
+          const jar = await CookieManager.get(WAP_BASE_URL);
+          const jarCookies = ['kbs-info', 'kbs-key']
+            .map(key => jar[key]?.value ? `${key}=${jar[key].value}` : null)
+            .filter((part): part is string => !!part)
+            .join('; ');
+          if (jarCookies.includes('kbs-info=') && jarCookies.includes('kbs-key=')) loginCookies = jarCookies;
+        } catch (cookieError) {
+          console.error('读取登录 Cookie jar 失败:', cookieError);
+        }
+        if (!loginCookies?.includes('kbs-info=') || !loginCookies.includes('kbs-key=')) {
+          return {success: false, message: '登录成功但未能获取 Cookie，请重试'};
+        }
+        // 新会话不继承上一账号的 set_identity；账号资料稍后会重建它。
+        await storeCookies(loginCookies, false, false);
+        const committedCookies = await getCookies();
+        if (!committedCookies) return {success: false, message: '登录 Cookie 保存失败，请重试'};
+        const accountName = serverAccountName || await fetchAuthenticatedUsername(committedCookies);
+        if (!accountName) return {success: false, message: '登录成功但未能确认账号名，请重试'};
+        await setLoggedIn(accountName, committedCookies);
         
         // 登录成功后立即获取用户信息，以便构造 set_identity cookie
         // 不等待它完成，让它在后台执行
@@ -254,18 +270,30 @@ export const login = async (
  * 登录 M 站 (m.newsmth.net)
  * M 站使用 KBS 原生认证系统，cookie 为 main[UTMPUSERID]、main[UTMPKEY]、main[UTMPNUM]
  */
-export const loginMSite = async (
+type MSiteLoginResult = {success: boolean; message?: string; reason?: 'credentials' | 'captcha' | 'cancelled' | 'network' | 'unknown'};
+
+const loginMSiteCore = async (
   username: string,
   password: string,
-  captchaParams?: {
+  captchaParams: {
     captcha_id?: string;
     lot_number?: string;
     captcha_output?: string;
     pass_token?: string;
     gen_time?: string;
-  }
-): Promise<{success: boolean; message?: string}> => {
+  } | undefined,
+  session: {context: MSiteLoginContext; controller: AbortController},
+): Promise<MSiteLoginResult> => {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
   try {
+    const confirmLogin = async (): Promise<MSiteLoginResult> => {
+      if (!isMSiteLoginCurrent(session.context)) return {success: false, reason: 'cancelled'};
+      if (await verifyMSiteLoginStatus(true) && isMSiteLoginCurrent(session.context)) {
+        resetMSiteBackoff();
+        return {success: true, message: '登录成功'};
+      }
+      return {success: false, message: '未能确认 M 站登录状态，请稍后重试'};
+    };
     console.log('[M站登录] 开始登录 M 站...');
 
     // 构造 M 站登录请求的 body
@@ -304,7 +332,7 @@ export const loginMSite = async (
       'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1',
     };
 
-    console.log('[M站登录] 请求体:', formData.toString().replace(/passwd=[^&]+/, 'passwd=***'));
+    console.log('[M站登录] 已构造登录请求（账号和验证码参数不记录）');
 
     // M 站登录接口 /user/login
     // 成功时返回 302 + Set-Cookie，RN 的 fetch 会自动跟随重定向
@@ -316,8 +344,8 @@ export const loginMSite = async (
     // 策略2：让 fetch 自动跟随重定向，通过响应内容判断登录是否成功，
     //         然后再发一个 GET 请求获取页面来检查是否已登录
     
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), LOGIN_TIMEOUT);
+    const controller = session.controller;
+    timeoutId = setTimeout(() => controller.abort(), LOGIN_TIMEOUT);
 
     // 策略1：先尝试 redirect: manual
     let response: Response;
@@ -344,7 +372,7 @@ export const loginMSite = async (
       } as any);
     }
 
-    clearTimeout(timeoutId);
+    if (!isMSiteLoginCurrent(session.context)) return {success: false, reason: 'cancelled'};
 
     console.log('[M站登录] 响应状态:', response.status);
     console.log('[M站登录] 响应URL:', response.url);
@@ -355,20 +383,21 @@ export const loginMSite = async (
     // 打印所有响应头用于调试
     const allHeaderEntries: string[] = [];
     response.headers.forEach((value: string, key: string) => {
-      allHeaderEntries.push(`${key}: ${value.substring(0, 100)}`);
+      allHeaderEntries.push(`${key}: ${key.toLowerCase() === 'set-cookie' ? '[redacted]' : value.substring(0, 100)}`);
     });
     console.log('[M站登录] 响应头:', allHeaderEntries.join(' | '));
 
     if (setCookie) {
-      console.log('[M站登录] 从响应头获取到 Set-Cookie:', setCookie.substring(0, 200));
-      const stored = await storeMSiteCookies(setCookie);
+      console.log('[M站登录] 响应头包含 Set-Cookie');
+      const stored = await storeMSiteCookies(setCookie, session.context);
       if (stored) {
-        resetMSiteBackoff();
-        return { success: true, message: '登录成功' };
+        return confirmLogin();
       } else {
-        console.log('[M站登录] Set-Cookie 中 UTMPUSERID 为 guest，登录实际失败');
-        // 不 reset 退避，让后续重试有间隔
-        return { success: false, message: '登录失败，请重试' };
+        console.log('[M站登录] 响应未签发有效认证 Cookie，登录未确认');
+        // HTTP 200 仍可能包含明确的密码错误信息，继续读取响应正文。
+        if (response.status !== 200) {
+          return { success: false, message: 'M 站未签发有效 Cookie，请重新登录', reason: 'unknown' };
+        }
       }
     }
 
@@ -388,17 +417,17 @@ export const loginMSite = async (
             'Referer': `${M_SITE_BASE_URL}/user/login`,
           },
           credentials: 'include',
+          signal: controller.signal,
         } as any);
         const redirectSetCookie = redirectResponse.headers.get('set-cookie');
         if (redirectSetCookie) {
           console.log('[M站登录] 从重定向响应获取到 Set-Cookie');
-          const stored = await storeMSiteCookies(redirectSetCookie);
+          const stored = await storeMSiteCookies(redirectSetCookie, session.context);
           if (stored) {
-            resetMSiteBackoff();
-            return { success: true, message: '登录成功' };
+            return confirmLogin();
           } else {
-            console.log('[M站登录] 重定向 Set-Cookie 中 UTMPUSERID 为 guest，登录实际失败');
-            return { success: false, message: '登录失败，请重试' };
+            console.log('[M站登录] 重定向响应未签发有效认证 Cookie');
+            return { success: false, message: 'M 站未签发有效 Cookie，请检查验证码或重新登录' };
           }
         }
         // 检查重定向后的页面内容来判断是否登录成功
@@ -406,10 +435,9 @@ export const loginMSite = async (
         if (redirectText.includes('/user/logout') || redirectText.includes('注销')) {
           console.log('[M站登录] 302重定向后页面包含注销链接，通过 CookieManager 提取 cookie...');
           // 使用 CookieManager 从系统 cookie jar 中提取 cookie 并持久化
-          const extracted302 = await extractAndStoreMSiteCookiesFromJar();
+          const extracted302 = await extractAndStoreMSiteCookiesFromJar(session.context);
           if (extracted302) {
-            resetMSiteBackoff();
-            return { success: true, message: '登录成功' };
+            return confirmLogin();
           }
           return { success: false, message: '登录成功但无法从 cookie jar 提取 Cookie' };
         }
@@ -420,24 +448,24 @@ export const loginMSite = async (
     // 如果是 200（自动跟随重定向后的最终页面，或登录失败返回的登录页）
     if (response.status === 200) {
       const text = await response.text();
-      console.log('[M站登录] 响应体预览:', text.substring(0, 500));
+      console.log('[M站登录] 已收到登录页面，检查服务端提示');
       
       // 检查是否有错误提示
-      if (text.includes('验证码错误') || text.includes('密码错误') || text.includes('用户不存在')) {
-        const errorDetail = text.includes('验证码错误') ? '验证码错误' : text.includes('密码错误') ? '密码错误' : '用户不存在';
+      const visibleText = text.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ');
+      const credentialError = /(?:密码错误|密码不正确|用户名或密码错误|帐号或密码错误|账号或密码错误|用户不存在|用户名不存在)/.exec(visibleText);
+      const captchaError = /验证码(?:错误|无效|过期)/.exec(visibleText);
+      if (credentialError || captchaError) {
+        const errorDetail = (credentialError || captchaError)![0];
         console.log('[M站登录] 检测到错误提示:', errorDetail);
-        // 尝试提取更多错误上下文
-        const errorMatch = text.match(/class="error[^"]*"[^>]*>([^<]+)/i) || text.match(/class="sp"[^>]*>([^<]*(?:错误|失败)[^<]*)/i);
-        if (errorMatch) {
-          console.log('[M站登录] 错误详情:', errorMatch[1].trim());
-        }
-        return { success: false, message: `登录失败：${errorDetail}` };
+        return { success: false, message: `登录失败：${errorDetail}`,
+          reason: captchaError ? 'captcha' : 'credentials' };
       }
       
       // 检查是否在登录页面（说明登录失败）
       if (text.includes('/user/login') && text.includes('id="loginForm"')) {
         console.log('[M站登录] 仍在登录页面，登录失败');
-        return { success: false, message: '登录失败，请检查验证码是否有效' };
+        return { success: false, message: '登录失败，请检查账号、密码或验证码', reason: 'unknown' };
       }
       
       // 如果页面包含注销链接，说明登录成功（自动重定向后到了主页）
@@ -445,18 +473,17 @@ export const loginMSite = async (
         console.log('[M站登录] 检测到登录成功（页面含注销链接），通过 CookieManager 提取 cookie...');
         
         // 使用 CookieManager 从系统 cookie jar 中提取 cookie 并持久化
-        let extracted = await extractAndStoreMSiteCookiesFromJar();
+        let extracted = await extractAndStoreMSiteCookiesFromJar(session.context);
         if (!extracted) {
           // 第一次提取失败，等待一下再试（cookie jar 可能还没刷新）
           console.log('[M站登录] 第一次提取失败，延迟 500ms 重试...');
           await new Promise<void>(resolve => setTimeout(resolve, 500));
-          extracted = await extractAndStoreMSiteCookiesFromJar();
+          extracted = await extractAndStoreMSiteCookiesFromJar(session.context);
         }
         
         if (extracted) {
           console.log('[M站登录] ✅ 通过 CookieManager 成功提取并存储 M 站 cookie');
-          resetMSiteBackoff();
-          return { success: true, message: '登录成功' };
+          return confirmLogin();
         } else {
           // CookieManager 无法提取到 cookie，但登录确实成功了
           // 返回失败，避免心跳检测时发现无 Cookie 又触发重登录循环
@@ -465,14 +492,14 @@ export const loginMSite = async (
         }
       }
       
-      return { success: false, message: '登录失败，请重试' };
+      return { success: false, message: '登录失败，请重试', reason: 'unknown' };
     }
     
     // 处理其他状态码（包括 500 等服务器错误）
     console.log('[M站登录] 未预期的响应状态:', response.status);
     try {
       const errorText = await response.text();
-      console.log('[M站登录] 错误响应体预览:', errorText.substring(0, 500));
+      console.log('[M站登录] 服务端返回错误页面');
       
       // 某些情况下服务器返回 500 但验证码实际已过期
       if (errorText.includes('验证码') || errorText.includes('captcha')) {
@@ -483,14 +510,39 @@ export const loginMSite = async (
     }
     return { success: false, message: `登录失败（服务器错误 ${response.status}），请重新验证后重试` };
   } catch (error: any) {
+    if (!isMSiteLoginCurrent(session.context)) return {success: false, reason: 'cancelled'};
     if (error.name === 'AbortError') {
       console.error('[M站登录] 请求超时');
-      return { success: false, message: '请求超时' };
+      return { success: false, message: '请求超时', reason: 'network' };
     } else {
       console.error('[M站登录] 登录失败:', error.message || error);
-      return { success: false, message: error.message || '登录失败' };
+      return { success: false, message: error.message || '登录失败', reason: 'network' };
     }
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
   }
+};
+
+export const loginMSite = (
+  username: string,
+  password: string,
+  captchaParams?: {
+    captcha_id?: string; lot_number?: string; captcha_output?: string;
+    pass_token?: string; gen_time?: string;
+  },
+): Promise<MSiteLoginResult> => {
+  let pending!: Promise<MSiteLoginResult>;
+  pending = (async (): Promise<MSiteLoginResult> => {
+    const session = await beginMSiteLogin(username);
+    if (!session) return {success: false, message: '账号已切换，请重新登录 M 站', reason: 'cancelled'};
+    try {
+      return await loginMSiteCore(username, password, captchaParams, session);
+    } finally {
+      await finishMSiteLogin(session.context, pending);
+    }
+  })();
+  trackMSiteLogin(pending);
+  return pending;
 };
 
 /**
@@ -498,6 +550,8 @@ export const loginMSite = async (
  */
 export const logoutMSite = async (): Promise<void> => {
   try {
+    invalidateMSiteLogin();
+    await handleMSiteCookieExpired();
     await AsyncStorage.removeItem('mSiteCookies');
     // 兼容清除旧版本 key
     await AsyncStorage.removeItem('mSiteCookiesExpiry');
@@ -537,8 +591,12 @@ export const checkMSiteLoginStatus = async (): Promise<boolean> => {
  * 先检查本地是否有 Cookie，再请求 M 站验证 Cookie 是否真正有效
  * 适用于打开设置页面时的实时状态检查
  */
-export const verifyMSiteLoginStatus = async (): Promise<boolean> => {
+export const verifyMSiteLoginStatus = async (strict: boolean = false): Promise<boolean> => {
   try {
+    const username = await getCurrentUsername();
+    if (!username) return false;
+    const context = await getMSiteLoginContext(username);
+    if (!context) return false;
     const cookies = await getMSiteCookies();
     if (!cookies) {
       console.log('[M站验证] 未登录（无本地Cookie）');
@@ -563,16 +621,21 @@ export const verifyMSiteLoginStatus = async (): Promise<boolean> => {
     } as any);
 
     clearTimeout(timeoutId);
+    if (!response.ok) return false;
     const html = await response.text();
 
-    if (isMSiteResponseLoggedIn(html)) {
+    if (!isMSiteLoginCurrent(context)) return false;
+    const status = getMSiteResponseStatus(html, username);
+    if (status === 'matched') {
       console.log('[M站验证] ✅ Cookie 有效，已登录');
       return true;
-    } else {
+    } else if (status === 'anonymous' || status === 'mismatch') {
       console.log('[M站验证] ⚠️ Cookie 已过期，清除本地存储');
-      await handleMSiteCookieExpired();
+      await handleMSiteCookieExpired(cookies);
       return false;
     }
+    console.log('[M站验证] 无法确认响应账号，暂保留 Cookie');
+    return false;
   } catch (error: any) {
     if (error?.name === 'AbortError') {
       console.log('[M站验证] 请求超时，保持当前状态');
@@ -580,7 +643,7 @@ export const verifyMSiteLoginStatus = async (): Promise<boolean> => {
       console.log('[M站验证] 请求失败:', error?.message || error);
     }
     // 网络异常时回退到本地 Cookie 检查
-    return checkMSiteLoginStatus();
+    return strict ? false : checkMSiteLoginStatus();
   }
 };
 
@@ -602,7 +665,7 @@ export const USER_INFO_STORAGE_KEY = 'userInfo';
 const USER_INFO_TIMESTAMP_KEY = 'userInfoTimestamp';
 
 // 从服务器获取用户信息（内部函数）
-const fetchUserInfoFromServer = async (): Promise<any> => {
+const fetchUserInfoFromServer = async (context: AccountCacheContext, revision: number): Promise<any> => {
   try {
     const cookies = await getCookies();
     
@@ -620,11 +683,13 @@ const fetchUserInfoFromServer = async (): Promise<any> => {
     });
     
     const json = await response.json();
+    if (!isAccountCacheCurrent(context)) return null;
     console.log('getUserInfo API response:', json);
     
     // 检查响应格式: {code: 1, data: {account: {...}, title: "..."}}
     if (json.code === 1 && json.data?.account) {
       const account = json.data.account;
+      if (account.name?.trim().toLowerCase() !== context.username.toLowerCase()) return null;
       const data = json.data;
       
       // 调试：打印头像相关字段
@@ -678,32 +743,29 @@ const fetchUserInfoFromServer = async (): Promise<any> => {
         rawAccount: account, // 保存原始数据，用于构造 set_identity cookie
       };
       
-      // 保存用户名到本地存储
-      if (account.name) {
-        await AsyncStorage.setItem('username', account.name);
-      }
-      
       // 使用 cacheManager 统一管理缓存
+      if (!isAccountCacheCurrent(context) || getCacheRevision('userInfo') !== revision) return null;
       setCache('userInfo', undefined, userInfo, USER_INFO_CACHE_DURATION);
 
       // 同时持久化到 AsyncStorage（用于离线场景和 App 重启后恢复）
       try {
-        await writePersistedSnapshot(USER_INFO_STORAGE_KEY, userInfo);
+        await writeAccountSnapshot(USER_INFO_STORAGE_KEY, context, userInfo,
+          () => getCacheRevision('userInfo') === revision);
         console.log('用户信息已持久化到本地存储');
 
         // 更新 set_identity cookie
-        await updateSetIdentityCookie(userInfo);
+        if (isAccountCacheCurrent(context)) await updateSetIdentityCookie(userInfo);
       } catch (error) {
         console.error('持久化用户信息失败:', error);
       }
 
-      return userInfo;
+      return isAccountCacheCurrent(context) ? userInfo : null;
     }
     
     // API 返回失败，尝试从本地存储获取
     console.log('getUserInfo: API returned failure, code:', json.code);
     const storedUsername = await AsyncStorage.getItem('username');
-    if (storedUsername) {
+    if (storedUsername && isAccountCacheCurrent(context)) {
       return {
         username: storedUsername,
         // 不返回 isLoggedIn 字段，让调用方保持本地状态
@@ -715,7 +777,7 @@ const fetchUserInfoFromServer = async (): Promise<any> => {
     console.error('Get user info error:', error);
     // 出错时尝试从本地存储获取
     const storedUsername = await AsyncStorage.getItem('username');
-    if (storedUsername) {
+    if (storedUsername && isAccountCacheCurrent(context)) {
       return {
         username: storedUsername,
         // 不返回 isLoggedIn 字段，让调用方保持本地状态
@@ -735,12 +797,16 @@ const fetchUserInfoFromServer = async (): Promise<any> => {
 // 4. 无任何缓存时，同步获取
 // 5. forceRefresh=true 时，跳过缓存直接从服务器获取（用于下拉刷新）
 export const getUserInfo = async (forceRefresh: boolean = false): Promise<any> => {
+  const context = await getAccountCacheContext();
+  if (!context) return null;
+  const revision = getCacheRevision('userInfo');
   const now = Date.now();
   
   // 如果强制刷新，跳过所有缓存，直接从服务器获取
   if (forceRefresh) {
     console.log('getUserInfo: 强制刷新，跳过缓存直接从服务器获取');
-    return await fetchUserInfoOnce();
+    const result = await fetchUserInfoOnce(context);
+    return isAccountCacheCurrent(context) ? result : null;
   }
   
   // 第一层：检查 cacheManager 内存缓存（最快）
@@ -752,7 +818,9 @@ export const getUserInfo = async (forceRefresh: boolean = false): Promise<any> =
   
   // 第二层：检查 AsyncStorage 持久化缓存
   try {
-    const persisted = await readPersistedSnapshot<any>(USER_INFO_STORAGE_KEY, USER_INFO_PERSIST_MAX_STALE_AGE);
+    const persisted = await readAccountSnapshot<any>(USER_INFO_STORAGE_KEY, context, USER_INFO_PERSIST_MAX_STALE_AGE,
+      () => getCacheRevision('userInfo') === revision);
+    if (!isAccountCacheCurrent(context)) return null;
 
     if (persisted) {
       const {data: userInfo, age, isExpired} = persisted;
@@ -774,7 +842,7 @@ export const getUserInfo = async (forceRefresh: boolean = false): Promise<any> =
 
         // 持久缓存仍在最大兜底期内：先返回旧数据，再静默更新。
         console.log('getUserInfo: 持久化缓存已过新鲜期（', Math.floor(age / 1000), '秒前），返回旧数据并异步更新');
-        fetchUserInfoOnce().catch(error => {
+        fetchUserInfoOnce(context).catch(error => {
           console.error('getUserInfo: 异步更新缓存失败:', error);
         });
         return userInfo;
@@ -786,16 +854,19 @@ export const getUserInfo = async (forceRefresh: boolean = false): Promise<any> =
   
   // 第三层：无任何缓存，同步获取
   console.log('getUserInfo: 无缓存，同步从服务器获取');
-  return await fetchUserInfoOnce();
+  const result = await fetchUserInfoOnce(context);
+  return isAccountCacheCurrent(context) ? result : null;
 };
 
 // 清除用户信息缓存（用于登出等场景）
-export const clearUserInfoCache = async () => {
+export const clearUserInfoCache = async (username?: string) => {
   console.log('clearUserInfoCache: 清除用户信息缓存');
   // 清除 cacheManager 中的用户信息缓存
   clearCacheManager('userInfo');
   // 清除 AsyncStorage 持久化缓存
   try {
+    const owner = username || (await getAccountCacheContext())?.username;
+    if (owner) await removeAccountSnapshotsForUser(owner, [USER_INFO_STORAGE_KEY]);
     await AsyncStorage.removeItem(USER_INFO_STORAGE_KEY);
     await AsyncStorage.removeItem(USER_INFO_TIMESTAMP_KEY); // 旧版本遗留的独立时间戳 key，顺手清掉
     console.log('用户信息持久化缓存已清除');
@@ -968,8 +1039,9 @@ export const searchAccounts = async (
 
 // 删除帖子
 // API: DELETE https://wap.newsmth.net/wap/api/topic/delete/article/{postId}
-export const deletePost = async (postId: string, title?: string, board?: string): Promise<{success: boolean; message?: string}> => {
+export const deletePost = async (postId: string, title?: string, board?: string, topicId?: string): Promise<{success: boolean; message?: string}> => {
   try {
+    const accountContext = await getAccountCacheContext();
     const cookies = await getCookies();
     
     if (!cookies) {
@@ -1058,7 +1130,8 @@ export const deletePost = async (postId: string, title?: string, board?: string)
     const json = await response.json();
     console.log('删除帖子响应:', json);
     
-    if (json.code === 1) {
+    if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
+      await invalidateContentCache(accountContext, 'article', {boardId: board, topicId: topicId || postId});
       return {
         success: true,
         message: json.message || '删除成功'
@@ -1080,10 +1153,14 @@ export const deletePost = async (postId: string, title?: string, board?: string)
 
 // 登出
 export const logout = async () => {
+  const currentAccount = await getAccountCacheContext();
+  invalidateMSiteLogin();
+  await handleMSiteCookieExpired();
   // 清除所有AsyncStorage中的登录数据
   await AsyncStorage.removeItem('cookies');
   await AsyncStorage.removeItem('username');
   await AsyncStorage.removeItem('isLoggedIn');
+  activateAccountCache(null);
   
   // 清除 M 站相关数据
   await AsyncStorage.removeItem('mSiteCookies');
@@ -1094,9 +1171,14 @@ export const logout = async () => {
   clearCacheManager();
   
   // 清除用户信息缓存（包括持久化缓存）
-  await clearUserInfoCache();
+  await clearUserInfoCache(currentAccount?.username);
+  if (currentAccount) {
+    await removeAccountSnapshotsForUser(currentAccount.username, [
+      'favorite_boards_cache', 'my_articles_cache', 'my_replies_cache', 'my_likes_cache',
+    ]);
+  }
   
-  console.log('Logout completed, all data cleared');
+  console.log('Logout completed, session and current account snapshots cleared');
 };
 
 // 我的文章/回复数据类型
@@ -1135,13 +1217,7 @@ export const getMyArticles = async (
     
     if (!cookies) {
       console.log('getMyArticles: No cookies found');
-      return {
-        articles: [],
-        total: 0,
-        hasMore: false,
-        page,
-        pageSize: 20,
-      };
+      throw new Error('NOT_LOGGED_IN');
     }
     
     const params = new URLSearchParams({
@@ -1164,8 +1240,8 @@ export const getMyArticles = async (
     const json = await response.json();
     console.log('getMyArticles response:', JSON.stringify(json).substring(0, 500));
     
-    if (json.code === 1 && json.data) {
-      const articles = (json.data.articles || []).map((article: any) => {
+    if (json.code === 1 && Array.isArray(json.data?.articles)) {
+      const articles = json.data.articles.map((article: any) => {
         // 处理 board 字段：如果是对象则提取 name 字段，否则直接使用
         const boardObj = article.board;
         const isObject = typeof boardObj === 'object' && boardObj !== null;
@@ -1213,13 +1289,7 @@ export const getMyArticles = async (
       };
     }
     
-    return {
-      articles: [],
-      total: 0,
-      hasMore: false,
-      page,
-      pageSize: 20,
-    };
+    throw new Error(json.message || 'GET_MY_ARTICLES_FAILED');
   } catch (error) {
     console.error('getMyArticles error:', error);
     throw error;
@@ -1248,13 +1318,7 @@ export const getMyLikes = async (
     
     if (!cookies) {
       console.log('getMyLikes: No cookies found');
-      return {
-        articles: [],
-        total: 0,
-        hasMore: false,
-        page,
-        pageSize: 20,
-      };
+      throw new Error('NOT_LOGGED_IN');
     }
     
     const params = new URLSearchParams({
@@ -1277,8 +1341,8 @@ export const getMyLikes = async (
     const json = await response.json();
     console.log('getMyLikes response:', JSON.stringify(json).substring(0, 500));
     
-    if (json.code === 1 && json.data && json.data.likes) {
-      const articles = (json.data.likes || []).map((like: any) => {
+    if (json.code === 1 && Array.isArray(json.data?.likes)) {
+      const articles = json.data.likes.map((like: any) => {
         const article = like.article || {};
         const board = article.board || {};
         
@@ -1314,13 +1378,7 @@ export const getMyLikes = async (
       };
     }
     
-    return {
-      articles: [],
-      total: 0,
-      hasMore: false,
-      page,
-      pageSize: 20,
-    };
+    throw new Error(json.message || 'GET_MY_LIKES_FAILED');
   } catch (error) {
     console.error('getMyLikes error:', error);
     throw error;
@@ -1524,6 +1582,7 @@ export const addLike = async (
   }
 ): Promise<{success: boolean; message?: string; data?: any}> => {
   try {
+    const accountContext = await getAccountCacheContext();
     const cookies = await getCookies();
     
     if (!cookies) {
@@ -1587,6 +1646,7 @@ export const addLike = async (
     
     // 检查 code 和 kbsCode
     if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
+      await invalidateContentCache(accountContext, 'like', {topicId});
       return {
         success: true,
         message: json.message || '操作成功',
@@ -1613,6 +1673,7 @@ export const removeLike = async (
   boardName: string
 ): Promise<{success: boolean; message?: string}> => {
   try {
+    const accountContext = await getAccountCacheContext();
     const cookies = await getCookies();
     
     if (!cookies) {
@@ -1645,6 +1706,7 @@ export const removeLike = async (
     
     // 检查 code 和 kbsCode
     if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
+      await invalidateContentCache(accountContext, 'like', {topicId});
       return {
         success: true,
         message: json.message || '删除成功'

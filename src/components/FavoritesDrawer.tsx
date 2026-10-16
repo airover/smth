@@ -18,6 +18,7 @@ import {useTheme} from './ThemedComponents';
 import {StarIcon, ChevronRightIcon, MessageIcon} from './SvgIcons';
 import {getCardElevation} from '../utils/theme';
 import {getFavoriteTopics, getFavoriteBoards} from '../services/dataFetcher';
+import {getAccountCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
 import {formatRelativeTime} from '../utils/timeFormat';
 import {
   SPACING,
@@ -53,6 +54,11 @@ const FavoritesDrawer: React.FC<FavoritesDrawerProps> = ({visible, onClose, cont
   const [topics, setTopics] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [show, setShow] = useState(false);
+
+  useEffect(() => subscribeAccountCacheChange(() => {
+    setBoards([]);
+    setTopics([]);
+  }), []);
 
   const pan = useRef(
     PanResponder.create({
@@ -101,14 +107,20 @@ const FavoritesDrawer: React.FC<FavoritesDrawerProps> = ({visible, onClose, cont
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [b, t] = await Promise.all([
-        getFavoriteBoards(false).catch(() => []),
-        getFavoriteTopics(0, 5).catch(() => ({topics: []})),
+      const accountContext = await getAccountCacheContext();
+      if (!accountContext) return;
+      const [boardsResult, topicsResult] = await Promise.allSettled([
+        getFavoriteBoards(false),
+        getFavoriteTopics(0, 5),
       ]);
-      setBoards(b || []);
-      setTopics(t?.topics || []);
-    } catch (_) {}
-    setTimeout(() => setLoading(false), 150);
+      if (!isAccountCacheCurrent(accountContext)) return;
+      if (boardsResult.status === 'fulfilled') setBoards(boardsResult.value);
+      if (topicsResult.status === 'fulfilled') setTopics(topicsResult.value.topics);
+    } catch (error) {
+      console.error('Load favorites drawer error:', error);
+    } finally {
+      setTimeout(() => setLoading(false), 150);
+    }
   }, []);
 
   const goBoard = useCallback((board: any) => {

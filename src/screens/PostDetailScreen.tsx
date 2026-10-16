@@ -687,46 +687,49 @@ const PostDetailScreen: React.FC = () => {
     pageSize: number = REPLY_PAGE_SIZE,
   ): Promise<RepliesPageData> => {
     const repliesCacheKey = getRepliesCacheKey(postId, pageNum, order, filter);
-    let repliesData = cacheManager.get<RepliesPageData>(
+    const cacheRevision = cacheManager.getRevision('topicReplies');
+    const repliesData = cacheManager.get<RepliesPageData>(
       'topicReplies',
       repliesCacheKey,
       POST_DETAIL_CACHE_FRESH_AGE,
     );
-    const staleRepliesCache = repliesData
-      ? null
-      : getStaleCache<RepliesPageData>('topicReplies', repliesCacheKey);
-    if (staleRepliesCache) {
-      repliesData = staleRepliesCache.data;
-    }
-
     if (repliesData && repliesData.totalItems !== -1) {
       return repliesData;
     }
 
-    const result = await getTopicReplies(
-      postId,
-      pageNum,
-      pageSize,
-      getRepliesMode(order, filter),
-      filter.type === 'author' ? filter.articleId : undefined,
-    ) as RepliesPageData;
-    if (!result || result.totalItems === -1) {
-      throw new Error(`GET_TOPIC_REPLIES_FAILED_PAGE_${pageNum}`);
-    }
+    const staleRepliesCache = getStaleCache<RepliesPageData>('topicReplies', repliesCacheKey);
+    try {
+      const result = await getTopicReplies(
+        postId,
+        pageNum,
+        pageSize,
+        getRepliesMode(order, filter),
+        filter.type === 'author' ? filter.articleId : undefined,
+      ) as RepliesPageData;
+      if (!result || result.totalItems === -1) {
+        throw new Error(`GET_TOPIC_REPLIES_FAILED_PAGE_${pageNum}`);
+      }
 
-    cacheManager.set('topicReplies', repliesCacheKey, result);
-    return result;
+      if (cacheManager.getRevision('topicReplies') === cacheRevision) cacheManager.set('topicReplies', repliesCacheKey, result);
+      return result;
+    } catch (error) {
+      if (staleRepliesCache?.data && staleRepliesCache.data.totalItems !== -1) {
+        return staleRepliesCache.data;
+      }
+      throw error;
+    }
   }, [postId]);
 
   // 评分/删除点评只需要更新主帖点评区域，不应重建回复列表或改变当前阅读位置。
   const refreshPostDetailOnly = async () => {
     try {
+      const cacheRevision = cacheManager.getRevision('postDetail');
       const detailData = await getPostDetail(board, postId, 1, mSitePostId);
       if (!detailData) {
         return;
       }
 
-      cacheManager.set('postDetail', getPostCacheKey(), detailData);
+      if (cacheManager.getRevision('postDetail') === cacheRevision) cacheManager.set('postDetail', getPostCacheKey(), detailData);
       setPost(detailData as Post);
       saveBrowsingHistory({
         postId,
@@ -763,9 +766,11 @@ const PostDetailScreen: React.FC = () => {
         backfillGenerationRef.current += 1;
         setResumeDataVersion(version => version + 1);
         setResumeEarlierRequest(null);
-        cacheManager.clearByKeyPrefix('postDetail', getPostCacheKey());
-        cacheManager.clearByKeyPrefix('topicReplies', `v${POST_DETAIL_CACHE_VERSION}:${postId}-`);
+        cacheManager.invalidateWrites('postDetail');
+        cacheManager.invalidateWrites('topicReplies');
       }
+      const detailCacheRevision = cacheManager.getRevision('postDetail');
+      const repliesCacheRevision = cacheManager.getRevision('topicReplies');
       const repliesMode = getRepliesMode(order, filter);
       const firstPageSize = REPLY_PAGE_SIZE;
       if (pageNum > 1) {
@@ -794,8 +799,8 @@ const PostDetailScreen: React.FC = () => {
         }
         
         // 保存旧缓存作为降级方案
-        const oldDetailData = detailData;
-        const oldRepliesData = repliesData;
+        const oldDetailData = detailData || (forceRefresh ? getStaleCache<any>('postDetail', postCacheKey)?.data : null);
+        const oldRepliesData = repliesData || (forceRefresh ? getStaleCache<any>('topicReplies', repliesCacheKey)?.data : null);
         let repliesDataIsFallback = Boolean(shouldRefreshReplies && repliesData);
 
         if (!forceRefresh && (shouldRefreshDetail || shouldRefreshReplies)) {
@@ -837,7 +842,7 @@ const PostDetailScreen: React.FC = () => {
 
           // ✅ 修复：只有成功获取且数据有效时才缓存和更新
           if (detailResult.status === 'fulfilled' && detailResult.value) {
-            cacheManager.set('postDetail', postCacheKey, detailResult.value);
+            if (cacheManager.getRevision('postDetail') === detailCacheRevision) cacheManager.set('postDetail', postCacheKey, detailResult.value);
             detailData = detailResult.value;
           } else if (detailResult.status === 'rejected') {
             detailError = detailResult.reason;
@@ -846,7 +851,7 @@ const PostDetailScreen: React.FC = () => {
 
           if (repliesResult.status === 'fulfilled' && repliesResult.value && (repliesResult.value as RepliesPageData).totalItems !== -1) {
             // ✅ 修复：检查 totalItems !== -1 来判断是否成功
-            cacheManager.set('topicReplies', repliesCacheKey, repliesResult.value);
+            if (cacheManager.getRevision('topicReplies') === repliesCacheRevision) cacheManager.set('topicReplies', repliesCacheKey, repliesResult.value);
             repliesData = repliesResult.value;
             repliesDataIsFallback = false;
           } else if (repliesResult.status === 'rejected') {
@@ -924,7 +929,7 @@ const PostDetailScreen: React.FC = () => {
             if (requestGeneration !== replyListGenerationRef.current) return;
             // ✅ 修复：只有成功获取且数据有效时才缓存（totalItems !== -1）
             if (repliesData && (repliesData as RepliesPageData).totalItems !== -1) {
-              cacheManager.set('topicReplies', repliesCacheKey, repliesData);
+              if (cacheManager.getRevision('topicReplies') === repliesCacheRevision) cacheManager.set('topicReplies', repliesCacheKey, repliesData);
             } else {
               // API返回失败，不更新数据
               repliesData = oldRepliesData;
@@ -1114,7 +1119,7 @@ const PostDetailScreen: React.FC = () => {
                 Alert.alert('错误', '无法获取帖子ID');
                 return;
               }
-              const result = await deletePost(post.articleId, post?.title, board);
+              const result = await deletePost(post.articleId, post?.title, board, postId);
               if (result.success) {
                 Alert.alert('成功', result.message || '删除成功', [
                   {
@@ -1169,6 +1174,7 @@ const PostDetailScreen: React.FC = () => {
       boardId: board,
       boardName: post.boardName || board,
       reId: post.articleId || post.id,
+      topicId: postId,
       reTitle: post.title,
       mode: 'reply',
       aiContext: {
@@ -1204,6 +1210,7 @@ const PostDetailScreen: React.FC = () => {
       boardId: board,
       boardName: post.boardName || board,
       reId: post.articleId || post.id,
+      topicId: postId,
       reTitle: post.title,
       mode: 'reply',
       quotedContent: buildQuotedContent(post.author, post.contentText || post.content || ''),
@@ -1243,7 +1250,7 @@ const PostDetailScreen: React.FC = () => {
         style: 'destructive',
         onPress: async () => {
           try {
-            await deleteArticle(reply.id);
+            await deleteArticle(reply.id, board, postId);
             // 删除成功后从列表中移除
             LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
             setReplies(prev => prev.filter(r => r.id !== reply.id));
@@ -1277,6 +1284,7 @@ const PostDetailScreen: React.FC = () => {
       boardId: board,
       boardName: post.boardName || board,
       reId: post.articleId || post.id,
+      topicId: postId,
       reTitle: post.title,
       mode: 'reply',
       quotedContent: quotedContent, // 传递引用内容

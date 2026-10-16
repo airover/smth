@@ -15,8 +15,8 @@ import {useNavigation} from '@react-navigation/native';
 import {getTopTen, getHotPosts, getHotBoards, getReplyNotifications} from '../services/api';
 import {TopTenItem, Board} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import {getCache, setCache, getCacheWithTimestamp, setCacheWithTimestamp, clearCache, readPersistedSnapshot, writePersistedSnapshot} from '../services/cacheManager';
+import {getCache, setCache, getCacheRevision, getCacheWithTimestamp, setCacheWithTimestamp, clearCache, readPersistedSnapshot, writePersistedSnapshot, PUBLIC_CONTENT_FRESH_AGES, PUBLIC_CONTENT_SNAPSHOT_KEYS} from '../services/cacheManager';
+import {getAccountCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
 import {useTheme, SkeletonList} from '../components/ThemedComponents';
 import {getCardElevation} from '../utils/theme';
 import {
@@ -40,7 +40,7 @@ const UNREAD_COUNT_REFRESH_INTERVAL = 30 * 1000;
 // 缓存配置常量
 const CACHE_CONFIG = {
   TOP_TEN: {
-    MEMORY_FRESH_TTL: 2 * 60 * 1000,
+    MEMORY_FRESH_TTL: PUBLIC_CONTENT_FRESH_AGES.topTen,
     PERSIST_MAX_STALE: 24 * 60 * 60 * 1000,
   },
   HOT_BOARDS: {
@@ -48,15 +48,15 @@ const CACHE_CONFIG = {
     PERSIST_MAX_STALE: 3 * 24 * 60 * 60 * 1000,
   },
   HOT_POSTS: {
-    MEMORY_FRESH_TTL: 1 * 60 * 1000,
+    MEMORY_FRESH_TTL: PUBLIC_CONTENT_FRESH_AGES.hotPostsFirstPage,
     PERSIST_MAX_STALE: 24 * 60 * 60 * 1000,
   },
 };
 
 // 三处持久化 key 沿用旧版本的字面量，保证升级后仍能读出已有的 AsyncStorage 数据。
-export const TOP_TEN_STORAGE_KEY = 'topTen_cache';
+export const TOP_TEN_STORAGE_KEY = PUBLIC_CONTENT_SNAPSHOT_KEYS.topTen;
 export const HOT_BOARDS_STORAGE_KEY = 'hotBoards_cache';
-export const HOT_POSTS_FIRST_PAGE_STORAGE_KEY = 'hotPosts_page1_cache';
+export const HOT_POSTS_FIRST_PAGE_STORAGE_KEY = PUBLIC_CONTENT_SNAPSHOT_KEYS.hotPostsFirstPage;
 
 type HomeSnapshotCategory = 'topTen' | 'hotBoards' | 'hotPostsFirstPage';
 
@@ -69,6 +69,7 @@ const getCachedSnapshot = async <T,>(
   memoryFreshTTL: number,
   persistMaxStale: number,
 ): Promise<{data: T; age: number; isExpired: boolean} | null> => {
+  const revision = getCacheRevision(category);
   const memory = getCacheWithTimestamp<T>(category);
   if (memory) {
     const age = Date.now() - memory.timestamp;
@@ -78,6 +79,7 @@ const getCachedSnapshot = async <T,>(
   }
 
   const persisted = await readPersistedSnapshot<T>(storageKey, persistMaxStale);
+  if (getCacheRevision(category) !== revision) return null;
   if (persisted && !persisted.isExpired) {
     // 回填时保留持久快照的原始年龄，避免旧数据被重新标记成新缓存。
     setCacheWithTimestamp(category, undefined, persisted.data, Date.now() - persisted.age);
@@ -94,7 +96,9 @@ const saveCachedSnapshot = <T,>(
   category: HomeSnapshotCategory,
   storageKey: string,
   data: T,
+  expectedRevision: number,
 ): void => {
+  if (getCacheRevision(category) !== expectedRevision) return;
   setCache(category, undefined, data);
   writePersistedSnapshot(storageKey, data);
 };
@@ -113,6 +117,7 @@ const HomeScreen: React.FC = () => {
   const [hasMoreHotPosts, setHasMoreHotPosts] = useState(true);
   const [loadingMoreHotPosts, setLoadingMoreHotPosts] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [unreadReplyCount, setUnreadReplyCount] = useState(0);
   const isSilentRefreshingRef = useRef(false);
   const apiRequestRef = useRef<Promise<void> | null>(null);
@@ -134,12 +139,14 @@ const HomeScreen: React.FC = () => {
 
     const request = (async () => {
       try {
-        if (await AsyncStorage.getItem('isLoggedIn') !== 'true') {
+        const context = await getAccountCacheContext();
+        if (!context) {
           setUnreadReplyCount(0);
           unreadCountFetchedAtRef.current = Date.now();
           return;
         }
         const result = await getReplyNotifications(1, 1);
+        if (!isAccountCacheCurrent(context)) return;
         setUnreadReplyCount(result.total);
         unreadCountFetchedAtRef.current = Date.now();
       } catch (error) {
@@ -156,6 +163,13 @@ const HomeScreen: React.FC = () => {
       }
     }
   }, []);
+
+  useEffect(() => subscribeAccountCacheChange(() => {
+    unreadCountFetchedAtRef.current = 0;
+    unreadCountRequestRef.current = null;
+    setUnreadReplyCount(0);
+    loadUnreadReplyCount(true);
+  }), [loadUnreadReplyCount]);
 
   const openReplyNotifications = useCallback(() => {
     navigation.navigate('Mail', {tab: 'reply'});
@@ -194,31 +208,57 @@ const HomeScreen: React.FC = () => {
 
   const loadDataFromAPI = useCallback(async (isBackground = false, applyToState = true): Promise<void> => {
     if (apiRequestRef.current) {
-      return apiRequestRef.current;
+      if (isBackground) return apiRequestRef.current;
+      // 手动刷新必须真正发起请求；等待正在进行的静默更新结束后再请求一次。
+      const inFlight = apiRequestRef.current;
+      try {
+        await inFlight;
+      } catch (error) {
+        console.error('Previous home refresh failed:', error);
+      }
+      if (apiRequestRef.current === inFlight) apiRequestRef.current = null;
     }
 
     const request = (async () => {
       try {
+        const topTenRevision = getCacheRevision('topTen');
+        const hotBoardsRevision = getCacheRevision('hotBoards');
+        const hotPostsRevision = getCacheRevision('hotPostsFirstPage');
         console.log('Loading data from API...', isBackground ? '(background)' : '');
-        const [topTenData, hotPostsResult, hotBoardsData] = await Promise.all([
+        const [topTenResult, hotPostsRequest, hotBoardsResult] = await Promise.allSettled([
           getTopTen(),
           getHotPosts(1, 20),
           getHotBoards(),
         ]);
+        const topTenData = topTenResult.status === 'fulfilled' ? topTenResult.value : null;
+        const hotPostsResult = hotPostsRequest.status === 'fulfilled' ? hotPostsRequest.value : null;
+        const hotBoardsData = hotBoardsResult.status === 'fulfilled' ? hotBoardsResult.value : null;
+        if (topTenResult.status === 'rejected') console.error('Top ten refresh failed:', topTenResult.reason);
+        if (hotPostsRequest.status === 'rejected') console.error('Hot posts refresh failed:', hotPostsRequest.reason);
+        if (hotBoardsResult.status === 'rejected') console.error('Hot boards refresh failed:', hotBoardsResult.reason);
+        if (topTenResult.status === 'rejected' && hotPostsRequest.status === 'rejected'
+          && hotBoardsResult.status === 'rejected') {
+          if (isBackground) return;
+          throw topTenResult.reason;
+        }
       
         console.log('API data loaded:', {
           topTen: topTenData ? topTenData.length : 'null',
-          hotPosts: hotPostsResult.topics.length,
-          hotBoards: hotBoardsData.length,
-          totalPages: hotPostsResult.totalPages
+          hotPosts: hotPostsResult?.topics?.length ?? 'null',
+          hotBoards: hotBoardsData?.length ?? 'null',
+          totalPages: hotPostsResult?.totalPages ?? 'null'
         });
+        if (!topTenData?.length && !hotPostsResult?.topics?.length && !hotBoardsData?.length) {
+          if (isBackground) return;
+          throw new Error('HOME_REFRESH_NO_USABLE_DATA');
+        }
       
         // 只有在数据非空时才更新缓存和状态
         if (topTenData !== null && topTenData.length > 0) {
           if (applyToState) {
             setTopTen(topTenData);
           }
-          saveCachedSnapshot('topTen', TOP_TEN_STORAGE_KEY, topTenData);
+          saveCachedSnapshot('topTen', TOP_TEN_STORAGE_KEY, topTenData, topTenRevision);
         } else {
           console.log('[Cache] topTen返回空数据，保留本地缓存');
         }
@@ -228,24 +268,25 @@ const HomeScreen: React.FC = () => {
           if (applyToState) {
             setHotBoards(hotBoardsData);
           }
-          saveCachedSnapshot('hotBoards', HOT_BOARDS_STORAGE_KEY, hotBoardsData);
+          saveCachedSnapshot('hotBoards', HOT_BOARDS_STORAGE_KEY, hotBoardsData, hotBoardsRevision);
         } else {
           console.log('[Cache] hotBoards返回空数据，保留本地缓存');
         }
 
-        if (hotPostsResult.topics && hotPostsResult.topics.length > 0) {
+        if (hotPostsResult?.topics && hotPostsResult.topics.length > 0) {
           if (applyToState) {
             setHotPosts(hotPostsResult.topics);
             setHotPostsPage(1);
             setHasMoreHotPosts(hotPostsResult.totalPages > 1);
           }
-          saveCachedSnapshot('hotPostsFirstPage', HOT_POSTS_FIRST_PAGE_STORAGE_KEY, hotPostsResult);
+          saveCachedSnapshot('hotPostsFirstPage', HOT_POSTS_FIRST_PAGE_STORAGE_KEY, hotPostsResult, hotPostsRevision);
         } else {
           console.log('[Cache] hotPosts返回空数据，保留本地缓存');
         }
 
         if (applyToState) {
           setDataLoaded(true);
+          if (topTenData?.length || hotPostsResult?.topics?.length || hotBoardsData?.length) setLoadError(false);
         } else {
           hasPendingSilentUpdateRef.current = true;
         }
@@ -394,6 +435,7 @@ const HomeScreen: React.FC = () => {
       await loadDataFromAPI(false);
     } catch (error) {
       console.error('Load data error:', error);
+      if (!silent && !hasDisplayableDataRef.current) setLoadError(true);
     } finally {
       if (!silent) {
         setLoading(false);
@@ -538,6 +580,7 @@ const HomeScreen: React.FC = () => {
       ]);
     } catch (error) {
       console.error('Refresh error:', error);
+      if (!hasDisplayableDataRef.current) setLoadError(true);
     } finally {
       isRefreshInProgressRef.current = false;
       setRefreshing(false);
@@ -670,6 +713,11 @@ const HomeScreen: React.FC = () => {
           onMomentumScrollEnd={handleMomentumScrollEnd}
           renderItem={() => (
           <View>
+            {loadError && !hasDisplayableDataRef.current && (
+              <TouchableOpacity onPress={onRefreshInternal} style={styles.section} accessibilityRole="button" accessibilityLabel="重试加载首页">
+                <Text style={[styles.emptyText, {color: theme.secondaryText}]}>加载失败，点击重试</Text>
+              </TouchableOpacity>
+            )}
             <View style={[styles.section, {backgroundColor: theme.cardBackground}, getCardElevation(theme)]}>
               <Text style={[styles.sectionTitle, {color: theme.text}]}>今日十大</Text>
               {topTen.length > 0 ? (

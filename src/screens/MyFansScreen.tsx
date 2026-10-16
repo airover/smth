@@ -10,8 +10,8 @@ import {
   Alert,
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import {getFansList} from '../services/api';
+import {getAccountCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
 import {useTheme} from '../components/ThemedComponents';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {ChevronRightIcon, UsersIcon} from '../components/SvgIcons';
@@ -42,24 +42,15 @@ const MyFansScreen: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [currentUsername, setCurrentUsername] = useState<string>('');
   const [currentPage, setCurrentPage] = useState(1);
   const [totalFans, setTotalFans] = useState(0);
   const [hasMore, setHasMore] = useState(true);
 
-  // 加载当前用户名
-  const loadCurrentUsername = async () => {
-    try {
-      const username = await AsyncStorage.getItem('username');
-      if (username) {
-        setCurrentUsername(username);
-        return username;
-      }
-    } catch (error) {
-      console.error('Load current username error:', error);
-    }
-    return '';
-  };
+  useEffect(() => subscribeAccountCacheChange(() => {
+    setFans([]);
+    setCurrentPage(1);
+    setTotalFans(0);
+  }), []);
 
   // 加载粉丝列表
   const loadFans = async (
@@ -69,7 +60,8 @@ const MyFansScreen: React.FC = () => {
     silent: boolean = false,
   ) => {
     try {
-      const username = currentUsername || await loadCurrentUsername();
+      const accountContext = await getAccountCacheContext();
+      const username = accountContext?.username || '';
       
       if (!username) {
         if (!silent) {
@@ -80,6 +72,7 @@ const MyFansScreen: React.FC = () => {
       }
 
       const result = await getFansList(username, page, forceRefresh);
+      if (!isAccountCacheCurrent(accountContext)) return;
       
       if (result.success && result.fans) {
         if (append) {
@@ -148,7 +141,7 @@ const MyFansScreen: React.FC = () => {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await loadFans(1, true, false);
-  }, [currentUsername]);
+  }, []);
 
   // 加载更多
   const onLoadMore = useCallback(() => {

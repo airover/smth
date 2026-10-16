@@ -7,7 +7,7 @@
  * 3. 提供统一的已读状态管理接口
  */
 import React, {createContext, useContext, useState, useEffect, useCallback, useRef} from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import {getLocalCacheContext, isAccountCacheCurrent, readAccountItem, writeAccountItem, subscribeAccountCacheChange} from '../services/accountCache';
 
 const READ_POSTS_IDS_KEY = 'read_posts_ids';
 
@@ -30,11 +30,11 @@ export const ReadPostsProvider: React.FC<{children: React.ReactNode}> = ({childr
     isLoadingRef.current = true;
     
     try {
-      const jsonValue = await AsyncStorage.getItem(READ_POSTS_IDS_KEY);
-      if (jsonValue != null) {
-        const ids: string[] = JSON.parse(jsonValue);
-        setReadPosts(new Set(ids));
-      }
+      const context = await getLocalCacheContext();
+      const jsonValue = await readAccountItem(READ_POSTS_IDS_KEY, context);
+      if (context && !isAccountCacheCurrent(context)) return;
+      const ids: string[] = jsonValue ? JSON.parse(jsonValue) : [];
+      setReadPosts(new Set(ids));
     } catch (e) {
       console.error('[ReadPosts] Failed to load read posts:', e);
     } finally {
@@ -44,6 +44,11 @@ export const ReadPostsProvider: React.FC<{children: React.ReactNode}> = ({childr
 
   useEffect(() => {
     loadReadPosts();
+    return subscribeAccountCacheChange(() => {
+      setReadPosts(new Set());
+      isLoadingRef.current = false;
+      loadReadPosts();
+    });
   }, [loadReadPosts]);
 
   // 检查帖子是否已读
@@ -53,6 +58,8 @@ export const ReadPostsProvider: React.FC<{children: React.ReactNode}> = ({childr
 
   // 标记帖子为已读（使用读-改-写模式确保数据一致性）
   const markAsRead = useCallback(async (postId: string) => {
+    const context = await getLocalCacheContext();
+    if (!context) return;
     // 先更新本地状态（即时UI反馈）
     setReadPosts(prev => {
       if (prev.has(postId)) return prev;
@@ -63,12 +70,13 @@ export const ReadPostsProvider: React.FC<{children: React.ReactNode}> = ({childr
 
     try {
       // 使用读-改-写模式确保不丢失其他页面的修改
-      const existing = await AsyncStorage.getItem(READ_POSTS_IDS_KEY);
+      const existing = await readAccountItem(READ_POSTS_IDS_KEY, context);
+      if (!isAccountCacheCurrent(context)) return;
       const ids: string[] = existing ? JSON.parse(existing) : [];
       
       if (!ids.includes(postId)) {
         ids.push(postId);
-        await AsyncStorage.setItem(READ_POSTS_IDS_KEY, JSON.stringify(ids));
+        await writeAccountItem(READ_POSTS_IDS_KEY, JSON.stringify(ids), context);
       }
     } catch (e) {
       console.error('[ReadPosts] Failed to save read post:', e);

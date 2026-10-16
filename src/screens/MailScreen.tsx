@@ -14,6 +14,7 @@ import {useNavigation, useRoute} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {getMessages, getReplyNotifications, markReplyNotificationAsRead} from '../services/api';
 import {getCacheWithTimestamp, setCache, clearCache} from '../services/cacheManager';
+import {getAccountCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
 import {Mail, ReplyNotification} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
 import {useTheme, SkeletonList, EmptyState} from '../components/ThemedComponents';
@@ -58,6 +59,21 @@ const MailScreen: React.FC = () => {
   const replyRequestGenerationRef = useRef(0);
   const replyLoadingMoreRef = useRef(false);
   const refreshInFlightRef = useRef<Promise<void> | null>(null);
+  const reloadForAccountRef = useRef<() => void>(() => {});
+
+  useEffect(() => subscribeAccountCacheChange(() => {
+    replyRequestGenerationRef.current += 1;
+    refreshInFlightRef.current = null;
+    setMails([]);
+    setReplyNotifications([]);
+    setMailLoaded(false);
+    setReplyLoaded(false);
+    setReplyPage(1);
+    setReplyHasMore(true);
+    void getAccountCacheContext().then(context => {
+      if (context) reloadForAccountRef.current();
+    });
+  }), []);
 
   // 从内存缓存（cacheManager，模块级单例，跨组件挂载/卸载存活）里先取上次快照；
   // 页面进入时会再按 MAIL_MEMORY_FRESH_TTL 判断是否需要静默刷新。
@@ -100,12 +116,14 @@ const MailScreen: React.FC = () => {
 
     const request = (async () => {
       try {
+        const accountContext = await getAccountCacheContext();
         if (!silent) {
           setLoading(true);
         }
 
         const loginStatus = await AsyncStorage.getItem('isLoggedIn');
-        const loggedIn = loginStatus === 'true';
+        if (accountContext && !isAccountCacheCurrent(accountContext)) return;
+        const loggedIn = loginStatus === 'true' && !!accountContext;
         setIsLoggedIn(loggedIn);
 
         if (!loggedIn) {
@@ -143,9 +161,9 @@ const MailScreen: React.FC = () => {
         }
 
         await Promise.all([
-          shouldRefreshMails ? loadMails() : Promise.resolve(),
+          shouldRefreshMails ? loadMails(silent) : Promise.resolve(),
           shouldRefreshReplies
-            ? loadReplyNotifications(1, false, silent && replyLoaded)
+            ? loadReplyNotifications(1, false, silent && replyLoaded, silent)
             : Promise.resolve(),
         ]);
       } catch (error) {
@@ -167,24 +185,33 @@ const MailScreen: React.FC = () => {
     }
   };
 
+  reloadForAccountRef.current = () => {
+    void checkLoginAndLoadMails(false, true);
+  };
+
   useEffect(() => {
     checkLoginAndLoadMails(false, false);
     // 首次加载只执行一次；后续刷新由 useFocusRefresh 负责。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadMails = async () => {
+  const loadMails = async (silent = false) => {
+    const accountContext = await getAccountCacheContext();
+    if (!accountContext) return;
     try {
       const data = await getMessages();
+      if (!isAccountCacheCurrent(accountContext)) return;
       console.log('Loaded messages:', data.length);
       setMails(data);
       setMailLoaded(true);
       setCache('mailConversations', undefined, data);
     } catch (error: any) {
+      if (!isAccountCacheCurrent(accountContext)) return;
       console.error('Load mails error:', error);
 
       // 处理登录过期错误
       if (error.message === 'NOT_LOGGED_IN' || error.message === 'LOGIN_EXPIRED') {
+        if (silent) return;
         console.log('Login expired, clearing login status');
         setIsLoggedIn(false);
         setMails([]);
@@ -215,7 +242,10 @@ const MailScreen: React.FC = () => {
     page: number = 1,
     append: boolean = false,
     preserveExisting: boolean = false,
+    silent: boolean = false,
   ) => {
+    const accountContext = await getAccountCacheContext();
+    if (!accountContext) return;
     if (append && (!replyHasMore || replyLoadingMore || replyLoadingMoreRef.current)) {
       return;
     }
@@ -235,7 +265,7 @@ const MailScreen: React.FC = () => {
 
     try {
       const result = await getReplyNotifications(0, page);
-      if (requestGeneration !== replyRequestGenerationRef.current) {
+      if (requestGeneration !== replyRequestGenerationRef.current || !isAccountCacheCurrent(accountContext)) {
         return;
       }
 
@@ -257,8 +287,10 @@ const MailScreen: React.FC = () => {
         setCache('replyNotificationsFirstPage', undefined, result);
       }
     } catch (error: any) {
+      if (!isAccountCacheCurrent(accountContext)) return;
       console.error('Load reply notifications error:', error);
       if (
+        !silent &&
         requestGeneration === replyRequestGenerationRef.current
         && (error.message === 'NOT_LOGGED_IN' || error.message === 'LOGIN_EXPIRED')
       ) {

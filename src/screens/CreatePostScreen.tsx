@@ -281,6 +281,7 @@ const CreatePostScreen: React.FC = () => {
         await updateArticle({
           articleId,
           topicId,
+          boardId: params.boardId,
           subject: title.trim(),
           body: content.trim(),
           uploadToken: editUploadToken,
@@ -292,6 +293,7 @@ const CreatePostScreen: React.FC = () => {
           subject: title.trim(),
           body: content.trim(),
           reId: params.reId,
+          topicId: params.topicId,
           captchaParams, // 传递验证码参数
           uploadToken: uploadToken || undefined, // 传递图片上传token
         };

@@ -35,16 +35,19 @@ import {
   Alert,
   RefreshControl,
 } from 'react-native';
-import {getCacheStats, clearCache} from '../services/cacheManager';
+import {getCacheStats, clearCache, flushPersistedSnapshotWrites} from '../services/cacheManager';
+import {accountSnapshotKey, getLocalCacheContext, removeAccountItem, removeAccountSnapshots} from '../services/accountCache';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import RNFetchBlob from 'rn-fetch-blob';
 import {useAuth} from '../context/AuthContext';
+import {useReadPosts} from '../context/ReadPostsContext';
 import {useTheme} from '../components/ThemedComponents';
 import {getCardElevation, ThemeColors} from '../utils/theme';
 import {TrashIcon} from '../components/SvgIcons';
 import {clearTopicReadingProgress, READING_PROGRESS_STORAGE_KEY} from '../utils/readingProgress';
 import {TOP_TEN_STORAGE_KEY, HOT_BOARDS_STORAGE_KEY, HOT_POSTS_FIRST_PAGE_STORAGE_KEY} from './HomeScreen';
 import {MY_ARTICLES_STORAGE_KEYS} from './MyArticlesScreen';
-import {FAVORITE_BOARDS_STORAGE_KEY, MSITE_POST_ID_CACHE_KEY, MSITE_STATIC_URL_CACHE_KEY} from '../services/dataFetcher';
+import {FAVORITE_BOARDS_STORAGE_KEY, MSITE_POST_ID_CACHE_KEY, MSITE_STATIC_URL_CACHE_KEY, flushMSiteCacheWrites, clearMSiteBoardPageCache} from '../services/dataFetcher';
 import {USER_INFO_STORAGE_KEY} from '../services/api';
 import {
   SPACING,
@@ -73,6 +76,7 @@ const PERSISTED_STORAGE_KEYS_BY_CATEGORY: {[category: string]: string[]} = {
 
 const CacheManagementScreen: React.FC = () => {
   const {logout} = useAuth();
+  const {refreshReadPosts} = useReadPosts();
   const theme = useTheme();
   const styles = createStyles(theme);
   const [cacheStats, setCacheStats] = useState<{
@@ -86,6 +90,7 @@ const CacheManagementScreen: React.FC = () => {
     readingProgressSize: number;
   }>({readPostsCount: 0, readPostsSize: 0, readingProgressCount: 0, readingProgressSize: 0});
   const [storageSize, setStorageSize] = useState<string>('计算中...');
+  const [persistedCacheCounts, setPersistedCacheCounts] = useState<{[category: string]: number}>({});
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
@@ -100,20 +105,32 @@ const CacheManagementScreen: React.FC = () => {
     // 获取 AsyncStorage 大小（估算）
     try {
       const keys = await AsyncStorage.getAllKeys();
+      const persistedCounts: {[category: string]: number} = {};
+      Object.entries(PERSISTED_STORAGE_KEYS_BY_CATEGORY).forEach(([category, baseKeys]) => {
+        persistedCounts[category] = keys.filter(key => baseKeys.some(base =>
+          key === base || (key.startsWith('@account_cache_v2:') && key.endsWith(`:${base}`)),
+        )).length;
+      });
+      setPersistedCacheCounts(persistedCounts);
       const items = await AsyncStorage.multiGet(keys);
       let totalSize = 0;
       let readPostsCount = 0;
       let readPostsSize = 0;
       let readingProgressCount = 0;
       let readingProgressSize = 0;
+      const accountContext = await getLocalCacheContext();
+      const idsKey = accountContext ? accountSnapshotKey('read_posts_ids', accountContext.username) : '';
+      const detailsKey = accountContext ? accountSnapshotKey('read_posts_details', accountContext.username) : '';
+      const progressKey = accountContext ? accountSnapshotKey(READING_PROGRESS_STORAGE_KEY, accountContext.username) : '';
 
       items.forEach(([key, value]) => {
         if (value) {
           const size = value.length;
           totalSize += size;
 
-          if (key === 'read_posts_ids' || key === 'read_posts_details') {
-            if (key === 'read_posts_ids') {              try {
+          if (key === idsKey || key === detailsKey) {
+            if (key === idsKey) {
+              try {
                 const ids = JSON.parse(value);
                 readPostsCount = Array.isArray(ids) ? ids.length : 0;
               } catch {
@@ -122,7 +139,7 @@ const CacheManagementScreen: React.FC = () => {
             }
             readPostsSize += size;
           }
-          if (key === READING_PROGRESS_STORAGE_KEY) {
+          if (key === progressKey) {
             try {
               const progress = JSON.parse(value);
               readingProgressCount = progress && typeof progress === 'object'
@@ -172,6 +189,7 @@ const CacheManagementScreen: React.FC = () => {
           style: 'destructive',
           onPress: () => {
             clearCache(); // 清除所有内存缓存
+            clearMSiteBoardPageCache();
             loadStats();
             Alert.alert('成功', '内存缓存已清除');
           },
@@ -188,9 +206,10 @@ const CacheManagementScreen: React.FC = () => {
    */
   const handleClearReadPosts = async () => {
     try {
-      await AsyncStorage.removeItem('read_posts_ids');
-      await AsyncStorage.removeItem('read_posts_details');
+      await removeAccountItem('read_posts_ids');
+      await removeAccountItem('read_posts_details');
       await clearTopicReadingProgress();
+      await refreshReadPosts();
       loadStats();
       Alert.alert('成功', '已清除已读记录和阅读进度');
     } catch (error) {
@@ -219,12 +238,27 @@ const CacheManagementScreen: React.FC = () => {
             try {
               // 1. 清除所有内存缓存
               clearCache();
+              clearMSiteBoardPageCache();
+              await flushMSiteCacheWrites();
+              await flushPersistedSnapshotWrites();
+              await clearTopicReadingProgress();
               // 2. 清除所有持久化数据（包括登录信息）
               await AsyncStorage.clear();
+              clearCache();
+              clearMSiteBoardPageCache();
               // 3. 同步更新 AuthContext 登录状态，使依赖 isLoggedIn 的界面正确响应
               await logout();
+              let backgroundClearFailed = false;
+              try {
+                const userDataDir = `${RNFetchBlob.fs.dirs.DocumentDir}/user_data`;
+                if (await RNFetchBlob.fs.exists(userDataDir)) await RNFetchBlob.fs.unlink(userDataDir);
+              } catch (error) {
+                backgroundClearFailed = true;
+                console.error('Clear profile backgrounds error:', error);
+              }
               loadStats();
-              Alert.alert('成功', '所有数据已清除，请重新登录');
+              Alert.alert(backgroundClearFailed ? '部分清理失败' : '成功',
+                backgroundClearFailed ? '缓存和登录信息已清除，背景图清理失败' : '所有数据已清除，请重新登录');
             } catch {
               Alert.alert('错误', '清除数据失败');
             }
@@ -257,19 +291,26 @@ const CacheManagementScreen: React.FC = () => {
 
     // 帖子类缓存
     const postCategories = ['postDetail', 'topicReplies', 'channelPosts', 'albumPosts', 'topTen', 'hotPostsFirstPage'];
-    const postData = cacheStats.categories.filter(cat => postCategories.includes(cat.name));
-    const postTotal = postData.reduce((sum, cat) => sum + cat.count, 0);
+    const allCategories = [...cacheStats.categories];
+    Object.keys(persistedCacheCounts).forEach(name => {
+      if (persistedCacheCounts[name] > 0 && !allCategories.some(cat => cat.name === name)) {
+        allCategories.push({name, count: 0, size: '空'});
+      }
+    });
+    const hasCategoryData = (cat: {name: string; count: number}) => cat.count > 0 || (persistedCacheCounts[cat.name] || 0) > 0;
+    const postData = allCategories.filter(cat => postCategories.includes(cat.name) && hasCategoryData(cat));
+    const postTotal = postData.reduce((sum, cat) => sum + cat.count + (persistedCacheCounts[cat.name] || 0), 0);
     const postCacheKeys = postData.map(cat => cat.name);
 
     // 版面类缓存
     const boardCategories = ['boards', 'boardPosts', 'hotBoards', 'favoriteBoards'];
-    const boardData = cacheStats.categories.filter(cat => boardCategories.includes(cat.name));
-    const boardTotal = boardData.reduce((sum, cat) => sum + cat.count, 0);
+    const boardData = allCategories.filter(cat => boardCategories.includes(cat.name) && hasCategoryData(cat));
+    const boardTotal = boardData.reduce((sum, cat) => sum + cat.count + (persistedCacheCounts[cat.name] || 0), 0);
     const boardCacheKeys = boardData.map(cat => cat.name);
 
     // 其他缓存
-    const otherData = cacheStats.categories.filter(
-      cat => !postCategories.includes(cat.name) && !boardCategories.includes(cat.name)
+    const otherData = allCategories.filter(
+      cat => !postCategories.includes(cat.name) && !boardCategories.includes(cat.name) && hasCategoryData(cat)
     );
 
     return {
@@ -302,45 +343,46 @@ const CacheManagementScreen: React.FC = () => {
     _categoryNames: {[key: string]: string}
   ) => {
     if (data.total === 0) return null;
-
-    // 计算总大小
-    const totalSizeKB = data.items.reduce((sum, item) => {
-      const sizeMatch = item.size.match(/([\d.]+)\s*KB/);
-      return sum + (sizeMatch ? parseFloat(sizeMatch[1]) : 0);
-    }, 0);
-    const sizeDisplay = totalSizeKB >= 1024
-      ? `${(totalSizeKB / 1024).toFixed(2)} MB`
-      : `${totalSizeKB.toFixed(2)} KB`;
+    const memoryItems = data.items.reduce((sum, item) => sum + item.count, 0);
+    const persistedSnapshots = data.keys.reduce((sum, key) => sum + (persistedCacheCounts[key] || 0), 0);
 
     return (
       <View style={styles.statItem}>
         <View style={styles.statItemLeft}>
           <Text style={styles.statItemName}>{title}</Text>
           <Text style={styles.statItemValue}>
-            {data.total} 项 · {sizeDisplay}
+            内存 {memoryItems} 项 · 本地快照 {persistedSnapshots} 份（含所有账号）
           </Text>
         </View>
         <TouchableOpacity
           style={styles.clearButton}
           onPress={() => {
-            Alert.alert('清除缓存', `确定要清除所有${title}吗？`, [
+            Alert.alert('清除缓存', `确定要清除${title}吗？这会清除所有账号的对应持久快照。`, [
               {text: '取消', style: 'cancel'},
               {
                 text: '确定',
                 onPress: async () => {
-                  // 清除该分类下的所有内存缓存项
+                  // 清理代次阻止旧请求回填；排空写队列后删持久层，最后再清内存。
                   data.keys.forEach(key => clearCache(key as any));
-                  // 顺带清除这些分类各自维护的 AsyncStorage 持久层
                   const persistedKeys = data.keys.flatMap(key => PERSISTED_STORAGE_KEYS_BY_CATEGORY[key] || []);
+                  let persistedClearFailed = false;
                   if (persistedKeys.length > 0) {
                     try {
-                      await AsyncStorage.multiRemove(persistedKeys);
+                      await flushPersistedSnapshotWrites();
+                      if (persistedKeys.includes(MSITE_POST_ID_CACHE_KEY) || persistedKeys.includes(MSITE_STATIC_URL_CACHE_KEY)) {
+                        await flushMSiteCacheWrites();
+                      }
+                      await removeAccountSnapshots(persistedKeys);
                     } catch (error) {
+                      persistedClearFailed = true;
                       console.error('Clear persisted cache error:', error);
                     }
                   }
+                  data.keys.forEach(key => clearCache(key as any));
+                  if (title === '其他缓存') clearMSiteBoardPageCache();
                   loadStats();
-                  Alert.alert('成功', `${title}已清除`);
+                  Alert.alert(persistedClearFailed ? '部分清理失败' : '成功',
+                    persistedClearFailed ? `${title}的内存已清除，持久缓存清理失败，请重试` : `${title}已清除`);
                 },
               },
             ]);
@@ -386,7 +428,7 @@ const CacheManagementScreen: React.FC = () => {
           <View style={styles.card}>
             <View style={styles.statItem}>
               <View style={styles.statItemLeft}>
-                <Text style={styles.statItemName}>已读记录与阅读进度</Text>
+                <Text style={styles.statItemName}>已读与进度（当前身份）</Text>
                 <Text style={styles.statItemValue}>
                   {asyncStorageStats.readPostsCount} 篇已读 · {asyncStorageStats.readingProgressCount} 条进度
                   {' '}({((asyncStorageStats.readPostsSize + asyncStorageStats.readingProgressSize) / 1024).toFixed(2)} KB)
@@ -414,7 +456,7 @@ const CacheManagementScreen: React.FC = () => {
 
         {/* 内存缓存详情 - 归类显示 */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>内存缓存详情</Text>
+          <Text style={styles.sectionTitle}>分类缓存详情</Text>
           <View style={styles.card}>
             {(() => {
               const {categoryNames, postData, boardData, otherData} = getCategorizedData();
@@ -441,7 +483,7 @@ const CacheManagementScreen: React.FC = () => {
                       '其他缓存',
                       {
                         items: otherData,
-                        total: otherData.reduce((sum, cat) => sum + cat.count, 0),
+                        total: otherData.reduce((sum, cat) => sum + cat.count + (persistedCacheCounts[cat.name] || 0), 0),
                         keys: otherData.map(cat => cat.name),
                       },
                       categoryNames

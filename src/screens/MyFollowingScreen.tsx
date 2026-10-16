@@ -10,8 +10,8 @@ import {
   Alert,
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import {getFriendsList} from '../services/api';
+import {getAccountCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
 import {useTheme} from '../components/ThemedComponents';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {ChevronRightIcon, UsersIcon} from '../components/SvgIcons';
@@ -39,24 +39,15 @@ const MyFollowingScreen: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [currentUsername, setCurrentUsername] = useState<string>('');
   const [currentPage, setCurrentPage] = useState(1);
   const [totalFollowing, setTotalFollowing] = useState(0);
   const [hasMore, setHasMore] = useState(true);
 
-  // 加载当前用户名
-  const loadCurrentUsername = async () => {
-    try {
-      const username = await AsyncStorage.getItem('username');
-      if (username) {
-        setCurrentUsername(username);
-        return username;
-      }
-    } catch (error) {
-      console.error('Load current username error:', error);
-    }
-    return '';
-  };
+  useEffect(() => subscribeAccountCacheChange(() => {
+    setFollowing([]);
+    setCurrentPage(1);
+    setTotalFollowing(0);
+  }), []);
 
   // 加载关注列表
   const loadFollowing = async (
@@ -66,7 +57,8 @@ const MyFollowingScreen: React.FC = () => {
     silent: boolean = false,
   ) => {
     try {
-      const username = currentUsername || await loadCurrentUsername();
+      const accountContext = await getAccountCacheContext();
+      const username = accountContext?.username || '';
       
       if (!username) {
         if (!silent) {
@@ -77,6 +69,7 @@ const MyFollowingScreen: React.FC = () => {
       }
 
       const result = await getFriendsList(username, page, forceRefresh);
+      if (!isAccountCacheCurrent(accountContext)) return;
       
       if (result.success && result.friends) {
         // friends现在直接是用户对象数组，包含完整的用户信息
@@ -151,7 +144,7 @@ const MyFollowingScreen: React.FC = () => {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await loadFollowing(1, true, false);
-  }, [currentUsername]);
+  }, []);
 
   // 加载更多
   const onLoadMore = useCallback(() => {

@@ -13,9 +13,10 @@ import {
   buildPostHeaders,
   buildDeleteHeaders,
 } from '../utils/requestUtils';
-import {setCache, setCacheWithTimestamp, getCache, getCacheWithTimestamp, getCacheDictSnapshot, clearCache, readPersistedSnapshot, writePersistedSnapshot} from './cacheManager';
+import {setCache, setCacheWithTimestamp, getCache, getCacheWithTimestamp, getCacheDictSnapshot, getCacheRevision, clearCache} from './cacheManager';
+import {AccountCacheContext, getAccountCacheContext, isAccountCacheCurrent, readAccountSnapshot, writeAccountSnapshot, removeAccountSnapshotsForUser} from './accountCache';
 import {extractStaticAttachmentUrls, isImageAttachment, normalizeImageUrl} from '../utils/imageUtils';
-import {getCookies, getMSiteCookies, isMSiteResponseLoggedIn, handleMSiteCookieExpired, triggerSilentMSiteReLogin} from './auth';
+import {getCookies, getMSiteCookies, getMSiteResponseStatus, handleMSiteCookieExpired, triggerSilentMSiteReLogin} from './auth';
 import {cleanHtml} from '../utils/htmlParser';
 
 const WAP_BASE_URL = 'https://wap.newsmth.net';
@@ -24,6 +25,13 @@ const MAX_STALE_CACHE_AGE = 24 * 60 * 60 * 1000;
 const MSITE_BOARD_PAGE_CACHE_DURATION = 60 * 1000;
 const inFlightRequests = new Map<string, Promise<any>>();
 const mSiteBoardPageCache = new Map<string, {timestamp: number; posts: MSiteBoardPost[]}>();
+const MSITE_BOARD_PAGE_CACHE_MAX_ENTRIES = 100;
+let mSiteBoardPageRevision = 0;
+
+export const clearMSiteBoardPageCache = (): void => {
+  mSiteBoardPageRevision += 1;
+  mSiteBoardPageCache.clear();
+};
 
 interface MSiteBoardPost {
   postId: string;
@@ -67,6 +75,13 @@ const runOnce = async <T,>(key: string, request: () => Promise<T>): Promise<T> =
   return promise;
 };
 
+const invalidateSocialGraphCache = (context: AccountCacheContext | null): void => {
+  if (!isAccountCacheCurrent(context)) return;
+  clearCache('friendsList');
+  clearCache('fansList');
+  clearCache('otherUserInfo');
+};
+
 const isLoginExpiredApiResponse = (json: any): boolean => {
   const message = String(json?.message || json?.msg || json?.error || '');
   return (
@@ -86,11 +101,12 @@ const isPostMissingApiResponse = (json: any): boolean => {
 
 export const FAVORITE_BOARDS_STORAGE_KEY = 'favorite_boards_cache';
 
-const invalidateFavoriteBoardsCache = async (): Promise<void> => {
+const invalidateFavoriteBoardsCache = async (context: AccountCacheContext): Promise<void> => {
   // 收藏版面现在走 cacheManager 的 favoriteBoards 分类（内存）+ AsyncStorage（持久），
   // 两层都要显式清掉。
-  clearCache('favoriteBoards');
+  if (isAccountCacheCurrent(context)) clearCache('favoriteBoards');
   try {
+    await removeAccountSnapshotsForUser(context.username, [FAVORITE_BOARDS_STORAGE_KEY]);
     await AsyncStorage.removeItem(FAVORITE_BOARDS_STORAGE_KEY);
   } catch (error) {
     console.error('[Cache] Failed to invalidate favorite boards cache:', error);
@@ -143,8 +159,10 @@ const fetchStaticAttachmentUrls = async (
   mSitePostId: string,
 ): Promise<string[]> => {
   if (!boardName || !mSitePostId) return [];
+  const accountContext = await getAccountCacheContext();
+  if (!accountContext) return [];
 
-  return await runOnce(`msite-static:${boardName}:${mSitePostId}`, async () => {
+  return await runOnce(`msite-static:${accountContext.generation}:${boardName}:${mSitePostId}`, async () => {
     const url = `https://m.newsmth.net/article/${boardName}/${mSitePostId}`;
     const cookies = await getMSiteRequestCookies();
     const referer = `https://m.newsmth.net/board/${boardName}`;
@@ -169,14 +187,18 @@ const fetchStaticAttachmentUrls = async (
       mode: 'cors',
     });
 
+    if (!response.ok) return [];
+
     const html = await response.text();
+    if (!isAccountCacheCurrent(accountContext)) return [];
 
     // 被动探测：检查响应中是否处于登录状态
-    if (!isMSiteResponseLoggedIn(html)) {
-      console.log('[PostDetail] M站Cookie已过期（响应中无注销链接），清除本地缓存');
-      await handleMSiteCookieExpired();
-      // 异步触发静默重登录（不阻塞当前请求）
-      triggerSilentMSiteReLogin();
+    const status = getMSiteResponseStatus(html, accountContext.username);
+    if (status !== 'matched') {
+      if (status === 'anonymous' || status === 'mismatch') {
+        await handleMSiteCookieExpired(cookies);
+        triggerSilentMSiteReLogin();
+      }
       return [];
     }
 
@@ -307,14 +329,21 @@ const matchMSitePostIdFromPosts = (
 
 const fetchMSiteBoardPagePosts = async (boardName: string, page: number): Promise<MSiteBoardPost[]> => {
   if (!boardName || page < 1) return [];
+  const accountContext = await getAccountCacheContext();
+  if (!accountContext) return [];
 
-  const cacheKey = `${boardName}:${page}`;
+  const cacheKey = `${accountContext.username.toLowerCase()}:${boardName}:${page}`;
+  const now = Date.now();
+  for (const [key, entry] of mSiteBoardPageCache) {
+    if (now - entry.timestamp >= MSITE_BOARD_PAGE_CACHE_DURATION) mSiteBoardPageCache.delete(key);
+  }
   const cached = mSiteBoardPageCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < MSITE_BOARD_PAGE_CACHE_DURATION) {
     return cached.posts;
   }
 
-  return await runOnce(`msite-board-page:${cacheKey}`, async () => {
+  const revision = mSiteBoardPageRevision;
+  return await runOnce(`msite-board-page:${accountContext.generation}:${revision}:${cacheKey}`, async () => {
     const latestCached = mSiteBoardPageCache.get(cacheKey);
     if (latestCached && Date.now() - latestCached.timestamp < MSITE_BOARD_PAGE_CACHE_DURATION) {
       return latestCached.posts;
@@ -347,17 +376,24 @@ const fetchMSiteBoardPagePosts = async (boardName: string, page: number): Promis
       }
 
       const pageHtml = await response.text();
-      if (!isMSiteResponseLoggedIn(pageHtml)) {
-        console.log('[MMapper] M站Cookie已过期（响应中无注销链接），清除本地缓存');
-        await handleMSiteCookieExpired();
-        // 异步触发静默重登录（不阻塞当前请求）
-        triggerSilentMSiteReLogin();
+      if (!isAccountCacheCurrent(accountContext)) return [];
+      const status = getMSiteResponseStatus(pageHtml, accountContext.username);
+      if (status !== 'matched') {
+        if (status === 'anonymous' || status === 'mismatch') {
+          await handleMSiteCookieExpired(cookies);
+          triggerSilentMSiteReLogin();
+        }
         return [];
       }
 
       const posts = parseMSiteBoardPosts(pageHtml, boardName, page);
       console.log(`[MMapper] 第 ${page} 页找到 ${posts.length} 个帖子`);
-      mSiteBoardPageCache.set(cacheKey, {timestamp: Date.now(), posts});
+      if (mSiteBoardPageRevision === revision && isAccountCacheCurrent(accountContext)) {
+        mSiteBoardPageCache.set(cacheKey, {timestamp: Date.now(), posts});
+        if (mSiteBoardPageCache.size > MSITE_BOARD_PAGE_CACHE_MAX_ENTRIES) {
+          mSiteBoardPageCache.delete(mSiteBoardPageCache.keys().next().value!);
+        }
+      }
       return posts;
     } catch (error: any) {
       console.error(`[MMapper] 第 ${page} 页请求出错:`, error.message || error);
@@ -447,37 +483,116 @@ export const hasImageAttachmentWithoutCloudUrl = (attachments: any[]): boolean =
 // blob，首次访问时懒加载进 cacheManager，每次写入后把当前内存快照整块写回。
 export const MSITE_POST_ID_CACHE_KEY = '@msite_post_id_cache';
 export const MSITE_STATIC_URL_CACHE_KEY = '@msite_static_attachment_url_cache';
-let mSitePostIdHydrated = false;
-let mSiteStaticUrlHydrated = false;
+let mSitePostIdHydratedRevision = -1;
+let mSiteStaticUrlHydratedRevision = -1;
+let mSitePostIdHydration: {revision: number; promise: Promise<void>} | null = null;
+let mSiteStaticUrlHydration: {revision: number; promise: Promise<void>} | null = null;
+let mSitePostIdWrite: Promise<void> = Promise.resolve();
+let mSiteStaticUrlWrite: Promise<void> = Promise.resolve();
+let mSiteCacheMigration: Promise<void> | null = null;
+
+// 兼容短暂使用过的按账号 key：这些值是帖子级映射，合并回原来的共享 key。
+const migrateMSiteCacheToShared = (): Promise<void> => {
+  if (!mSiteCacheMigration) {
+    mSiteCacheMigration = (async () => {
+      const keys = await AsyncStorage.getAllKeys();
+      for (const baseKey of [MSITE_POST_ID_CACHE_KEY, MSITE_STATIC_URL_CACHE_KEY]) {
+        const scopedKeys = keys.filter(key =>
+          key.startsWith('@account_cache_v2:') && key.endsWith(`:${baseKey}`),
+        );
+        if (scopedKeys.length === 0) continue;
+
+        const scopedEntries = await AsyncStorage.multiGet(scopedKeys);
+        const merged: Record<string, unknown> = {};
+        const migratedKeys: string[] = [];
+        for (const [key, raw] of scopedEntries) {
+          if (!raw) continue;
+          try {
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+            Object.assign(merged, parsed);
+            migratedKeys.push(key);
+          } catch (error) {
+            console.error('[MSiteCache] 跳过损坏的旧映射:', key, error);
+          }
+        }
+        if (migratedKeys.length === 0) continue;
+        const sharedRaw = await AsyncStorage.getItem(baseKey);
+        if (sharedRaw) {
+          try {
+            const shared = JSON.parse(sharedRaw);
+            if (shared && typeof shared === 'object' && !Array.isArray(shared)) Object.assign(merged, shared);
+          } catch (error) {
+            console.error('[MSiteCache] 共享映射损坏，使用可恢复的旧映射:', error);
+          }
+        }
+        await AsyncStorage.setItem(baseKey, JSON.stringify(merged));
+        await AsyncStorage.multiRemove(migratedKeys);
+      }
+    })().catch(error => {
+      mSiteCacheMigration = null;
+      console.error('[MSiteCache] 合并旧缓存失败:', error);
+      throw error;
+    });
+  }
+  return mSiteCacheMigration;
+};
 
 const ensureMSitePostIdHydrated = async (): Promise<void> => {
-  if (mSitePostIdHydrated) return;
-  mSitePostIdHydrated = true;
-
-  try {
-    const raw = await AsyncStorage.getItem(MSITE_POST_ID_CACHE_KEY);
-    const stored: Record<string, string> = raw ? JSON.parse(raw) : {};
-    Object.entries(stored).forEach(([topicId, mSitePostId]) => {
-      setCache('msitePostId', topicId, mSitePostId);
+  const revision = getCacheRevision('msitePostId');
+  if (mSitePostIdHydratedRevision === revision) return;
+  if (mSitePostIdHydration?.revision !== revision) {
+    const promise = (async () => {
+      try {
+        await migrateMSiteCacheToShared();
+        await mSitePostIdWrite.catch(() => undefined);
+        const raw = await AsyncStorage.getItem(MSITE_POST_ID_CACHE_KEY);
+        const stored: Record<string, string> = raw ? JSON.parse(raw) : {};
+        if (getCacheRevision('msitePostId') !== revision) return;
+        Object.entries(stored).forEach(([topicId, mSitePostId]) => {
+          setCache('msitePostId', topicId, mSitePostId);
+        });
+        mSitePostIdHydratedRevision = revision;
+      } catch (err: any) {
+        console.log('[MSiteIdCache] 读取持久缓存失败:', err.message || err);
+      }
+    })().finally(() => {
+      if (mSitePostIdHydration?.promise === promise) mSitePostIdHydration = null;
     });
-  } catch (err: any) {
-    console.log('[MSiteIdCache] 读取持久缓存失败:', err.message || err);
+    mSitePostIdHydration = {revision, promise};
   }
+  await mSitePostIdHydration.promise;
 };
 
 const ensureMSiteStaticUrlHydrated = async (): Promise<void> => {
-  if (mSiteStaticUrlHydrated) return;
-  mSiteStaticUrlHydrated = true;
-
-  try {
-    const raw = await AsyncStorage.getItem(MSITE_STATIC_URL_CACHE_KEY);
-    const stored: Record<string, string[]> = raw ? JSON.parse(raw) : {};
-    Object.entries(stored).forEach(([topicId, urls]) => {
-      setCache('msiteStaticUrl', topicId, urls);
+  const revision = getCacheRevision('msiteStaticUrl');
+  if (mSiteStaticUrlHydratedRevision === revision) return;
+  if (mSiteStaticUrlHydration?.revision !== revision) {
+    const promise = (async () => {
+      try {
+        await migrateMSiteCacheToShared();
+        await mSiteStaticUrlWrite.catch(() => undefined);
+        const raw = await AsyncStorage.getItem(MSITE_STATIC_URL_CACHE_KEY);
+        const stored: Record<string, string[]> = raw ? JSON.parse(raw) : {};
+        if (getCacheRevision('msiteStaticUrl') !== revision) return;
+        Object.entries(stored).forEach(([topicId, urls]) => {
+          setCache('msiteStaticUrl', topicId, urls);
+        });
+        mSiteStaticUrlHydratedRevision = revision;
+      } catch (err: any) {
+        console.log('[MSiteStaticUrlCache] 读取持久缓存失败:', err.message || err);
+      }
+    })().finally(() => {
+      if (mSiteStaticUrlHydration?.promise === promise) mSiteStaticUrlHydration = null;
     });
-  } catch (err: any) {
-    console.log('[MSiteStaticUrlCache] 读取持久缓存失败:', err.message || err);
+    mSiteStaticUrlHydration = {revision, promise};
   }
+  await mSiteStaticUrlHydration.promise;
+};
+
+/** 等待已提交的映射写入，供清理流程先排空写队列。 */
+export const flushMSiteCacheWrites = async (): Promise<void> => {
+  await Promise.all([mSitePostIdWrite.catch(() => undefined), mSiteStaticUrlWrite.catch(() => undefined)]);
 };
 
 /**
@@ -496,7 +611,9 @@ const saveMSitePostIdToCache = async (topicId: string, mSitePostId: string): Pro
     await ensureMSitePostIdHydrated();
     setCache('msitePostId', topicId, mSitePostId);
     const snapshot = getCacheDictSnapshot<string>('msitePostId');
-    await AsyncStorage.setItem(MSITE_POST_ID_CACHE_KEY, JSON.stringify(snapshot));
+    mSitePostIdWrite = mSitePostIdWrite.catch(() => undefined).then(() =>
+      AsyncStorage.setItem(MSITE_POST_ID_CACHE_KEY, JSON.stringify(snapshot)));
+    await mSitePostIdWrite;
   } catch (err: any) {
     console.log('[MSiteIdCache] 写入缓存失败:', err.message || err);
   }
@@ -514,7 +631,9 @@ const saveStaticAttachmentUrlsToCache = async (topicId: string, urls: string[]):
     await ensureMSiteStaticUrlHydrated();
     setCache('msiteStaticUrl', topicId, urls);
     const snapshot = getCacheDictSnapshot<string[]>('msiteStaticUrl');
-    await AsyncStorage.setItem(MSITE_STATIC_URL_CACHE_KEY, JSON.stringify(snapshot));
+    mSiteStaticUrlWrite = mSiteStaticUrlWrite.catch(() => undefined).then(() =>
+      AsyncStorage.setItem(MSITE_STATIC_URL_CACHE_KEY, JSON.stringify(snapshot)));
+    await mSiteStaticUrlWrite;
   } catch (err: any) {
     console.log('[MSiteStaticUrlCache] 写入缓存失败:', err.message || err);
   }
@@ -804,7 +923,7 @@ export const getHotPosts = async (
     const json = await response.json();
     console.log('getHotPosts API response code:', json.code);
 
-if (json.code === 1 && json.data?.topics) {
+if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined) && Array.isArray(json.data?.topics)) {
       const topics = json.data.topics || [];
       // API返回的是total表示总页数
       const totalPages = json.data.pager?.total || 1;
@@ -847,10 +966,10 @@ if (json.code === 1 && json.data?.topics) {
       };
     }
     
-    return { topics: [], totalPages: 0 };
+    throw new Error(json.message || 'GET_HOT_POSTS_FAILED');
   } catch (error) {
     console.error('Get hot posts error:', error);
-    return { topics: [], totalPages: 0 };
+    throw error;
   }
 };
 
@@ -880,13 +999,13 @@ export const getTopTen = async (): Promise<any[] | null> => {
     } catch (e) {
       console.error('getTopTen JSON parse error:', e);
       console.log('Response was not JSON, first 500 chars:', text.substring(0, 500));
-      return [];
+      throw new Error('GET_TOP_TEN_INVALID_JSON');
     }
     
     console.log('getTopTen API response code:', json.code);
     console.log('getTopTen API response keys:', json.data ? Object.keys(json.data) : 'no data');
 
-if (json.code === 1 && json.data) {
+if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined) && Array.isArray(json.data?.topics)) {
       const topics = json.data.topics || [];
       console.log('getTopTen found topics:', topics.length);
       
@@ -930,10 +1049,10 @@ if (json.code === 1 && json.data) {
     }
     
     console.log('getTopTen: API请求失败，保留本地缓存');
-    return null;
+    throw new Error(json.message || 'GET_TOP_TEN_FAILED');
   } catch (error) {
     console.error('Get top ten error:', error);
-    return null;
+    throw error;
   }
 };
 
@@ -956,7 +1075,7 @@ export const getHotBoards = async (): Promise<any[]> => {
     const json = await response.json();
     console.log('getHotBoards API response code:', json.code);
 
-    if (json.code === 1 && Array.isArray(json.data)) {
+    if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined) && Array.isArray(json.data)) {
       return json.data.map((board: any) => ({
         id: board.id, // hash ID
         name: board.name, // 英文名，如 FamilyLife
@@ -965,10 +1084,10 @@ export const getHotBoards = async (): Promise<any[]> => {
       }));
     }
     
-    return [];
+    throw new Error(json.message || 'GET_HOT_BOARDS_FAILED');
   } catch (error) {
     console.error('Get hot boards error:', error);
-    return [];
+    throw error;
   }
 };
 
@@ -978,9 +1097,16 @@ export const getFavoriteBoards = async (forceRefresh: boolean = false): Promise<
   const FAVORITE_BOARDS_MEMORY_FRESH_AGE = 5 * 60 * 1000;
   const FAVORITE_BOARDS_MAX_STALE_AGE = 7 * 24 * 60 * 60 * 1000; // 持久缓存最多兜底7天
   const FAVORITE_BOARDS_REFRESH_THRESHOLD = 60 * 1000; // 超过1分钟后台刷新
+  let failedRequestContext: AccountCacheContext | null = null;
+  let requestRevision = getCacheRevision('favoriteBoards');
 
   try {
+    const accountContext = await getAccountCacheContext();
+    requestRevision = getCacheRevision('favoriteBoards');
+    failedRequestContext = accountContext;
+    if (!accountContext) throw new Error('NOT_LOGGED_IN');
     const cookies = await getCookies();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('CACHE_REQUEST_INVALIDATED');
 
     // 严格校验登录态：必须有Cookie才能调用
     if (!cookies) {
@@ -993,8 +1119,9 @@ export const getFavoriteBoards = async (forceRefresh: boolean = false): Promise<
       try {
         let cached = getCacheWithTimestamp<any[]>('favoriteBoards');
         if (!cached) {
-          const persisted = await readPersistedSnapshot<any[]>(FAVORITE_BOARDS_STORAGE_KEY, FAVORITE_BOARDS_MAX_STALE_AGE);
-          if (persisted && !persisted.isExpired) {
+          const persisted = await readAccountSnapshot<any[]>(FAVORITE_BOARDS_STORAGE_KEY, accountContext, FAVORITE_BOARDS_MAX_STALE_AGE,
+            () => getCacheRevision('favoriteBoards') === requestRevision);
+          if (persisted && !persisted.isExpired && isAccountCacheCurrent(accountContext)) {
             setCacheWithTimestamp(
               'favoriteBoards',
               undefined,
@@ -1027,7 +1154,7 @@ export const getFavoriteBoards = async (forceRefresh: boolean = false): Promise<
       }
     }
 
-    return await runOnce('favoriteBoards', async () => {
+    return await runOnce(`favoriteBoards:${accountContext.generation}:${requestRevision}`, async () => {
       const timestamp = Date.now();
       const url = `${WAP_BASE_URL}/wap/api/profile/fav/boards?t=${timestamp}`;
 
@@ -1050,10 +1177,13 @@ export const getFavoriteBoards = async (forceRefresh: boolean = false): Promise<
       }
 
       const json = await response.json();
+      if (!isAccountCacheCurrent(accountContext) || getCacheRevision('favoriteBoards') !== requestRevision) {
+        throw new Error('CACHE_REQUEST_INVALIDATED');
+      }
       console.log('getFavoriteBoards API response code:', json.code);
 
       // 检查API返回码，某些错误码也表示未登录
-      if (json.code !== 1) {
+      if (json.code !== 1 || (json.kbsCode !== 0 && json.kbsCode !== undefined)) {
         console.error('getFavoriteBoards: API返回错误，code:', json.code, 'message:', json.message);
         if (json.code === 401 || json.code === 403 || json.message?.includes('登录')) {
           // 注意：不在这里清除登录态，让上层UI决定如何处理
@@ -1062,7 +1192,8 @@ export const getFavoriteBoards = async (forceRefresh: boolean = false): Promise<
         throw new Error(json.message || 'API_ERROR');
       }
 
-      if (json.data?.favBoards) {
+      if (json.data?.favBoards != null
+        && (Array.isArray(json.data.favBoards) || typeof json.data.favBoards === 'object')) {
         const allFavBoards: any[] = [];
 
       // 兼容处理：有些 API 返回的是对象格式（带数字键）而非标准数组
@@ -1112,33 +1243,42 @@ export const getFavoriteBoards = async (forceRefresh: boolean = false): Promise<
       console.log('Extracted fav boards count:', allFavBoards.length);
 
       // 保存到缓存（内存层 + 持久层）
+      if (!isAccountCacheCurrent(accountContext) || getCacheRevision('favoriteBoards') !== requestRevision) {
+        throw new Error('CACHE_REQUEST_INVALIDATED');
+      }
       setCache('favoriteBoards', undefined, allFavBoards);
-      await writePersistedSnapshot(FAVORITE_BOARDS_STORAGE_KEY, allFavBoards);
+      await writeAccountSnapshot(FAVORITE_BOARDS_STORAGE_KEY, accountContext, allFavBoards,
+        () => getCacheRevision('favoriteBoards') === requestRevision);
       console.log('[Cache] Saved favorite boards to cache');
 
       return allFavBoards;
     }
 
-      return [];
+      throw new Error('INVALID_FAVORITE_BOARDS_RESPONSE');
     });
   } catch (error: any) {
     console.error('Get favorite boards error:', error);
+    if (error.message?.includes('HTTP 401') || error.message?.includes('HTTP 403')) {
+      throw new Error('LOGIN_EXPIRED');
+    }
     // 登录相关错误需要抛出，让调用方处理
     if (error.message === 'NOT_LOGGED_IN' || error.message === 'LOGIN_EXPIRED') {
       throw error;
     }
 
-    // 其他错误时，尝试返回缓存数据（不管新鲜度，能用就用）
-    if (error.message === '请求超时') {
+    // 网络、超时和无效响应都保留现有快照；不能将请求失败解释为有效的空收藏。
+    if (failedRequestContext && isAccountCacheCurrent(failedRequestContext)
+      && getCacheRevision('favoriteBoards') === requestRevision) {
       const memory = getCacheWithTimestamp<any[]>('favoriteBoards');
       if (memory) {
-        console.log('[Cache] Using stale memory cache due to timeout');
+        console.log('[Cache] Using stale favorite boards memory cache after request failure');
         return memory.data;
       }
       try {
-        const persisted = await readPersistedSnapshot<any[]>(FAVORITE_BOARDS_STORAGE_KEY, Number.MAX_SAFE_INTEGER);
-        if (persisted) {
-          console.log('[Cache] Using stale persisted cache due to timeout');
+        const persisted = await readAccountSnapshot<any[]>(FAVORITE_BOARDS_STORAGE_KEY, failedRequestContext, Number.MAX_SAFE_INTEGER,
+          () => getCacheRevision('favoriteBoards') === requestRevision);
+        if (persisted && isAccountCacheCurrent(failedRequestContext)) {
+          console.log('[Cache] Using stale favorite boards persisted cache after request failure');
           return persisted.data;
         }
       } catch (cacheError) {
@@ -1146,8 +1286,7 @@ export const getFavoriteBoards = async (forceRefresh: boolean = false): Promise<
       }
     }
 
-    // 其他错误返回空数组
-    return [];
+    throw error;
   }
 };
 
@@ -1172,7 +1311,7 @@ export const getBoards = async (): Promise<any[]> => {
     const json = await response.json();
     console.log('getBoards API response code:', json.code);
 
-    if (json.code === 1 && json.data?.sections) {
+    if (json.code === 1 && Array.isArray(json.data?.sections)) {
       return json.data.sections.map((section: any) => ({
         id: section.id,
         name: section.name,
@@ -1183,10 +1322,10 @@ export const getBoards = async (): Promise<any[]> => {
       }));
     }
     
-    return [];
+    throw new Error(json.message || 'GET_SECTIONS_FAILED');
   } catch (error) {
     console.error('Get boards error:', error);
-    return [];
+    throw error;
   }
 };
 
@@ -1207,7 +1346,7 @@ export const getSubBoards = async (sectionId: string): Promise<any[]> => {
 
     const json = await response.json();
 
-    if (json.code === 1 && json.data?.boards) {
+    if (json.code === 1 && Array.isArray(json.data?.boards)) {
       const boards = json.data.boards.filter((item: any) => item.id && (item.name || item.title));
       
       // 根据 groupId 构建层级关系
@@ -1258,10 +1397,10 @@ export const getSubBoards = async (sectionId: string): Promise<any[]> => {
       return result;
     }
     
-    return [];
+    throw new Error(json.message || 'GET_SUB_BOARDS_FAILED');
   } catch (error) {
     console.error('Get sub-boards error:', error);
-    return [];
+    throw error;
   }
 };
 
@@ -1297,7 +1436,7 @@ export const getBoardPosts = async (
     const json = await response.json();
     console.log('getBoardPosts API response code:', json.code, 'kbsCode:', json.kbsCode, 'message:', json.message);
 
-    if (json.code !== 1) {
+    if (json.code !== 1 || (json.kbsCode !== 0 && json.kbsCode !== undefined)) {
       console.error('getBoardPosts API returned failure, code:', json.code, 'kbsCode:', json.kbsCode, 'message:', json.message);
       if (isLoginExpiredApiResponse(json)) {
         throw new Error('LOGIN_EXPIRED');
@@ -2054,6 +2193,7 @@ export const getConversationMessages = async (
 // API: GET https://wap.newsmth.net/wap/api/message/read?t={timestamp}&speakId={speakerId}
 export const markMessageAsRead = async (speakerId: string): Promise<{success: boolean, message?: string}> => {
   try {
+    const accountContext = await getAccountCacheContext();
     const cookies = await getCookies();
     
     if (!cookies) {
@@ -2083,7 +2223,8 @@ export const markMessageAsRead = async (speakerId: string): Promise<{success: bo
     const json = await response.json();
     console.log('markMessageAsRead API response:', json);
     
-    if (json.code === 1) {
+    if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
+      if (isAccountCacheCurrent(accountContext)) clearCache('mailConversations');
       return {success: true, message: json.message || '标记成功'};
     }
     
@@ -2106,6 +2247,7 @@ export const sendMessage = async (
   subject: string = ''
 ): Promise<{success: boolean, message?: string}> => {
   try {
+    const accountContext = await getAccountCacheContext();
     const cookies = await getCookies();
     
     if (!cookies) {
@@ -2148,7 +2290,8 @@ export const sendMessage = async (
     const json = await response.json();
     console.log('sendMessage API response:', json);
     
-    if (json.code === 1) {
+    if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
+      if (isAccountCacheCurrent(accountContext)) clearCache('mailConversations');
       return {success: true, message: json.message || '发送成功'};
     }
     
@@ -2169,6 +2312,7 @@ export const addFriend = async (
   userId: string
 ): Promise<{success: boolean, message?: string}> => {
   try {
+    const accountContext = await getAccountCacheContext();
     const cookies = await getCookies();
     
     if (!cookies) {
@@ -2205,6 +2349,7 @@ export const addFriend = async (
     
     // 检查 code 和 kbsCode
     if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
+      invalidateSocialGraphCache(accountContext);
       return {success: true, message: json.message || '关注成功'};
     }
     
@@ -2225,6 +2370,7 @@ export const removeFriend = async (
   userId: string
 ): Promise<{success: boolean, message?: string}> => {
   try {
+    const accountContext = await getAccountCacheContext();
     const cookies = await getCookies();
     
     if (!cookies) {
@@ -2260,6 +2406,7 @@ export const removeFriend = async (
     
     // 检查 code 和 kbsCode
     if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
+      invalidateSocialGraphCache(accountContext);
       return {success: true, message: json.message || '取消关注成功'};
     }
     
@@ -2350,6 +2497,7 @@ export const addBlack = async (
   userId: string
 ): Promise<{success: boolean, message?: string}> => {
   try {
+    const accountContext = await getAccountCacheContext();
     const cookies = await getCookies();
     
     if (!cookies) {
@@ -2392,6 +2540,7 @@ export const addBlack = async (
     
     // 检查 code 和 kbsCode
     if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
+      if (isAccountCacheCurrent(accountContext)) clearCache('blackList');
       return {success: true, message: json.message || '拉黑成功'};
     }
     
@@ -2412,6 +2561,7 @@ export const removeBlack = async (
   userId: string
 ): Promise<{success: boolean, message?: string}> => {
   try {
+    const accountContext = await getAccountCacheContext();
     const cookies = await getCookies();
     
     if (!cookies) {
@@ -2446,6 +2596,7 @@ export const removeBlack = async (
     
     // 检查 code 和 kbsCode
     if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
+      if (isAccountCacheCurrent(accountContext)) clearCache('blackList');
       return {success: true, message: json.message || '移除成功'};
     }
     
@@ -2476,14 +2627,19 @@ export const getFriendsList = async (
   message?: string;
 }> => {
   try {
+    const accountContext = await getAccountCacheContext();
+    if (!accountContext) throw new Error('NOT_LOGGED_IN');
     const cookies = await getCookies();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     
     if (!cookies) {
       console.error('getFriendsList: 未登录，无Cookie');
       return {success: false, friends: [], total: 0, hasMore: false, page, pageSize: 50, message: '请先登录'};
     }
     
+    // 关注列表由被查看的用户名决定，不包含当前登录账号的关系状态。
     const cacheKey = `${username}_${page}`;
+    const revision = getCacheRevision('friendsList');
     
     // 如果不是强制刷新，先尝试从缓存获取
     if (!forceRefresh) {
@@ -2493,7 +2649,7 @@ export const getFriendsList = async (
         console.log('getFriendsList: Using cached data for', username, 'page', page, 'age:', Math.floor(age / 1000), 's');
         
         if (age > CACHE_REFRESH_THRESHOLD && age < MAX_STALE_CACHE_AGE) {
-          runOnce(`friendsList:${cacheKey}`, () => fetchFriendsListFromAPI(username, page, cookies, cacheKey)).catch(err => {
+          runOnce(`friendsList:${accountContext.generation}:${revision}:${cacheKey}`, () => fetchFriendsListFromAPI(username, page, cookies, cacheKey, accountContext, revision)).catch(err => {
             console.error('Background update friends list error:', err);
           });
         }
@@ -2513,7 +2669,7 @@ export const getFriendsList = async (
     }
     
     // 没有缓存或强制刷新，从API获取
-    return await runOnce(`friendsList:${cacheKey}`, () => fetchFriendsListFromAPI(username, page, cookies, cacheKey));
+    return await runOnce(`friendsList:${accountContext.generation}:${revision}:${cacheKey}`, () => fetchFriendsListFromAPI(username, page, cookies, cacheKey, accountContext, revision));
   } catch (error: any) {
     console.error('Get friends list error:', error);
     if (error.message === 'LOGIN_EXPIRED') {
@@ -2527,7 +2683,9 @@ const fetchFriendsListFromAPI = async (
   username: string,
   page: number,
   cookies: string,
-  cacheKey: string
+  cacheKey: string,
+  accountContext: AccountCacheContext,
+  revision: number,
 ): Promise<{
   success: boolean;
   friends: any[];
@@ -2557,6 +2715,7 @@ const fetchFriendsListFromAPI = async (
 
   const json = await response.json();
   console.log('getFriendsList API response:', json);
+  if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
   
   // 检查 code 和 kbsCode
   if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
@@ -2592,7 +2751,7 @@ const fetchFriendsListFromAPI = async (
     
     // 保存到缓存
     const cacheData = {friends: friendsList, total: totalPages, hasMore, page: currentPage, pageSize};
-    setCache('friendsList', cacheKey, cacheData);
+    if (isAccountCacheCurrent(accountContext) && getCacheRevision('friendsList') === revision) setCache('friendsList', cacheKey, cacheData);
     
     return {
       success: true,
@@ -2625,14 +2784,19 @@ export const getFansList = async (
   message?: string;
 }> => {
   try {
+    const accountContext = await getAccountCacheContext();
+    if (!accountContext) throw new Error('NOT_LOGGED_IN');
     const cookies = await getCookies();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     
     if (!cookies) {
       console.error('getFansList: 未登录，无Cookie');
       return {success: false, fans: [], total: 0, hasMore: false, page, pageSize: 50, message: '请先登录'};
     }
     
+    // 粉丝列表由被查看的用户名决定，可以在账号间复用。
     const cacheKey = `${username}_${page}`;
+    const revision = getCacheRevision('fansList');
     
     // 如果不是强制刷新，先尝试从缓存获取
     if (!forceRefresh) {
@@ -2642,7 +2806,7 @@ export const getFansList = async (
         console.log('getFansList: Using cached data for', username, 'page', page, 'age:', Math.floor(age / 1000), 's');
         
         if (age > CACHE_REFRESH_THRESHOLD && age < MAX_STALE_CACHE_AGE) {
-          runOnce(`fansList:${cacheKey}`, () => fetchFansListFromAPI(username, page, cookies, cacheKey)).catch(err => {
+          runOnce(`fansList:${accountContext.generation}:${revision}:${cacheKey}`, () => fetchFansListFromAPI(username, page, cookies, cacheKey, accountContext, revision)).catch(err => {
             console.error('Background update fans list error:', err);
           });
         }
@@ -2662,7 +2826,7 @@ export const getFansList = async (
     }
     
     // 没有缓存或强制刷新，从API获取
-    return await runOnce(`fansList:${cacheKey}`, () => fetchFansListFromAPI(username, page, cookies, cacheKey));
+    return await runOnce(`fansList:${accountContext.generation}:${revision}:${cacheKey}`, () => fetchFansListFromAPI(username, page, cookies, cacheKey, accountContext, revision));
   } catch (error: any) {
     console.error('Get fans list error:', error);
     if (error.message === 'LOGIN_EXPIRED') {
@@ -2677,7 +2841,9 @@ const fetchFansListFromAPI = async (
   username: string,
   page: number,
   cookies: string,
-  cacheKey: string
+  cacheKey: string,
+  accountContext: AccountCacheContext,
+  revision: number,
 ): Promise<{
   success: boolean;
   fans: any[];
@@ -2707,6 +2873,7 @@ const fetchFansListFromAPI = async (
 
   const json = await response.json();
   console.log('getFansList API response:', json);
+  if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
   
   // 检查 code 和 kbsCode
   if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
@@ -2743,7 +2910,7 @@ const fetchFansListFromAPI = async (
     
     // 保存到缓存
     const cacheData = {fans: fansList, total: totalPages, hasMore, page: currentPage, pageSize};
-    setCache('fansList', cacheKey, cacheData);
+    if (isAccountCacheCurrent(accountContext) && getCacheRevision('fansList') === revision) setCache('fansList', cacheKey, cacheData);
     
     return {
       success: true,
@@ -2795,7 +2962,7 @@ export const getMessages = async (_page: number = 0): Promise<Mail[]> => {
     console.log('getMessages API response code:', json.code);
     
     // 检查API返回码
-    if (json.code !== 1) {
+    if (json.code !== 1 || (json.kbsCode !== 0 && json.kbsCode !== undefined)) {
       console.error('getMessages: API返回错误，code:', json.code, 'message:', json.message);
       if (json.code === 401 || json.code === 403 || json.message?.includes('登录')) {
         // 注意：不在这里清除登录态，让上层UI决定如何处理
@@ -2804,9 +2971,11 @@ export const getMessages = async (_page: number = 0): Promise<Mail[]> => {
       throw new Error(json.message || 'API_ERROR');
     }
 
-    if (json.data?.conversations && json.data?.lastMessages) {
+    if (Array.isArray(json.data?.conversations)
+      && (Array.isArray(json.data?.lastMessages)
+        || (json.data.conversations.length === 0 && json.data.lastMessages == null))) {
       const conversations = json.data.conversations;
-      const lastMessages = json.data.lastMessages;
+      const lastMessages = json.data.lastMessages || [];
       
       // 将对话和最后一条消息组合
       return conversations.map((conv: any) => {
@@ -2834,15 +3003,13 @@ export const getMessages = async (_page: number = 0): Promise<Mail[]> => {
       });
     }
     
-    return [];
+    throw new Error('GET_MESSAGES_INVALID_RESPONSE');
   } catch (error: any) {
     console.error('Get messages error:', error);
-    // 登录相关错误需要抛出，让调用方处理
-    if (error.message === 'NOT_LOGGED_IN' || error.message === 'LOGIN_EXPIRED') {
-      throw error;
+    if (error.message?.includes('HTTP 401') || error.message?.includes('HTTP 403')) {
+      throw new Error('LOGIN_EXPIRED');
     }
-    // 其他错误返回空数组
-    return [];
+    throw error;
   }
 };
 
@@ -2926,6 +3093,7 @@ export const getReplyNotifications = async (
 
 /** 标记一条 WAP 回复提醒为已读。 */
 export const markReplyNotificationAsRead = async (notificationId: string): Promise<void> => {
+  const accountContext = await getAccountCacheContext();
   const cookies = await getCookies();
   if (!cookies) throw new Error('NOT_LOGGED_IN');
 
@@ -2939,7 +3107,10 @@ export const markReplyNotificationAsRead = async (notificationId: string): Promi
   );
   if (response.status === 401 || response.status === 403) throw new Error('LOGIN_EXPIRED');
   const json = await response.json();
-  if (json.code !== 1) throw new Error(json.message || json.msg || 'MARK_REPLY_NOTIFICATION_READ_FAILED');
+  if (json.code !== 1 || (json.kbsCode !== 0 && json.kbsCode !== undefined)) {
+    throw new Error(json.message || json.msg || 'MARK_REPLY_NOTIFICATION_READ_FAILED');
+  }
+  if (isAccountCacheCurrent(accountContext)) clearCache('replyNotificationsFirstPage');
 };
 
 // 检查版面是否已收藏
@@ -2981,6 +3152,8 @@ export const checkBoardFavorite = async (boardId: string): Promise<boolean> => {
 // 添加版面到收藏
 export const addBoardFavorite = async (boardId: string): Promise<{success: boolean, message?: string}> => {
   try {
+    const accountContext = await getAccountCacheContext();
+    if (!accountContext) return {success: false, message: '请先登录'};
     const cookies = await getCookies();
     
     if (!cookies) {
@@ -3008,7 +3181,7 @@ export const addBoardFavorite = async (boardId: string): Promise<{success: boole
     console.log('addBoardFavorite API response:', json);
 
     if (json.code === 1) {
-      await invalidateFavoriteBoardsCache();
+      await invalidateFavoriteBoardsCache(accountContext);
       return {success: true, message: json.message || '收藏成功'};
     }
     
@@ -3025,6 +3198,8 @@ export const addBoardFavorite = async (boardId: string): Promise<{success: boole
 // 取消版面收藏
 export const removeBoardFavorite = async (boardId: string): Promise<{success: boolean, message?: string}> => {
   try {
+    const accountContext = await getAccountCacheContext();
+    if (!accountContext) return {success: false, message: '请先登录'};
     const cookies = await getCookies();
     
     if (!cookies) {
@@ -3050,7 +3225,7 @@ export const removeBoardFavorite = async (boardId: string): Promise<{success: bo
     console.log('removeBoardFavorite API response:', json);
 
     if (json.code === 1) {
-      await invalidateFavoriteBoardsCache();
+      await invalidateFavoriteBoardsCache(accountContext);
       return {success: true, message: json.message || '取消收藏成功'};
     }
     
@@ -3094,8 +3269,8 @@ export const getFavoriteTopics = async (
     const json = await safeJsonParse(response);
     console.log('getFavoriteTopics API response:', json);
 
-    if (json.code === 1 && json.data) {
-      const favTopics = json.data.favTopic || [];
+    if (json.code === 1 && Array.isArray(json.data?.favTopic)) {
+      const favTopics = json.data.favTopic;
       const pager = json.data.pager || {};
       
       // 解析嵌套的数据结构，提取需要的字段
@@ -3136,6 +3311,9 @@ export const getFavoriteTopics = async (
     if (error.message === 'NOT_LOGGED_IN') {
       throw error;
     }
+    if (error.message === 'LOGIN_EXPIRED' || error.message?.includes('HTTP 401') || error.message?.includes('HTTP 403')) {
+      throw new Error('LOGIN_EXPIRED');
+    }
     
     if (error.message === '请求超时') {
       throw new Error('请求超时，请检查网络连接');
@@ -3157,14 +3335,18 @@ export const getBlackList = async (
   message?: string;
 }> => {
   try {
+    const accountContext = await getAccountCacheContext();
+    if (!accountContext) throw new Error('NOT_LOGGED_IN');
     const cookies = await getCookies();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     
     if (!cookies) {
       console.error('getBlackList: 未登录，无Cookie');
       return {success: false, blacklist: [], total: 0, message: '请先登录'};
     }
     
-    const cacheKey = 'current_user_blacklist';
+    const cacheKey = `${accountContext.username}:current_user_blacklist`;
+    const revision = getCacheRevision('blackList');
     
     // 如果不是强制刷新，先尝试从缓存获取
     if (!forceRefresh) {
@@ -3174,7 +3356,7 @@ export const getBlackList = async (
         console.log('getBlackList: Using cached data, age:', Math.floor(age / 1000), 's');
         
         if (age > CACHE_REFRESH_THRESHOLD && age < MAX_STALE_CACHE_AGE) {
-          runOnce(`blackList:${cacheKey}`, () => fetchBlackListFromAPI(cookies, cacheKey)).catch(err => {
+          runOnce(`blackList:${accountContext.generation}:${revision}:${cacheKey}`, () => fetchBlackListFromAPI(cookies, cacheKey, accountContext, revision)).catch(err => {
             console.error('Background update blacklist error:', err);
           });
         }
@@ -3191,7 +3373,7 @@ export const getBlackList = async (
     }
     
     // 没有缓存或强制刷新，从API获取
-    return await runOnce(`blackList:${cacheKey}`, () => fetchBlackListFromAPI(cookies, cacheKey));
+    return await runOnce(`blackList:${accountContext.generation}:${revision}:${cacheKey}`, () => fetchBlackListFromAPI(cookies, cacheKey, accountContext, revision));
   } catch (error: any) {
     console.error('Get blacklist error:', error);
     if (error.message === 'LOGIN_EXPIRED') {
@@ -3204,7 +3386,9 @@ export const getBlackList = async (
 // 从API获取黑名单列表的内部函数
 const fetchBlackListFromAPI = async (
   cookies: string,
-  cacheKey: string
+  cacheKey: string,
+  accountContext: AccountCacheContext,
+  revision: number,
 ): Promise<{
   success: boolean;
   blacklist: any[];
@@ -3236,6 +3420,7 @@ const fetchBlackListFromAPI = async (
     message: json.message,
     dataLength: json.data?.length
   });
+  if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
   
   // 检查 code 和 kbsCode
   if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
@@ -3264,7 +3449,7 @@ const fetchBlackListFromAPI = async (
     console.log('getBlackList: Found', total, 'blocked users');
     
     // 保存到缓存
-    setCache('blackList', cacheKey, {blacklist, total});
+    if (isAccountCacheCurrent(accountContext) && getCacheRevision('blackList') === revision) setCache('blackList', cacheKey, {blacklist, total});
     
     return {success: true, blacklist, total, message: json.message || '获取成功'};
   }

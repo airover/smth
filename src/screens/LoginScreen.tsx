@@ -15,6 +15,7 @@ import {
 import {WebView} from 'react-native-webview';
 // 以下工具函数用于 WebView 登录流程
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {fetchAuthenticatedUsername, getWapAuthCookiesFromJar, setLoggedIn} from '../services/auth';
 import {useNavigation} from '@react-navigation/native';
 import {
   handleWebViewMessage,
@@ -35,6 +36,14 @@ import {
 } from '../utils/responsive';
 import {useTheme} from '../components/ThemedComponents';
 import CaptchaScreen from './CaptchaScreen';
+
+const resolveWebViewCookies = async (documentCookies?: string): Promise<{cookies: string | null; fromJar: boolean}> => {
+  if (documentCookies && /(?:^|;\s*)kbs-info=/.test(documentCookies)
+    && /(?:^|;\s*)kbs-key=/.test(documentCookies)) {
+    return {cookies: documentCookies, fromJar: false};
+  }
+  return {cookies: await getWapAuthCookiesFromJar(), fromJar: true};
+};
 
 interface LoginScreenProps {
   onLoginSuccess?: () => void;
@@ -387,8 +396,10 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredent
   };
 
   const handleMessage = async (event: any) => {
+    let messageType = '';
     try {
       const message = JSON.parse(event.nativeEvent.data);
+      messageType = message.type;
       
       // 处理极验验证码检测结果
       if (message.type === 'geetestCaptchaRequired' && message.data.required) {
@@ -478,14 +489,21 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredent
         setShowWebView(false);
         setLoginRetryCount(0);
         
-        // 保存登录状态
-        await AsyncStorage.setItem('isLoggedIn', 'true');
-        
         // 保存用户名
-        const accountName = message.data.account?.name || username.trim();
-        if (accountName) {
-          await AsyncStorage.setItem('username', accountName);
+        const {cookies: loginCookies, fromJar} = await resolveWebViewCookies(message.data.cookies);
+        const serverName = message.data.account?.name?.trim();
+        const verifiedName = loginCookies && (fromJar || !serverName)
+          ? await fetchAuthenticatedUsername(loginCookies) : null;
+        if (fromJar && (!verifiedName || (serverName && verifiedName.toLowerCase() !== serverName.toLowerCase()))) {
+          Alert.alert('登录状态未确认', '无法确认 Cookie 所属账号，请重新登录');
+          return;
         }
+        const accountName = serverName || verifiedName;
+        if (!accountName || !loginCookies) {
+          Alert.alert('登录状态未确认', '未能获取账号名或 Cookie，请重新登录');
+          return;
+        }
+        await setLoggedIn(accountName, loginCookies);
         
         // 保存账号到多账号列表
         try {
@@ -495,7 +513,8 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredent
             let savedAccounts = savedAccountsJson ? JSON.parse(savedAccountsJson) : [];
             
             // 检查账号是否已存在
-            const existingIndex = savedAccounts.findIndex((acc: any) => acc.username === accountName);
+            const existingIndex = savedAccounts.findIndex((acc: any) =>
+              acc.username?.trim().toLowerCase() === accountName.toLowerCase());
             
             const accountInfo = {
               username: accountName,
@@ -516,7 +535,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredent
             // 将其他账号标记为非当前
             savedAccounts = savedAccounts.map((acc: any) => ({
               ...acc,
-              isCurrent: acc.username === accountName,
+              isCurrent: acc.username?.trim().toLowerCase() === accountName.toLowerCase(),
             }));
             
             await AsyncStorage.setItem('savedAccounts', JSON.stringify(savedAccounts));
@@ -573,21 +592,34 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredent
       
       await handleWebViewMessage(
         event,
-        async (cookies) => {
-          // Cookie已经在handleWebViewMessage中保存到AsyncStorage
+        async (_cookies) => {
           console.log('收到Cookie');
         },
-        async (isLoggedIn, detectedUsername) => {
+        async (isLoggedIn, detectedUsername, documentCookies) => {
           if (isLoggedIn) {
+            const {cookies: loginCookies, fromJar} = await resolveWebViewCookies(documentCookies);
+            const verifiedName = loginCookies ? await fetchAuthenticatedUsername(loginCookies) : null;
+            if (fromJar && (!verifiedName || (username.trim()
+              && verifiedName.toLowerCase() !== username.trim().toLowerCase()))) {
+              setLoading(false);
+              Alert.alert('登录状态未确认', '无法确认 Cookie 所属账号，请重新登录');
+              return;
+            }
+            const finalUsername = verifiedName
+              || detectedUsername?.trim();
+            if (!finalUsername) {
+              setLoading(false);
+              Alert.alert('登录状态未确认', '未能获取账号名，请重新登录');
+              return;
+            }
+            if (!loginCookies) {
+              setLoading(false);
+              Alert.alert('登录状态未确认', '未能获取登录 Cookie，请重新登录');
+              return;
+            }
+            await setLoggedIn(finalUsername, loginCookies);
             setLoading(false);
             setShowWebView(false);
-            await AsyncStorage.setItem('isLoggedIn', 'true');
-            
-            // 保存用户名
-            const finalUsername = username.trim() || detectedUsername || await AsyncStorage.getItem('username') || '';
-            if (finalUsername) {
-              await AsyncStorage.setItem('username', finalUsername);
-            }
             
             console.log('登录成功!', {
               username: finalUsername,
@@ -609,6 +641,11 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredent
       );
     } catch (error) {
       console.error('Handle message error:', error);
+      if (messageType === 'loginSuccess' || messageType === 'loginStatus') {
+        setLoading(false);
+        setShowWebView(false);
+        Alert.alert('登录失败', '登录凭据保存失败，请重新登录');
+      }
     }
   };
 
@@ -779,6 +816,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredent
             data: { 
               message: json.message,
               account: json.data?.account,
+              cookies: document.cookie,
               redirectUrl: json.data?.url || '/'
             }
           }));
@@ -956,6 +994,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredent
               data: { 
                 message: json.message,
                 account: json.data?.account,
+                cookies: document.cookie,
                 redirectUrl: json.data?.url || '/'
               }
             }));

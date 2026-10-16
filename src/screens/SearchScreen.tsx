@@ -12,7 +12,7 @@ import {
 import {useNavigation, useRoute} from '@react-navigation/native';
 import {searchArticles, searchBoards, searchAccounts} from '../services/api';
 import {formatRelativeTime} from '../utils/timeFormat';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import {getLocalCacheContext, isAccountCacheCurrent, readAccountItem, writeAccountItem, subscribeAccountCacheChange} from '../services/accountCache';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {useTheme, EmptyState} from '../components/ThemedComponents';
 import {ArticleIcon, BoardIcon, FlameIcon, SearchIcon} from '../components/SvgIcons';
@@ -136,16 +136,21 @@ const SearchScreen: React.FC = () => {
 
   useEffect(() => {
     // 加载搜索历史，用于未搜索时展示最近搜索词
-    (async () => {
+    const loadHistory = async () => {
       try {
-        const history = await AsyncStorage.getItem(SEARCH_HISTORY_KEY);
-        if (history) {
-          setSearchHistory(JSON.parse(history));
-        }
+        const context = await getLocalCacheContext();
+        const history = await readAccountItem(SEARCH_HISTORY_KEY, context);
+        if (context && !isAccountCacheCurrent(context)) return;
+        setSearchHistory(history ? JSON.parse(history) : []);
       } catch (error) {
         console.error('Load search history error:', error);
       }
-    })();
+    };
+    loadHistory();
+    return subscribeAccountCacheChange(() => {
+      setSearchHistory([]);
+      loadHistory();
+    });
   }, []);
 
   useEffect(() => {
@@ -181,7 +186,9 @@ const SearchScreen: React.FC = () => {
   // 保存搜索历史
   const saveSearchHistory = async (searchKeyword: string) => {
     try {
-      const history = await AsyncStorage.getItem(SEARCH_HISTORY_KEY);
+      const context = await getLocalCacheContext();
+      if (!context) return;
+      const history = await readAccountItem(SEARCH_HISTORY_KEY, context);
       let searchHistory: string[] = history ? JSON.parse(history) : [];
       
       // 去重并添加到最前面
@@ -190,7 +197,8 @@ const SearchScreen: React.FC = () => {
         ...searchHistory.filter(item => item !== searchKeyword),
       ].slice(0, MAX_HISTORY_COUNT);
       
-      await AsyncStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(searchHistory));
+      await writeAccountItem(SEARCH_HISTORY_KEY, JSON.stringify(searchHistory), context);
+      if (!isAccountCacheCurrent(context)) return;
       setSearchHistory(searchHistory);
     } catch (error) {
       console.error('Save search history error:', error);

@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
 import {getBlackList} from '../services/api';
+import {getAccountCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
 import {useTheme} from '../components/ThemedComponents';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {BanIcon, ChevronRightIcon} from '../components/SvgIcons';
@@ -38,10 +39,15 @@ const BlacklistScreen: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  useEffect(() => subscribeAccountCacheChange(() => setBlacklist([])), []);
+
   // 加载黑名单列表
   const loadBlacklist = async (forceRefresh: boolean = false, silent: boolean = false) => {
     try {
+      const accountContext = await getAccountCacheContext();
+      if (!accountContext) return;
       const result = await getBlackList(forceRefresh);
+      if (!isAccountCacheCurrent(accountContext)) return;
       
       if (result.success && result.blacklist) {
         // API直接返回用户信息数组

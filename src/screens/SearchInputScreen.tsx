@@ -11,6 +11,7 @@ import {
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {useNavigation} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {getLocalCacheContext, isAccountCacheCurrent, readAccountItem, writeAccountItem, removeAccountItem, subscribeAccountCacheChange} from '../services/accountCache';
 import {useTheme} from '../components/ThemedComponents';
 import {CheckIcon, HistoryIcon, SearchIcon, XIcon} from '../components/SvgIcons';
 import {
@@ -36,14 +37,22 @@ const SearchInputScreen: React.FC = () => {
   useEffect(() => {
     loadSearchHistory();
     loadSearchTypeSelection();
+    return subscribeAccountCacheChange(() => {
+      setSearchHistory([]);
+      loadSearchHistory();
+    });
   }, []);
 
   // 加载搜索历史
   const loadSearchHistory = async () => {
     try {
-      const history = await AsyncStorage.getItem(SEARCH_HISTORY_KEY);
+      const context = await getLocalCacheContext();
+      const history = await readAccountItem(SEARCH_HISTORY_KEY, context);
+      if (context && !isAccountCacheCurrent(context)) return;
       if (history) {
         setSearchHistory(JSON.parse(history));
+      } else {
+        setSearchHistory([]);
       }
     } catch (error) {
       console.error('Load search history error:', error);
@@ -86,13 +95,19 @@ const SearchInputScreen: React.FC = () => {
   // 保存搜索历史
   const saveSearchHistory = async (newKeyword: string) => {
     try {
+      const context = await getLocalCacheContext();
+      if (!context) return;
+      const stored = await readAccountItem(SEARCH_HISTORY_KEY, context);
+      if (!isAccountCacheCurrent(context)) return;
+      const currentHistory: string[] = stored ? JSON.parse(stored) : [];
       // 去重并添加到最前面
       const updatedHistory = [
         newKeyword,
-        ...searchHistory.filter(item => item !== newKeyword),
+        ...currentHistory.filter(item => item !== newKeyword),
       ].slice(0, MAX_HISTORY_COUNT);
       
-      await AsyncStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(updatedHistory));
+      await writeAccountItem(SEARCH_HISTORY_KEY, JSON.stringify(updatedHistory), context);
+      if (!isAccountCacheCurrent(context)) return;
       setSearchHistory(updatedHistory);
     } catch (error) {
       console.error('Save search history error:', error);
@@ -111,7 +126,9 @@ const SearchInputScreen: React.FC = () => {
           style: 'destructive',
           onPress: async () => {
             try {
-              await AsyncStorage.removeItem(SEARCH_HISTORY_KEY);
+              const context = await getLocalCacheContext();
+              await removeAccountItem(SEARCH_HISTORY_KEY, context);
+              if (context && !isAccountCacheCurrent(context)) return;
               setSearchHistory([]);
             } catch (error) {
               console.error('Clear search history error:', error);
@@ -126,8 +143,14 @@ const SearchInputScreen: React.FC = () => {
   // 删除单条搜索历史
   const deleteHistoryItem = async (item: string) => {
     try {
-      const updatedHistory = searchHistory.filter(h => h !== item);
-      await AsyncStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(updatedHistory));
+      const context = await getLocalCacheContext();
+      if (!context) return;
+      const stored = await readAccountItem(SEARCH_HISTORY_KEY, context);
+      if (!isAccountCacheCurrent(context)) return;
+      const currentHistory: string[] = stored ? JSON.parse(stored) : [];
+      const updatedHistory = currentHistory.filter(h => h !== item);
+      await writeAccountItem(SEARCH_HISTORY_KEY, JSON.stringify(updatedHistory), context);
+      if (!isAccountCacheCurrent(context)) return;
       setSearchHistory(updatedHistory);
     } catch (error) {
       console.error('Delete history item error:', error);

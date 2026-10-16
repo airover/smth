@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {accountSnapshotKey, getLocalCacheContext, isAccountCacheCurrent, readAccountItem, removeAccountItem, subscribeAccountCacheChange} from '../services/accountCache';
 
 export const READING_PROGRESS_STORAGE_KEY = 'topic_reading_progress_v1';
 const MAX_PROGRESS_ITEMS = 500;
@@ -31,10 +32,32 @@ let loadPromise: Promise<ProgressMap> | null = null;
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let flushPromise: Promise<void> = Promise.resolve();
 let dirty = false;
+let loadedUsername: string | null = null;
+
+export const waitForReadingProgressWrites = async (): Promise<void> => {
+  await flushPromise.catch(() => undefined);
+};
+
+subscribeAccountCacheChange(() => {
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  // 切换时把最后一次尚未写出的旧账号进度写回其专属 key。
+  if (dirty && progressMap && loadedUsername) {
+    const key = accountSnapshotKey(READING_PROGRESS_STORAGE_KEY, loadedUsername);
+    const snapshot = JSON.stringify(progressMap);
+    flushPromise = flushPromise.catch(() => undefined).then(() => AsyncStorage.setItem(key, snapshot));
+  }
+  progressMap = null;
+  loadPromise = null;
+  loadedUsername = null;
+  dirty = false;
+});
 
 const readAll = async (): Promise<ProgressMap> => {
   try {
-    const raw = await AsyncStorage.getItem(READING_PROGRESS_STORAGE_KEY);
+    const raw = await readAccountItem(READING_PROGRESS_STORAGE_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === 'object' ? parsed : {};
@@ -45,17 +68,25 @@ const readAll = async (): Promise<ProgressMap> => {
 };
 
 const ensureLoaded = async (): Promise<ProgressMap> => {
+  const context = await getLocalCacheContext();
+  if (!context) return {};
+  if (loadedUsername !== context.username) {
+    progressMap = null;
+    loadPromise = null;
+    loadedUsername = context.username;
+  }
   if (progressMap) {
     return progressMap;
   }
 
   if (!loadPromise) {
-    loadPromise = readAll().then(result => {
-      progressMap = result;
+    const pending = readAll().then(result => {
+      if (isAccountCacheCurrent(context)) progressMap = result;
       return result;
     }).finally(() => {
-      loadPromise = null;
+      if (loadPromise === pending) loadPromise = null;
     });
+    loadPromise = pending;
   }
 
   return loadPromise;
@@ -92,7 +123,10 @@ export const flushTopicReadingProgress = async (): Promise<void> => {
     flushTimer = null;
   }
 
+  const context = await getLocalCacheContext();
+  if (!context) return;
   const all = await ensureLoaded();
+  if (!isAccountCacheCurrent(context)) return;
   if (!dirty) {
     await flushPromise.catch(() => undefined);
     return;
@@ -102,10 +136,10 @@ export const flushTopicReadingProgress = async (): Promise<void> => {
   dirty = false;
   flushPromise = flushPromise.catch(() => undefined).then(async () => {
     try {
-      await AsyncStorage.setItem(READING_PROGRESS_STORAGE_KEY, snapshot);
+      await AsyncStorage.setItem(accountSnapshotKey(READING_PROGRESS_STORAGE_KEY, context.username), snapshot);
     } catch (error) {
       // 写入失败时保留 dirty，下一次 flush 仍会重试。
-      dirty = true;
+      if (isAccountCacheCurrent(context)) dirty = true;
       console.error('[ReadingProgress] Failed to save progress:', error);
     }
   });
@@ -118,7 +152,10 @@ export const flushTopicReadingProgress = async (): Promise<void> => {
 };
 
 export const getTopicReadingProgress = async (topicId: string): Promise<TopicReadingProgress | null> => {
+  const context = await getLocalCacheContext();
+  if (!context) return null;
   const all = await ensureLoaded();
+  if (!isAccountCacheCurrent(context)) return null;
   return all[topicId] || null;
 };
 
@@ -129,7 +166,10 @@ export const getTopicReadingProgress = async (topicId: string): Promise<TopicRea
 export const saveTopicReadingProgress = async (
   progress: Omit<TopicReadingProgress, 'updatedAt'>,
 ): Promise<void> => {
+  const context = await getLocalCacheContext();
+  if (!context) return;
   const all = await ensureLoaded();
+  if (!isAccountCacheCurrent(context)) return;
   const saved = all[progress.topicId];
   const savedOrder = parseTopicOrder(saved?.topicOrder);
   const nextOrder = parseTopicOrder(progress.topicOrder);
@@ -168,12 +208,15 @@ export const saveTopicReadingProgress = async (
 };
 
 export const clearTopicReadingProgress = async (): Promise<void> => {
+  const context = await getLocalCacheContext();
+  if (!context) return;
   if (flushTimer) {
     clearTimeout(flushTimer);
     flushTimer = null;
   }
   await flushPromise.catch(() => undefined);
+  if (!isAccountCacheCurrent(context)) return;
   progressMap = {};
   dirty = false;
-  await AsyncStorage.removeItem(READING_PROGRESS_STORAGE_KEY);
+  await removeAccountItem(READING_PROGRESS_STORAGE_KEY);
 };

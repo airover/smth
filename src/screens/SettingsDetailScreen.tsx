@@ -20,7 +20,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useSettings} from '../context/SettingsContext';
 import {useAuth} from '../context/AuthContext'; // 导入 useAuth
 import {loginMSite, logoutMSite, checkMSiteLoginStatus, verifyMSiteLoginStatus} from '../services/api';
-import {isMSiteEnabled, setMSiteEnabled} from '../services/auth';
+import {getCurrentUsername, getMSiteActionRequired, isMSiteEnabled, setMSiteEnabled} from '../services/auth';
 import {getSavedCredentials} from '../utils/storage';
 import {APP_VERSION} from '../utils/appVersion';
 import CaptchaScreen from './CaptchaScreen';
@@ -47,6 +47,7 @@ const SettingsDetailScreen: React.FC = () => {
   const [showAiReplyConfigModal, setShowAiReplyConfigModal] = useState(false);
   const [mSiteEnabled, setMSiteEnabledState] = useState(false); // 开关状态：用户是否启用了M站登录
   const [mSiteLoggedIn, setMSiteLoggedIn] = useState<boolean | null>(null); // 实际登录状态：null=检查中, true=已登录, false=未登录
+  const [mSiteActionRequired, setMSiteActionRequiredState] = useState(false);
   const [showCaptcha, setShowCaptcha] = useState(false);
   const [savedPassword, setSavedPassword] = useState('');
 
@@ -64,10 +65,14 @@ const SettingsDetailScreen: React.FC = () => {
       }
       let cancelled = false;
       const verifyStatus = async () => {
+        const currentName = await getCurrentUsername();
+        if (!cancelled) setUsername(currentName || '');
         // 1. 读取全局开关状态
         const enabled = await isMSiteEnabled();
+        const actionRequired = await getMSiteActionRequired();
         if (!cancelled) {
           setMSiteEnabledState(enabled);
+          setMSiteActionRequiredState(actionRequired);
         }
         if (!enabled) {
           if (!cancelled) {
@@ -136,7 +141,12 @@ const SettingsDetailScreen: React.FC = () => {
     if (value) {
       // 开启 M 站登录
       const credentials = await getSavedCredentials();
-      if (credentials.password) {
+      const currentName = await getCurrentUsername();
+      if (!currentName || !credentials.username
+        || credentials.username.trim().toLowerCase() !== currentName.trim().toLowerCase()) {
+        Alert.alert('提示', '保存的密码不属于当前账号，请重新登录主站并勾选“记住密码”');
+      } else if (credentials.password) {
+        setUsername(currentName);
         setSavedPassword(credentials.password);
         setShowCaptcha(true);
       } else {
@@ -147,6 +157,7 @@ const SettingsDetailScreen: React.FC = () => {
       await logoutMSite();
       setMSiteEnabledState(false);
       setMSiteLoggedIn(null);
+      setMSiteActionRequiredState(false);
       Alert.alert('提示', '已断开 M 站连接');
     }
   };
@@ -182,9 +193,11 @@ const SettingsDetailScreen: React.FC = () => {
       const result = await loginMSite(username, savedPassword, captchaParams);
       if (result.success) {
         // 登录成功，同时启用全局开关并更新状态
-        await setMSiteEnabled(true);
+        await setMSiteEnabled(true, username);
+        if ((await getCurrentUsername())?.trim().toLowerCase() !== username.trim().toLowerCase()) return;
         setMSiteEnabledState(true);
         setMSiteLoggedIn(true);
+        setMSiteActionRequiredState(false);
         console.log('[M站登录] 登录成功，开关已开启');
       } else {
         Alert.alert('失败', result.message || 'M 站登录失败');
@@ -477,7 +490,13 @@ const subject = encodeURIComponent('海月水母用户反馈');
                   <View style={styles.menuItemLeft}>
                     <View style={styles.switchItemContent}>
                       <Text style={[styles.menuItemText, {color: theme.text}]}>登录 M 站</Text>
-                      {!mSiteEnabled ? (
+                      {mSiteActionRequired ? (
+                        <TouchableOpacity onPress={() => handleMSiteToggle(true)}>
+                          <Text style={[styles.switchItemDescription, {color: theme.error}]}>
+                            需要重新登录，点击此处重试
+                          </Text>
+                        </TouchableOpacity>
+                      ) : !mSiteEnabled ? (
                         <Text style={[styles.switchItemDescription, {color: theme.secondaryText}]}>
                           开启后可改善部分帖子图片加载失败的情况
                         </Text>
