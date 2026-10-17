@@ -15,7 +15,7 @@ import {
   buildDeleteHeaders,
   buildLoginHeaders,
 } from '../utils/requestUtils';
-import {extractWapAuthCookies, fetchAuthenticatedUsername, getCookies, restoreWapAuthCookieJar, setLoggedIn, storeCookies, storeMSiteCookies, getMSiteCookies, extractAndStoreMSiteCookiesFromJar, clearMSiteCookieJar, getMSiteResponseStatus, handleMSiteCookieExpired, setMSiteEnabled, resetMSiteBackoff, beginMSiteLogin, getMSiteLoginContext, trackMSiteLogin, finishMSiteLogin, isMSiteLoginCurrent, invalidateMSiteLogin, getCurrentUsername, MSiteLoginContext} from './auth';
+import {extractWapAuthCookies, fetchAuthenticatedUsername, getCookies, restoreWapAuthCookieJar, setLoggedIn, storeCookies, storeMSiteCookies, getMSiteCookies, extractAndStoreMSiteCookiesFromJar, clearMSiteCookieJar, getMSiteResponseStatus, handleMSiteCookieExpired, setMSiteEnabled, resetMSiteBackoff, syncWapAuthCookieJar, withWapSessionLock, beginMSiteLogin, getMSiteLoginContext, trackMSiteLogin, finishMSiteLogin, isMSiteLoginCurrent, invalidateMSiteLogin, getCurrentUsername, MSiteLoginContext} from './auth';
 import {buildHeaders} from '../utils/requestUtils';
 import {setCache, setCacheWithTimestamp, getCacheWithTimestamp, getCacheRevision, clearCache as clearCacheManager} from './cacheManager';
 import {AccountCacheContext, activateAccountCache, getAccountCacheContext, isAccountCacheCurrent, readAccountSnapshot, writeAccountSnapshot, removeAccountSnapshotsForUser} from './accountCache';
@@ -641,7 +641,7 @@ export const verifyMSiteLoginStatus = async (strict: boolean = false): Promise<b
         'Accept-Language': 'zh-CN,zh;q=0.9',
         'Referer': 'https://m.newsmth.net/favor',
       },
-      credentials: 'include',
+      credentials: 'omit', // 只用当前账号自己的 M 站 Cookie；jar 里可能是 guest 或上一个账号的
       signal: controller.signal,
     } as any);
 
@@ -1202,11 +1202,12 @@ export const logout = async () => {
   const currentAccount = await getAccountCacheContext();
   invalidateMSiteLogin();
   await handleMSiteCookieExpired();
-  // 清除所有AsyncStorage中的登录数据
-  await AsyncStorage.removeItem('cookies');
-  await AsyncStorage.removeItem('username');
-  await AsyncStorage.removeItem('isLoggedIn');
-  activateAccountCache(null);
+  // 清除所有AsyncStorage中的登录数据；jar 里是持久 Cookie，必须一并清掉。
+  await withWapSessionLock(async () => {
+    await AsyncStorage.multiRemove(['cookies', 'username', 'isLoggedIn']);
+    activateAccountCache(null);
+    await syncWapAuthCookieJar(null).catch(error => console.error('Clear wap cookie jar error:', error));
+  });
   
   // 清除 M 站相关数据
   await AsyncStorage.removeItem('mSiteCookies');

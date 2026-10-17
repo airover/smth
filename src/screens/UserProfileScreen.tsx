@@ -775,10 +775,11 @@ const UserProfileScreen: React.FC = () => {
         accountContext = await getAccountCacheContext();
         if (!isRequestCurrent()) return null;
       }
+      // 静默刷新时保留当前页面和错误状态，避免整页切换成加载态后重新挂载导致头像闪烁。
       if (!silent) {
         setLoading(true);
+        setError(null);
       }
-      setError(null);
       
       let userInfo;
       if (isSelf) {
@@ -876,13 +877,13 @@ const UserProfileScreen: React.FC = () => {
         console.log('UserProfileScreen loaded:', userInfo.username, 'isSelf:', isSelf, 'posts:', userInfo.recentPosts?.length || 0);
         return userInfo; // 返回用户信息
       } else {
-        setError('无法加载用户信息');
+        if (!silent) setError('无法加载用户信息');
         return null;
       }
     } catch (err: any) {
       if (!isRequestCurrent()) return null;
       console.error('Load user info error:', err);
-      setError(err.message || '加载失败');
+      if (!silent) setError(err.message || '加载失败');
       return null;
     } finally {
       if (!silent && isRequestCurrent()) {
@@ -910,12 +911,19 @@ const UserProfileScreen: React.FC = () => {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    const request = loadUserInfo(isCurrentUser, true);
+    // 已有资料时静默刷新：只替换数据，不切换到整页加载态（否则头像、背景图会重新加载并闪烁）。
+    const hasContent = !!user;
+    const request = loadUserInfo(isCurrentUser, true, hasContent);
     const requestGeneration = profileLoadGenerationRef.current;
     try {
       // 下拉刷新时强制从API获取最新数据
       const userInfo = await request;
       if (requestGeneration !== profileLoadGenerationRef.current) return;
+      if (!userInfo && hasContent) {
+        // 失败时保留当前内容，仅提示。
+        Alert.alert('刷新失败', '网络请求失败，请稍后重试', [{text: '确定'}]);
+        return;
+      }
       // 如果是查看他人资料，强制刷新关注状态和黑名单状态
       if (!isCurrentUser && username) {
         await checkFollowingStatus(username, true, userInfo);
