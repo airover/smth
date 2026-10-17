@@ -13,7 +13,7 @@ import {SafeAreaView} from 'react-native-safe-area-context';
 import {useNavigation, useRoute} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {getMessages, getReplyNotifications, markReplyNotificationAsRead} from '../services/api';
-import {getCacheWithTimestamp, setCache, clearCache} from '../services/cacheManager';
+import {getCacheWithTimestamp, setCache, setCacheWithTimestamp, clearCache} from '../services/cacheManager';
 import {getAccountCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
 import {Mail, ReplyNotification} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
@@ -27,6 +27,13 @@ import {
   scaleModerate,
 } from '../utils/responsive';
 import {useFocusRefresh} from '../hooks/useFocusRefresh';
+import {useUnreadCounts} from '../hooks/useUnreadCounts';
+import {
+  applyReplyNotificationRead,
+  getUnreadCounts,
+  refreshUnreadCounts,
+  syncMailUnreadFromList,
+} from '../services/unreadCounts';
 
 const MAIL_MEMORY_FRESH_TTL = 30 * 1000;
 const MAIL_REFRESH_INTERVAL = 30 * 1000;
@@ -46,7 +53,13 @@ const MailScreen: React.FC = () => {
   const theme = useTheme();
   const [mails, setMails] = useState<Mail[]>([]);
   const [replyNotifications, setReplyNotifications] = useState<ReplyNotification[]>([]);
-  const [activeTab, setActiveTab] = useState<'mail' | 'reply'>(route.params?.tab === 'reply' ? 'reply' : 'mail');
+  // 未指定 Tab 时，只有回复未读就直接打开回复 Tab。
+  const [activeTab, setActiveTab] = useState<'mail' | 'reply'>(() => {
+    if (route.params?.tab === 'reply' || route.params?.tab === 'mail') return route.params.tab;
+    const {mail, reply} = getUnreadCounts();
+    return mail === 0 && reply > 0 ? 'reply' : 'mail';
+  });
+  const unreadCounts = useUnreadCounts();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [mailLoaded, setMailLoaded] = useState(false);
@@ -106,7 +119,7 @@ const MailScreen: React.FC = () => {
   };
 
   useEffect(() => {
-    if (route.params?.tab === 'reply') setActiveTab('reply');
+    if (route.params?.tab === 'reply' || route.params?.tab === 'mail') setActiveTab(route.params.tab);
   }, [route.params?.tab]);
 
   const getMailCacheAge = useCallback((): number | null => {
@@ -220,6 +233,7 @@ const MailScreen: React.FC = () => {
       setMails(data);
       setMailLoaded(true);
       setCache('mailConversations', undefined, data);
+      syncMailUnreadFromList(accountContext, data);
     } catch (error: any) {
       if (!isAccountCacheCurrent(accountContext)) return;
       console.error('Load mails error:', error);
@@ -331,7 +345,10 @@ const MailScreen: React.FC = () => {
     }
   };
 
-  const refreshMessagesSilently = () => checkLoginAndLoadMails(false, true);
+  const refreshMessagesSilently = () => Promise.all([
+    checkLoginAndLoadMails(false, true),
+    refreshUnreadCounts(),
+  ]).then(() => undefined);
 
   useFocusRefresh(refreshMessagesSilently, {
     intervalMs: MAIL_REFRESH_INTERVAL,
@@ -343,6 +360,7 @@ const MailScreen: React.FC = () => {
 
   const onRefresh = async () => {
     setRefreshing(true);
+    void refreshUnreadCounts({force: true});
     const request = checkLoginAndLoadMails(true, false);
     const requestGeneration = requestGenerationRef.current;
     await request;
@@ -365,6 +383,13 @@ const MailScreen: React.FC = () => {
           navigation.navigate('MailDetail', {
             mail: item,
           });
+          // 详情页负责调用已读接口和扣减计数；列表与快照先同步显示为已读。
+          if (hasUnread) {
+            const markRead = (list: Mail[]) => list.map(mail => (mail.id === item.id ? {...mail, unread: 0} : mail));
+            setMails(markRead);
+            const cached = getCacheWithTimestamp<Mail[]>('mailConversations');
+            if (cached) setCacheWithTimestamp('mailConversations', undefined, markRead(cached.data), cached.timestamp);
+          }
         }}>
         <View style={styles.mailContent}>
           <View style={styles.mailTextContent}>
@@ -399,6 +424,7 @@ const MailScreen: React.FC = () => {
       // 缓存的是页面快照，不会跟着这次乐观更新同步；直接失效它，避免下次重新进入
       // 这个页面时，从缓存里先闪一下这条“未读”，再被后续请求纠正回来。
       clearCache('replyNotificationsFirstPage');
+      applyReplyNotificationRead(accountContext);
       try {
         await markReplyNotificationAsRead(item.id, accountContext);
       } catch (error) {
@@ -407,6 +433,9 @@ const MailScreen: React.FC = () => {
         setReplyNotifications(prev => prev.map(notification => (
           notification.id === item.id ? {...notification, status: previousStatus} : notification
         )));
+      } finally {
+        // 无论成功失败都以服务端为准对账一次，纠正乐观扣减。
+        void refreshUnreadCounts({force: true});
       }
     }
 
@@ -501,14 +530,24 @@ const MailScreen: React.FC = () => {
           onPress={() => setActiveTab('mail')}
           accessibilityRole="tab"
           accessibilityState={{selected: activeTab === 'mail'}}>
-          <Text style={[styles.tabText, {color: activeTab === 'mail' ? '#fff' : theme.secondaryText}]}>私信</Text>
+          <View style={styles.tabLabelRow}>
+            <Text style={[styles.tabText, {color: activeTab === 'mail' ? '#fff' : theme.secondaryText}]}>私信</Text>
+            {unreadCounts.mail > 0 && (
+              <View style={[styles.tabDot, {backgroundColor: activeTab === 'mail' ? '#fff' : theme.primary}]} />
+            )}
+          </View>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.tabItem, activeTab === 'reply' && {backgroundColor: theme.primary}]}
           onPress={() => setActiveTab('reply')}
           accessibilityRole="tab"
           accessibilityState={{selected: activeTab === 'reply'}}>
-          <Text style={[styles.tabText, {color: activeTab === 'reply' ? '#fff' : theme.secondaryText}]}>回复</Text>
+          <View style={styles.tabLabelRow}>
+            <Text style={[styles.tabText, {color: activeTab === 'reply' ? '#fff' : theme.secondaryText}]}>回复</Text>
+            {unreadCounts.reply > 0 && (
+              <View style={[styles.tabDot, {backgroundColor: activeTab === 'reply' ? '#fff' : theme.primary}]} />
+            )}
+          </View>
         </TouchableOpacity>
         </View>
       </View>
@@ -584,6 +623,16 @@ const styles = StyleSheet.create({
   tabText: {
     fontSize: FONT_SIZE.md,
     fontWeight: '600',
+  },
+  tabLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  tabDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginLeft: 4,
   },
   mailItem: {
     borderRadius: BORDER_RADIUS.lg,

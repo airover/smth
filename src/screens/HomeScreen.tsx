@@ -12,11 +12,12 @@ import {
   NativeSyntheticEvent,
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
-import {getTopTen, getHotPosts, getHotBoards, getReplyNotifications} from '../services/api';
+import {getTopTen, getHotPosts, getHotBoards} from '../services/api';
+import {getUnreadCounts, refreshUnreadCounts} from '../services/unreadCounts';
+import {useUnreadCounts} from '../hooks/useUnreadCounts';
 import {TopTenItem, Board} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
 import {getCache, setCache, getCacheRevision, getCacheWithTimestamp, setCacheWithTimestamp, clearCache, readPersistedSnapshot, writePersistedSnapshot, PUBLIC_CONTENT_FRESH_AGES, PUBLIC_CONTENT_SNAPSHOT_KEYS} from '../services/cacheManager';
-import {getAccountCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
 import {useTheme, SkeletonList} from '../components/ThemedComponents';
 import {getCardElevation} from '../utils/theme';
 import {
@@ -35,7 +36,6 @@ import {BellIcon} from '../components/SvgIcons';
 import {useFocusRefresh} from '../hooks/useFocusRefresh';
 
 const AUTO_REFRESH_CHECK_INTERVAL = 60 * 1000;
-const UNREAD_COUNT_REFRESH_INTERVAL = 30 * 1000;
 
 // 缓存配置常量
 const CACHE_CONFIG = {
@@ -118,61 +118,20 @@ const HomeScreen: React.FC = () => {
   const [loadingMoreHotPosts, setLoadingMoreHotPosts] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
   const [loadError, setLoadError] = useState(false);
-  const [unreadReplyCount, setUnreadReplyCount] = useState(0);
+  const unreadCounts = useUnreadCounts();
+  const unreadTotal = unreadCounts.mail + unreadCounts.reply;
   const isSilentRefreshingRef = useRef(false);
   const apiRequestRef = useRef<Promise<void> | null>(null);
   const isRefreshInProgressRef = useRef(false);
-  const unreadCountFetchedAtRef = useRef(0);
-  const unreadCountRequestRef = useRef<Promise<void> | null>(null);
   const scrollOffsetYRef = useRef(0);
   const isDraggingRef = useRef(false);
   const hasPendingSilentUpdateRef = useRef(false);
   const hasDisplayableDataRef = useRef(false);
 
-  const loadUnreadReplyCount = useCallback(async (force = false): Promise<void> => {
-    if (!force && Date.now() - unreadCountFetchedAtRef.current < UNREAD_COUNT_REFRESH_INTERVAL) {
-      return;
-    }
-    if (unreadCountRequestRef.current) {
-      return unreadCountRequestRef.current;
-    }
-
-    const request = (async () => {
-      try {
-        const context = await getAccountCacheContext();
-        if (!context) {
-          setUnreadReplyCount(0);
-          unreadCountFetchedAtRef.current = Date.now();
-          return;
-        }
-        const result = await getReplyNotifications(1, 1);
-        if (!isAccountCacheCurrent(context)) return;
-        setUnreadReplyCount(result.total);
-        unreadCountFetchedAtRef.current = Date.now();
-      } catch (error) {
-        console.log('[Home] Load unread reply count failed:', error);
-      }
-    })();
-
-    unreadCountRequestRef.current = request;
-    try {
-      await request;
-    } finally {
-      if (unreadCountRequestRef.current === request) {
-        unreadCountRequestRef.current = null;
-      }
-    }
-  }, []);
-
-  useEffect(() => subscribeAccountCacheChange(() => {
-    unreadCountFetchedAtRef.current = 0;
-    unreadCountRequestRef.current = null;
-    setUnreadReplyCount(0);
-    loadUnreadReplyCount(true);
-  }), [loadUnreadReplyCount]);
-
-  const openReplyNotifications = useCallback(() => {
-    navigation.navigate('Mail', {tab: 'reply'});
+  // 只有私信未读时进私信 Tab，其余情况（含两者都有）优先进回复 Tab。
+  const openMessageCenter = useCallback(() => {
+    const {mail, reply} = getUnreadCounts();
+    navigation.navigate('Mail', {tab: mail > 0 && reply === 0 ? 'mail' : 'reply'});
   }, [navigation]);
 
   // 下拉进入收藏抽屉
@@ -469,27 +428,30 @@ const HomeScreen: React.FC = () => {
 
   useEffect(() => {
     loadData();
-    loadUnreadReplyCount();
-  }, [loadData, loadUnreadReplyCount]);
+    void refreshUnreadCounts();
+  }, [loadData]);
 
   useEffect(() => {
     setHeaderOptions({
       headerRight: () => (
-        <TouchableOpacity style={styles.floatingBellButton} onPress={openReplyNotifications} accessibilityLabel="回复提醒">
+        <TouchableOpacity
+          style={styles.floatingBellButton}
+          onPress={openMessageCenter}
+          accessibilityLabel={unreadTotal > 0 ? `消息中心，${unreadTotal} 条未读` : '消息中心'}>
           <BellIcon size={22} color={theme.headerTint} />
-          {unreadReplyCount > 0 && <View style={[styles.headerBellBadge, {borderColor: theme.headerBackground}]} />}
+          {unreadTotal > 0 && <View style={[styles.headerBellBadge, {borderColor: theme.headerBackground}]} />}
         </TouchableOpacity>
       ),
     });
-  }, [openReplyNotifications, setHeaderOptions, theme.headerBackground, theme.headerTint, unreadReplyCount]);
+  }, [openMessageCenter, setHeaderOptions, theme.headerBackground, theme.headerTint, unreadTotal]);
 
   useEffect(() => {
     hasDisplayableDataRef.current = dataLoaded || topTen.length > 0 || hotBoards.length > 0 || hotPosts.length > 0;
   }, [dataLoaded, hotBoards.length, hotPosts.length, topTen.length]);
 
   const refreshHomeSilently = useCallback(async () => {
-    await Promise.all([loadDataSilently(), loadUnreadReplyCount()]);
-  }, [loadDataSilently, loadUnreadReplyCount]);
+    await Promise.all([loadDataSilently(), refreshUnreadCounts()]);
+  }, [loadDataSilently]);
 
   useFocusRefresh(refreshHomeSilently, {
     intervalMs: AUTO_REFRESH_CHECK_INTERVAL,
@@ -576,7 +538,7 @@ const HomeScreen: React.FC = () => {
       // 手动下拉刷新时强制从API获取最新数据
       await Promise.all([
         loadDataFromAPI(false),
-        loadUnreadReplyCount(true),
+        refreshUnreadCounts({force: true}),
       ]);
     } catch (error) {
       console.error('Refresh error:', error);

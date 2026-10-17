@@ -14,7 +14,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {AccountCacheContext, getAccountCacheContext, isAccountCacheCurrent, readAccountSnapshot, subscribeAccountCacheChange} from '../services/accountCache';
 import {getCacheRevision} from '../services/cacheManager';
 import {getUserInfo, logout} from '../services/api';
-import {getMessages, getReplyNotifications} from '../services/dataFetcher';
+import {refreshUnreadCounts} from '../services/unreadCounts';
+import {useUnreadCounts} from '../hooks/useUnreadCounts';
 import {User} from '../types';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {useTheme} from '../components/ThemedComponents';
@@ -46,82 +47,23 @@ const SettingsScreen: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [username, setUsername] = useState<string>('');
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [unreadMailCount, setUnreadMailCount] = useState<number>(0);
-  const unreadMailFetchedAtRef = useRef(0);
-  const unreadMailRequestRef = useRef<Promise<void> | null>(null);
-  const unreadMailGenerationRef = useRef(0);
+  const unreadCounts = useUnreadCounts();
+  const unreadMailCount = unreadCounts.mail + unreadCounts.reply;
   const userInfoGenerationRef = useRef(0);
 
   useEffect(() => {
     loadUserInfo(false);
-    loadUnreadMailCount();
+    void refreshUnreadCounts();
   }, []);
 
+  // 未读计数由 unreadCounts 统一维护，账号切换时它会自行清零并重新拉取。
   useEffect(() => subscribeAccountCacheChange(() => {
     userInfoGenerationRef.current += 1;
-    unreadMailGenerationRef.current += 1;
-    unreadMailRequestRef.current = null;
     setUser(null);
     setUsername('');
     setIsLoggedIn(false);
-    setUnreadMailCount(0);
-    unreadMailFetchedAtRef.current = 0;
     void loadUserInfo(false).catch(error => console.error('Reload user info after account change error:', error));
-    loadUnreadMailCount(true);
   }), []);
-
-  // 获取未读邮件数量
-  const loadUnreadMailCount = async (force: boolean = false): Promise<void> => {
-    if (!force && Date.now() - unreadMailFetchedAtRef.current < 30 * 1000) {
-      return;
-    }
-    if (unreadMailRequestRef.current) {
-      return unreadMailRequestRef.current;
-    }
-
-    const requestGeneration = unreadMailGenerationRef.current;
-    const request = (async () => {
-      try {
-        const accountContext = await getAccountCacheContext();
-        if (!accountContext) {
-          if (requestGeneration === unreadMailGenerationRef.current) {
-            setUnreadMailCount(0);
-            unreadMailFetchedAtRef.current = Date.now();
-          }
-          return;
-        }
-
-        const loginStatus = await AsyncStorage.getItem('isLoggedIn');
-        if (requestGeneration !== unreadMailGenerationRef.current || !isAccountCacheCurrent(accountContext)) return;
-        if (loginStatus !== 'true') {
-          setUnreadMailCount(0);
-          unreadMailFetchedAtRef.current = Date.now();
-          return;
-        }
-        const [messages, replyNotifications] = await Promise.all([
-          getMessages(0),
-          getReplyNotifications(1, 1),
-        ]);
-        if (requestGeneration !== unreadMailGenerationRef.current || !isAccountCacheCurrent(accountContext)) return;
-        const count = messages.reduce((sum, mail) => sum + (mail.unread || 0), 0)
-          + replyNotifications.items.filter(item => item.status === 1).length;
-        setUnreadMailCount(count);
-        unreadMailFetchedAtRef.current = Date.now();
-      } catch (error) {
-        console.log('loadUnreadMailCount error:', error);
-        // 静默失败，不影响页面显示
-      }
-    })();
-
-    unreadMailRequestRef.current = request;
-    try {
-      await request;
-    } finally {
-      if (unreadMailRequestRef.current === request) {
-        unreadMailRequestRef.current = null;
-      }
-    }
-  };
 
   const loadUserInfo = async (forceRefresh: boolean = false, silent: boolean = false) => {
     const requestGeneration = ++userInfoGenerationRef.current;
@@ -237,7 +179,7 @@ const SettingsScreen: React.FC = () => {
     async () => {
       await Promise.all([
         loadUserInfo(false, true),
-        loadUnreadMailCount(),
+        refreshUnreadCounts(),
       ]);
     },
     {
@@ -249,6 +191,7 @@ const SettingsScreen: React.FC = () => {
   // 下拉刷新 - 遵循项目规则：同步等待后台返回最新数据
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
+    void refreshUnreadCounts({force: true});
     const request = loadUserInfo(true);
     const requestGeneration = userInfoGenerationRef.current;
     try {
