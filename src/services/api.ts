@@ -15,11 +15,12 @@ import {
   buildDeleteHeaders,
   buildLoginHeaders,
 } from '../utils/requestUtils';
-import {fetchAuthenticatedUsername, getCookies, setLoggedIn, storeCookies, storeMSiteCookies, getMSiteCookies, extractAndStoreMSiteCookiesFromJar, clearMSiteCookieJar, getMSiteResponseStatus, handleMSiteCookieExpired, setMSiteEnabled, resetMSiteBackoff, beginMSiteLogin, getMSiteLoginContext, trackMSiteLogin, finishMSiteLogin, isMSiteLoginCurrent, invalidateMSiteLogin, getCurrentUsername, MSiteLoginContext} from './auth';
+import {extractWapAuthCookies, fetchAuthenticatedUsername, getCookies, restoreWapAuthCookieJar, setLoggedIn, storeCookies, storeMSiteCookies, getMSiteCookies, extractAndStoreMSiteCookiesFromJar, clearMSiteCookieJar, getMSiteResponseStatus, handleMSiteCookieExpired, setMSiteEnabled, resetMSiteBackoff, beginMSiteLogin, getMSiteLoginContext, trackMSiteLogin, finishMSiteLogin, isMSiteLoginCurrent, invalidateMSiteLogin, getCurrentUsername, MSiteLoginContext} from './auth';
 import {buildHeaders} from '../utils/requestUtils';
 import {setCache, setCacheWithTimestamp, getCacheWithTimestamp, getCacheRevision, clearCache as clearCacheManager} from './cacheManager';
 import {AccountCacheContext, activateAccountCache, getAccountCacheContext, isAccountCacheCurrent, readAccountSnapshot, writeAccountSnapshot, removeAccountSnapshotsForUser} from './accountCache';
 import {invalidateContentCache} from './contentCache';
+import {preserveCurrentSession, profileFromServerAccount, sameAccount, saveAccount, updateSavedAccountProfile} from './savedAccounts';
 
 const BASE_URL = 'https://wap.newsmth.net';
 const WAP_BASE_URL = 'https://wap.newsmth.net';
@@ -153,6 +154,9 @@ export const login = async (
     gen_time?: string;
   }
 ): Promise<{success: boolean; message?: string; data?: any}> => {
+  // 登录响应会把新账号写进系统 cookie jar；未提交就结束时需要把 jar 还原。
+  let jarMayHoldUncommittedLogin = false;
+
   try {
     const formData = new URLSearchParams();
     // 使用正确的参数名
@@ -186,6 +190,7 @@ export const login = async (
     const loginUrl = BASE_URL + '/wap/authorize/sign-in';
     console.log('发送登录请求到:', loginUrl);
     
+    jarMayHoldUncommittedLogin = true;
     const response = await fetchWithRetry(loginUrl, {
       method: 'POST',
       headers,
@@ -212,26 +217,44 @@ export const login = async (
       if (json.code === 1) {
         const serverAccountName = json.data?.account?.name?.trim();
         let loginCookies = response.headers.get('set-cookie');
-        try {
-          const jar = await CookieManager.get(WAP_BASE_URL);
-          const jarCookies = ['kbs-info', 'kbs-key']
-            .map(key => jar[key]?.value ? `${key}=${jar[key].value}` : null)
-            .filter((part): part is string => !!part)
-            .join('; ');
-          if (jarCookies.includes('kbs-info=') && jarCookies.includes('kbs-key=')) loginCookies = jarCookies;
-        } catch (cookieError) {
-          console.error('读取登录 Cookie jar 失败:', cookieError);
+        const responseHasAuthCookies = !!loginCookies?.includes('kbs-info=')
+          && loginCookies.includes('kbs-key=');
+        if (!responseHasAuthCookies) {
+          try {
+            const jar = await CookieManager.get(WAP_BASE_URL);
+            const jarCookies = ['kbs-info', 'kbs-key']
+              .map(key => jar[key]?.value ? `${key}=${jar[key].value}` : null)
+              .filter((part): part is string => !!part)
+              .join('; ');
+            if (jarCookies.includes('kbs-info=') && jarCookies.includes('kbs-key=')) loginCookies = jarCookies;
+          } catch (cookieError) {
+            console.error('读取登录 Cookie jar 失败:', cookieError);
+          }
         }
-        if (!loginCookies?.includes('kbs-info=') || !loginCookies.includes('kbs-key=')) {
-          return {success: false, message: '登录成功但未能获取 Cookie，请重试'};
+        const authCookies = extractWapAuthCookies(loginCookies);
+        if (!authCookies) return {success: false, message: '登录成功但未能获取 Cookie，请重试'};
+        // 先用新凭证向服务端确认账号，确认前不改动本地登录态，避免旧账号请求拿到新账号的数据。
+        const authenticatedName = await fetchAuthenticatedUsername(authCookies);
+        if (!authenticatedName) return {success: false, message: '登录成功但未能确认账号名，请重试'};
+        if (serverAccountName && !sameAccount(serverAccountName, authenticatedName)) {
+          return {success: false, message: '登录 Cookie 与服务器返回的账号不匹配，请重试'};
         }
-        // 新会话不继承上一账号的 set_identity；账号资料稍后会重建它。
-        await storeCookies(loginCookies, false, false);
-        const committedCookies = await getCookies();
-        if (!committedCookies) return {success: false, message: '登录 Cookie 保存失败，请重试'};
-        const accountName = serverAccountName || await fetchAuthenticatedUsername(committedCookies);
-        if (!accountName) return {success: false, message: '登录成功但未能确认账号名，请重试'};
-        await setLoggedIn(accountName, committedCookies);
+        if (username.trim() && !sameAccount(username, authenticatedName)) {
+          return {success: false, message: '登录 Cookie 与输入的账号不匹配，请重试'};
+        }
+        const accountName = serverAccountName || authenticatedName;
+        // 先备份旧会话，避免令牌覆盖后旧账号从列表里消失。
+        await preserveCurrentSession();
+        // 新会话不继承上一账号的 set_identity；账号资料稍后会重建它。setLoggedIn 同时同步 cookie jar。
+        await setLoggedIn(accountName, authCookies);
+        jarMayHoldUncommittedLogin = false;
+        const committedCookies = await getCookies() || authCookies;
+        // 账号密码登录也要进入多账号列表，否则新登录会覆盖掉旧账号。
+        await saveAccount({
+          username: accountName,
+          ...profileFromServerAccount(json.data?.account),
+          cookies: committedCookies,
+        }).catch(error => console.error('保存账号到多账号列表失败:', error));
         
         // 登录成功后立即获取用户信息，以便构造 set_identity cookie
         // 不等待它完成，让它在后台执行
@@ -263,6 +286,8 @@ export const login = async (
       success: false,
       message: error instanceof Error ? error.message : '网络请求失败'
     };
+  } finally {
+    if (jarMayHoldUncommittedLogin) await restoreWapAuthCookieJar();
   }
 };
 
@@ -663,6 +688,9 @@ const USER_INFO_PERSIST_MAX_STALE_AGE = 7 * 24 * 60 * 60 * 1000; // 持久缓存
 // 用户信息持久化存储的key（用于 AsyncStorage 备份）
 export const USER_INFO_STORAGE_KEY = 'userInfo';
 const USER_INFO_TIMESTAMP_KEY = 'userInfoTimestamp';
+const isOwnProfile = (profile: any, context: AccountCacheContext): boolean =>
+  typeof profile?.username === 'string'
+  && sameAccount(profile.username, context.username);
 
 // 从服务器获取用户信息（内部函数）
 const fetchUserInfoFromServer = async (context: AccountCacheContext, revision: number): Promise<any> => {
@@ -746,6 +774,9 @@ const fetchUserInfoFromServer = async (context: AccountCacheContext, revision: n
       // 使用 cacheManager 统一管理缓存
       if (!isAccountCacheCurrent(context) || getCacheRevision('userInfo') !== revision) return null;
       setCache('userInfo', undefined, userInfo, USER_INFO_CACHE_DURATION);
+      // 顺带刷新多账号列表里的昵称和头像。
+      void updateSavedAccountProfile(context.username, {nickname: userInfo.nickname, avatar: userInfo.avatar})
+        .catch(error => console.error('Update saved account profile error:', error));
 
       // 同时持久化到 AsyncStorage（用于离线场景和 App 重启后恢复）
       try {
@@ -765,7 +796,7 @@ const fetchUserInfoFromServer = async (context: AccountCacheContext, revision: n
     // API 返回失败，尝试从本地存储获取
     console.log('getUserInfo: API returned failure, code:', json.code);
     const storedUsername = await AsyncStorage.getItem('username');
-    if (storedUsername && isAccountCacheCurrent(context)) {
+    if (storedUsername && sameAccount(storedUsername, context.username) && isAccountCacheCurrent(context)) {
       return {
         username: storedUsername,
         // 不返回 isLoggedIn 字段，让调用方保持本地状态
@@ -777,7 +808,7 @@ const fetchUserInfoFromServer = async (context: AccountCacheContext, revision: n
     console.error('Get user info error:', error);
     // 出错时尝试从本地存储获取
     const storedUsername = await AsyncStorage.getItem('username');
-    if (storedUsername && isAccountCacheCurrent(context)) {
+    if (storedUsername && sameAccount(storedUsername, context.username) && isAccountCacheCurrent(context)) {
       return {
         username: storedUsername,
         // 不返回 isLoggedIn 字段，让调用方保持本地状态
@@ -811,7 +842,8 @@ export const getUserInfo = async (forceRefresh: boolean = false): Promise<any> =
   
   // 第一层：检查 cacheManager 内存缓存（最快）
   const cachedData = getCacheWithTimestamp<any>('userInfo');
-  if (cachedData && (now - cachedData.timestamp) < USER_INFO_CACHE_DURATION) {
+  if (cachedData && isOwnProfile(cachedData.data, context)
+    && (now - cachedData.timestamp) < USER_INFO_CACHE_DURATION) {
     console.log('getUserInfo: 使用 cacheManager 内存缓存，剩余有效期:', Math.floor((USER_INFO_CACHE_DURATION - (now - cachedData.timestamp)) / 1000), '秒');
     return cachedData.data;
   }
@@ -822,7 +854,7 @@ export const getUserInfo = async (forceRefresh: boolean = false): Promise<any> =
       () => getCacheRevision('userInfo') === revision);
     if (!isAccountCacheCurrent(context)) return null;
 
-    if (persisted) {
+    if (persisted && isOwnProfile(persisted.data, context)) {
       const {data: userInfo, age, isExpired} = persisted;
 
       if (!isExpired) {
@@ -1039,10 +1071,18 @@ export const searchAccounts = async (
 
 // 删除帖子
 // API: DELETE https://wap.newsmth.net/wap/api/topic/delete/article/{postId}
-export const deletePost = async (postId: string, title?: string, board?: string, topicId?: string): Promise<{success: boolean; message?: string}> => {
+export const deletePost = async (
+  postId: string,
+  title?: string,
+  board?: string,
+  topicId?: string,
+  expectedContext?: AccountCacheContext | null,
+): Promise<{success: boolean; message?: string}> => {
   try {
-    const accountContext = await getAccountCacheContext();
+    const accountContext = expectedContext === undefined ? await getAccountCacheContext() : expectedContext;
+    if (!accountContext || !isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     const cookies = await getCookies();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     
     if (!cookies) {
       return {
@@ -1066,6 +1106,7 @@ export const deletePost = async (postId: string, title?: string, board?: string,
       try {
         // 获取用户信息（利用缓存）
         const userInfo = await getUserInfo();
+        if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
         if (userInfo && userInfo.rawAccount) {
           const account = userInfo.rawAccount;
           const identity = {
@@ -1108,9 +1149,12 @@ export const deletePost = async (postId: string, title?: string, board?: string,
           console.log('已自动构造并添加 set_identity cookie');
         }
       } catch (e) {
+        if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
         console.warn('尝试构造 set_identity 失败:', e);
       }
     }
+
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     
     const headers = buildDeleteHeaders(finalCookies, referer, {
       'content-length': '0',
@@ -1128,10 +1172,12 @@ export const deletePost = async (postId: string, title?: string, board?: string,
     });
     
     const json = await response.json();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     console.log('删除帖子响应:', json);
     
     if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
       await invalidateContentCache(accountContext, 'article', {boardId: board, topicId: topicId || postId});
+      if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
       return {
         success: true,
         message: json.message || '删除成功'
@@ -1212,8 +1258,11 @@ export const getMyArticles = async (
   pageSize: number;
 }> => {
   try {
+    const accountContext = await getAccountCacheContext();
+    if (!accountContext) throw new Error('NOT_LOGGED_IN');
     const timestamp = Date.now();
     const cookies = await getCookies();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     
     if (!cookies) {
       console.log('getMyArticles: No cookies found');
@@ -1238,6 +1287,7 @@ export const getMyArticles = async (
     }, DEFAULT_TIMEOUT);
     
     const json = await response.json();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     console.log('getMyArticles response:', JSON.stringify(json).substring(0, 500));
     
     if (json.code === 1 && Array.isArray(json.data?.articles)) {
@@ -1313,8 +1363,11 @@ export const getMyLikes = async (
   pageSize: number;
 }> => {
   try {
+    const accountContext = await getAccountCacheContext();
+    if (!accountContext) throw new Error('NOT_LOGGED_IN');
     const timestamp = Date.now();
     const cookies = await getCookies();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     
     if (!cookies) {
       console.log('getMyLikes: No cookies found');
@@ -1339,6 +1392,7 @@ export const getMyLikes = async (
     }, DEFAULT_TIMEOUT);
     
     const json = await response.json();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     console.log('getMyLikes response:', JSON.stringify(json).substring(0, 500));
     
     if (json.code === 1 && Array.isArray(json.data?.likes)) {
@@ -1389,10 +1443,15 @@ export const getMyLikes = async (
 // API: POST https://wap.newsmth.net/wap/api/profile/addFavTopic
 // 参数：id=帖子ID&t=时间戳
 export const addFavoriteTopic = async (
-  topicId: string
+  topicId: string,
+  expectedContext?: AccountCacheContext | null,
 ): Promise<{success: boolean; message?: string}> => {
   try {
+    const accountContext = expectedContext === undefined ? await getAccountCacheContext() : expectedContext;
+    if (!accountContext) return {success: false, message: '未登录，无法收藏'};
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     const cookies = await getCookies();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     
     if (!cookies) {
       return {
@@ -1424,6 +1483,7 @@ export const addFavoriteTopic = async (
     }, DEFAULT_TIMEOUT);
     
     const json = await response.json();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     console.log('收藏文章响应:', json);
     
     if (json.code === 1) {
@@ -1451,10 +1511,15 @@ export const addFavoriteTopic = async (
 // 参数：readOrder=已读位置&t=时间戳
 export const markFavoriteTopicRead = async (
   topicId: string,
-  readOrder: number
+  readOrder: number,
+  expectedContext?: AccountCacheContext | null,
 ): Promise<{success: boolean; message?: string}> => {
   try {
+    const accountContext = expectedContext === undefined ? await getAccountCacheContext() : expectedContext;
+    if (!accountContext) return {success: false, message: '未登录，无法操作'};
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     const cookies = await getCookies();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     
     if (!cookies) {
       return {
@@ -1486,6 +1551,7 @@ export const markFavoriteTopicRead = async (
     }, DEFAULT_TIMEOUT);
     
     const json = await response.json();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     console.log('标记已读响应:', json);
     
     if (json.code === 1) {
@@ -1511,10 +1577,15 @@ export const markFavoriteTopicRead = async (
 // 取消收藏文章
 // API: DELETE https://wap.newsmth.net/wap/api/profile/favTopic/topicid/{topicId}
 export const removeFavoriteTopic = async (
-  topicId: string
+  topicId: string,
+  expectedContext?: AccountCacheContext | null,
 ): Promise<{success: boolean; message?: string}> => {
   try {
+    const accountContext = expectedContext === undefined ? await getAccountCacheContext() : expectedContext;
+    if (!accountContext) return {success: false, message: '未登录，无法操作'};
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     const cookies = await getCookies();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     
     if (!cookies) {
       return {
@@ -1542,6 +1613,7 @@ export const removeFavoriteTopic = async (
     }, DEFAULT_TIMEOUT);
     
     const json = await response.json();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     console.log('取消收藏响应:', json);
     
     if (json.code === 1) {
@@ -1752,7 +1824,12 @@ export const getPostPermissions = async (
   topicId: string
 ): Promise<{success: boolean; data?: PostPermissions; message?: string}> => {
   try {
+    const accountContext = await getAccountCacheContext();
+    if (!accountContext) {
+      return {success: false, message: '未登录，无法获取权限信息'};
+    }
     const cookies = await getCookies();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     
     if (!cookies) {
       return {
@@ -1782,6 +1859,7 @@ export const getPostPermissions = async (
     }, DEFAULT_TIMEOUT);
     
     const json = await response.json();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     console.log('获取帖子权限响应:', json);
     
     if (json.code === 1 && json.data) {

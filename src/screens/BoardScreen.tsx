@@ -24,7 +24,7 @@ import {getBoards, getFavoriteBoards, getBoardPosts} from '../services/api';
 import {getSubBoards, checkBoardFavorite, addBoardFavorite, removeBoardFavorite, getMSitePostIdForTopic, getStaticAttachmentUrlsForTopic} from '../services/dataFetcher';
 import {Board, Post} from '../types';
 import {setCache, getCacheRevision, getCacheWithTimestamp} from '../services/cacheManager';
-import {getAccountCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
+import {AccountCacheContext, getAccountCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
 import {formatRelativeTime} from '../utils/timeFormat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useSettings} from '../context/SettingsContext';
@@ -254,10 +254,19 @@ const BoardScreen: React.FC = () => {
   const [showFabMenu, setShowFabMenu] = useState(false); // 浮动按钮菜单显示状态
   const [sortRefreshing, setSortRefreshing] = useState(false); // 排序刷新状态
   const [isBoardFavorited, setIsBoardFavorited] = useState(false); // 当前版面是否已收藏
+  const reloadFavoritesAfterAccountChangeRef = useRef<() => void>(() => {});
+  const accountRefreshGenerationRef = useRef(0);
 
   useEffect(() => subscribeAccountCacheChange(() => {
+    const requestGeneration = ++accountRefreshGenerationRef.current;
     setFavoriteBoards([]);
     setIsBoardFavorited(false);
+    void getAccountCacheContext().then(accountContext => {
+      if (requestGeneration !== accountRefreshGenerationRef.current || !accountContext) return;
+      reloadFavoritesAfterAccountChangeRef.current();
+    }).catch(error => {
+      console.error('Reload board favorites after account change error:', error);
+    });
   }), []);
   // checkingFavorite 用于显示加载状态
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -742,18 +751,29 @@ const BoardScreen: React.FC = () => {
 
   // 检查版面收藏状态
   const checkBoardFavoriteStatus = async (boardId: string) => {
+    let accountContext: AccountCacheContext | null = null;
     try {
-      const accountContext = await getAccountCacheContext();
-      if (!accountContext) return;
+      accountContext = await getAccountCacheContext();
+      if (!accountContext) {
+        setIsBoardFavorited(false);
+        return;
+      }
       setCheckingFavorite(true);
-      const isFavorited = await checkBoardFavorite(boardId);
+      const isFavorited = await checkBoardFavorite(boardId, accountContext);
       if (isAccountCacheCurrent(accountContext)) setIsBoardFavorited(isFavorited);
     } catch (error) {
+      if (accountContext && !isAccountCacheCurrent(accountContext)) return;
       console.error('Check board favorite status error:', error);
       setIsBoardFavorited(false);
     } finally {
-      setCheckingFavorite(false);
+      if (!accountContext || isAccountCacheCurrent(accountContext)) setCheckingFavorite(false);
     }
+  };
+
+  reloadFavoritesAfterAccountChangeRef.current = () => {
+    void loadFavoriteBoards();
+    const selectedBoard = selectedBoardRef.current;
+    if (selectedBoard) void checkBoardFavoriteStatus(selectedBoard.id);
   };
 
   // 切换版面收藏状态
@@ -763,9 +783,12 @@ const BoardScreen: React.FC = () => {
     setShowFabMenu(false); // 立即关闭菜单
     
     try {
+      const accountContext = await getAccountCacheContext();
+      if (!accountContext) return;
       if (isBoardFavorited) {
         // 取消收藏
-        const result = await removeBoardFavorite(selectedBoard.id);
+        const result = await removeBoardFavorite(selectedBoard.id, accountContext);
+        if (!isAccountCacheCurrent(accountContext)) return;
         if (result.success) {
           setIsBoardFavorited(false);
         } else {
@@ -773,7 +796,8 @@ const BoardScreen: React.FC = () => {
         }
       } else {
         // 添加收藏
-        const result = await addBoardFavorite(selectedBoard.id);
+        const result = await addBoardFavorite(selectedBoard.id, accountContext);
+        if (!isAccountCacheCurrent(accountContext)) return;
         if (result.success) {
           setIsBoardFavorited(true);
         } else {
@@ -1412,6 +1436,7 @@ const BoardScreen: React.FC = () => {
         false,
         postMode === 'essence',
       ));
+      requests.push(checkBoardFavoriteStatus(selectedBoard.id));
     } else if (selectedChannel && channelPage === 1 && !loadingChannelPosts) {
       requests.push(
         selectedChannel.name === '图览'

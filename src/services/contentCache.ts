@@ -52,8 +52,10 @@ export const invalidateContentCache = async (
   const privateLists: PrivateList[] = kind === 'like'
     ? ['myLikes']
     : ['myArticles', 'myReplies'];
-  if (!accountContext || !isAccountCacheCurrent(accountContext)) return;
-  privateLists.forEach(category => markCacheStale(category, PRIVATE_LIST_FRESH_AGE));
+  if (!accountContext) return;
+  if (isAccountCacheCurrent(accountContext)) {
+    privateLists.forEach(category => markCacheStale(category, PRIVATE_LIST_FRESH_AGE));
+  }
   void Promise.all(privateLists.map(category =>
     makePersistedSnapshotStale(accountSnapshotKey(storageKeys[category], accountContext.username), PRIVATE_LIST_FRESH_AGE),
   )).catch(error => console.error('[Cache] Failed to stale private content snapshots:', error));

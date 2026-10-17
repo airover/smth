@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {getAccountCacheContext, readAccountItem, writeAccountItem, removeAccountItem} from './accountCache';
+import {AccountCacheContext, getAccountCacheContext, isAccountCacheCurrent, readAccountItem, writeAccountItem, removeAccountItem} from './accountCache';
 import {invalidateContentCache} from './contentCache';
 import RNFetchBlob from 'rn-fetch-blob';
 import {
@@ -10,6 +10,22 @@ import {
   buildPostHeaders,
 } from '../utils/requestUtils';
 // 注意: 图片转码已在选择时通过 forceJpg: true 完成（iOS），无需在上传时再次转码
+
+const resolveRequestAccountContext = async (
+  expectedContext?: AccountCacheContext | null,
+): Promise<AccountCacheContext> => {
+  const context = expectedContext === undefined ? await getAccountCacheContext() : expectedContext;
+  if (!context) throw new Error('NOT_LOGGED_IN');
+  if (!isAccountCacheCurrent(context)) throw new Error('ACCOUNT_CHANGED');
+  return context;
+};
+
+const getCookiesForAccountContext = async (context: AccountCacheContext): Promise<string> => {
+  const cookies = await AsyncStorage.getItem('cookies');
+  if (!isAccountCacheCurrent(context)) throw new Error('ACCOUNT_CHANGED');
+  if (!cookies) throw new Error('未登录，请先登录');
+  return cookies;
+};
 
 /**
  * 发帖参数接口
@@ -81,16 +97,16 @@ export interface PostResponse {
  * @param params 发帖参数
  * @returns 发帖响应
  */
-export const createPost = async (params: PostParams): Promise<PostResponse> => {
+export const createPost = async (
+  params: PostParams,
+  expectedContext?: AccountCacheContext | null,
+): Promise<PostResponse> => {
   try {
     const API_URL = 'https://wap.newsmth.net/wap/api/topic/publish';
-    const accountContext = await getAccountCacheContext();
+    const accountContext = await resolveRequestAccountContext(expectedContext);
 
     // 获取登录凭证
-    const cookies = await AsyncStorage.getItem('cookies'); // 修复：使用正确的key 'cookies'
-    if (!cookies) {
-      throw new Error('未登录，请先登录');
-    }
+    const cookies = await getCookiesForAccountContext(accountContext);
 
     // 构建请求头（使用封装好的函数）
     const headers = buildPostHeaders(
@@ -159,6 +175,7 @@ export const createPost = async (params: PostParams): Promise<PostResponse> => {
     // - 需要同时检查 kbsCode 来判断真正的成功/失败
     if ((result.code === 0 || result.code === 1) && (result.kbsCode === 0 || result.kbsCode === undefined)) {
       await invalidateContentCache(accountContext, 'article', {boardId: params.boardId});
+      if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
       return {
         code: 1,
         message: result.message || '发帖成功',
@@ -188,20 +205,20 @@ export const createPost = async (params: PostParams): Promise<PostResponse> => {
  * @param params 回复参数（包含reId作为articleId）
  * @returns 回复响应
  */
-export const replyPost = async (params: PostParams): Promise<PostResponse> => {
+export const replyPost = async (
+  params: PostParams,
+  expectedContext?: AccountCacheContext | null,
+): Promise<PostResponse> => {
   try {
     const API_URL = 'https://wap.newsmth.net/wap/api/topic/reply';
-    const accountContext = await getAccountCacheContext();
+    const accountContext = await resolveRequestAccountContext(expectedContext);
 
     if (!params.reId) {
       throw new Error('缺少回复目标ID');
     }
 
     // 获取登录凭证
-    const cookies = await AsyncStorage.getItem('cookies');
-    if (!cookies) {
-      throw new Error('未登录，请先登录');
-    }
+    const cookies = await getCookiesForAccountContext(accountContext);
 
     // 构建请求头（使用封装好的函数）
     const headers = buildPostHeaders(
@@ -266,6 +283,7 @@ export const replyPost = async (params: PostParams): Promise<PostResponse> => {
     // - 需要同时检查 kbsCode 来判断真正的成功/失败
     if ((result.code === 0 || result.code === 1) && (result.kbsCode === 0 || result.kbsCode === undefined)) {
       await invalidateContentCache(accountContext, 'reply', {boardId: params.boardId, topicId: params.topicId});
+      if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
       return {
         code: 1,
         message: result.message || '回复成功',
@@ -307,16 +325,16 @@ export interface UpdateArticleParams {
  * @param params 编辑帖子参数
  * @returns 编辑响应
  */
-export const updateArticle = async (params: UpdateArticleParams): Promise<PostResponse> => {
+export const updateArticle = async (
+  params: UpdateArticleParams,
+  expectedContext?: AccountCacheContext | null,
+): Promise<PostResponse> => {
   try {
     const API_URL = 'https://wap.newsmth.net/wap/api/topic/updateArticle';
-    const accountContext = await getAccountCacheContext();
+    const accountContext = await resolveRequestAccountContext(expectedContext);
 
     // 获取登录凭证
-    const cookies = await AsyncStorage.getItem('cookies');
-    if (!cookies) {
-      throw new Error('未登录，请先登录');
-    }
+    const cookies = await getCookiesForAccountContext(accountContext);
 
     // 构建请求头
     const headers = buildPostHeaders(
@@ -337,7 +355,9 @@ export const updateArticle = async (params: UpdateArticleParams): Promise<PostRe
     const uploadToken = params.uploadToken || await getArticleFileToken(
       params.articleId,
       params.topicId || params.articleId,
+      accountContext,
     );
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     formData.append('uploadToken', uploadToken);
 
     logRequest.start(API_URL, 'POST');
@@ -365,6 +385,7 @@ export const updateArticle = async (params: UpdateArticleParams): Promise<PostRe
 
     if ((result.code === 0 || result.code === 1) && (result.kbsCode === 0 || result.kbsCode === undefined)) {
       await invalidateContentCache(accountContext, 'article', {boardId: params.boardId, topicId: params.topicId});
+      if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
       return {
         code: 1,
         message: result.message || '编辑成功',
@@ -382,9 +403,12 @@ export const updateArticle = async (params: UpdateArticleParams): Promise<PostRe
 /**
  * 获取草稿
  */
-export const getDraft = async (boardId: string): Promise<PostParams | null> => {
+export const getDraft = async (
+  boardId: string,
+  accountContext?: AccountCacheContext | null,
+): Promise<PostParams | null> => {
   try {
-    const draftStr = await readAccountItem(`draft_${boardId}`);
+    const draftStr = await readAccountItem(`draft_${boardId}`, accountContext);
     if (draftStr) {
       return JSON.parse(draftStr);
     }
@@ -398,9 +422,12 @@ export const getDraft = async (boardId: string): Promise<PostParams | null> => {
 /**
  * 保存草稿
  */
-export const saveDraft = async (params: PostParams): Promise<void> => {
+export const saveDraft = async (
+  params: PostParams,
+  accountContext?: AccountCacheContext | null,
+): Promise<void> => {
   try {
-    await writeAccountItem(`draft_${params.boardId}`, JSON.stringify(params));
+    await writeAccountItem(`draft_${params.boardId}`, JSON.stringify(params), accountContext);
   } catch (error) {
     console.error('保存草稿失败:', error);
   }
@@ -409,9 +436,12 @@ export const saveDraft = async (params: PostParams): Promise<void> => {
 /**
  * 清除草稿
  */
-export const clearDraft = async (boardId: string): Promise<void> => {
+export const clearDraft = async (
+  boardId: string,
+  accountContext?: AccountCacheContext | null,
+): Promise<void> => {
   try {
-    await removeAccountItem(`draft_${boardId}`);
+    await removeAccountItem(`draft_${boardId}`, accountContext);
   } catch (error) {
     console.error('清除草稿失败:', error);
   }
@@ -425,15 +455,17 @@ export const clearDraft = async (boardId: string): Promise<void> => {
  * @param referer WAP 页面 Referer
  * @returns 检查结果，成功返回true，失败抛出错误
  */
-export const checkPublish = async (boardId?: string, referer?: string): Promise<boolean> => {
+export const checkPublish = async (
+  boardId?: string,
+  referer?: string,
+  expectedContext?: AccountCacheContext | null,
+): Promise<boolean> => {
   try {
     const API_URL = 'https://wap.newsmth.net/wap/api/topic/publish/check';
+    const accountContext = await resolveRequestAccountContext(expectedContext);
 
     // 获取登录凭证
-    const cookies = await AsyncStorage.getItem('cookies');
-    if (!cookies) {
-      throw new Error('未登录，请先登录');
-    }
+    const cookies = await getCookiesForAccountContext(accountContext);
 
     // 构建请求头（使用封装好的函数）
     const headers = buildGetHeaders(
@@ -455,6 +487,7 @@ export const checkPublish = async (boardId?: string, referer?: string): Promise<
     }
 
     const result = await response.json();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     logRequest.success(API_URL, result);
 
     if (result.code === 1) {
@@ -475,15 +508,17 @@ export const checkPublish = async (boardId?: string, referer?: string): Promise<
  * @param referer WAP 页面 Referer
  * @returns 上传token
  */
-export const getUploadToken = async (boardId?: string, referer?: string): Promise<string> => {
+export const getUploadToken = async (
+  boardId?: string,
+  referer?: string,
+  expectedContext?: AccountCacheContext | null,
+): Promise<string> => {
   try {
     const API_URL = 'https://wap.newsmth.net/wap/api/file/token';
+    const accountContext = await resolveRequestAccountContext(expectedContext);
 
     // 获取登录凭证
-    const cookies = await AsyncStorage.getItem('cookies');
-    if (!cookies) {
-      throw new Error('未登录，请先登录');
-    }
+    const cookies = await getCookiesForAccountContext(accountContext);
 
     // 构建请求头（使用封装好的函数）
     const headers = buildGetHeaders(
@@ -505,6 +540,7 @@ export const getUploadToken = async (boardId?: string, referer?: string): Promis
     }
 
     const result = await response.json();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     logRequest.success(API_URL, result);
 
     if (result.code === 1 && result.data) {
@@ -529,14 +565,16 @@ export const getUploadToken = async (boardId?: string, referer?: string): Promis
  * @param topicId 主题ID（用于编辑页 Referer）
  * @returns 已加载原附件的 token
  */
-export const getArticleFileToken = async (articleId: string, topicId: string): Promise<string> => {
+export const getArticleFileToken = async (
+  articleId: string,
+  topicId: string,
+  expectedContext?: AccountCacheContext | null,
+): Promise<string> => {
   try {
     const API_URL = `https://wap.newsmth.net/wap/api/topic/${encodeURIComponent(articleId)}/files/load`;
+    const accountContext = await resolveRequestAccountContext(expectedContext);
 
-    const cookies = await AsyncStorage.getItem('cookies');
-    if (!cookies) {
-      throw new Error('未登录，请先登录');
-    }
+    const cookies = await getCookiesForAccountContext(accountContext);
 
     const headers = buildGetHeaders(
       cookies,
@@ -557,6 +595,7 @@ export const getArticleFileToken = async (articleId: string, topicId: string): P
     }
 
     const result = await response.json();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     logRequest.success(API_URL, result);
 
     const token = typeof result.data === 'string'
@@ -586,6 +625,7 @@ export const getArticleFileToken = async (articleId: string, topicId: string): P
 export const deleteUploadedFiles = async (
   token: string,
   fileNames: string[],
+  expectedContext?: AccountCacheContext | null,
 ): Promise<void> => {
   if (!fileNames.length) {
     return;
@@ -593,11 +633,9 @@ export const deleteUploadedFiles = async (
 
   try {
     const API_URL = `https://wap.newsmth.net/wap/api/file/delete/${encodeURIComponent(token)}`;
+    const accountContext = await resolveRequestAccountContext(expectedContext);
 
-    const cookies = await AsyncStorage.getItem('cookies');
-    if (!cookies) {
-      throw new Error('未登录，请先登录');
-    }
+    const cookies = await getCookiesForAccountContext(accountContext);
 
     const headers = buildPostHeaders(
       cookies,
@@ -621,6 +659,7 @@ export const deleteUploadedFiles = async (
     }
 
     const result = await response.json();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     logRequest.success(API_URL, result);
 
     if (!((result.code === 0 || result.code === 1) && (result.kbsCode === 0 || result.kbsCode === undefined))) {
@@ -664,15 +703,14 @@ export const uploadImages = async (
   imageAssets: ImageAsset[],
   onProgress?: (progress: number) => void,
   referer?: string,
+  expectedContext?: AccountCacheContext | null,
 ): Promise<string> => {
   try {
     const API_URL = `https://wap.newsmth.net/wap/api/file/upload/${boardId}/${token}`;
+    const accountContext = await resolveRequestAccountContext(expectedContext);
 
     // 获取登录凭证
-    const cookies = await AsyncStorage.getItem('cookies');
-    if (!cookies) {
-      throw new Error('未登录，请先登录');
-    }
+    const cookies = await getCookiesForAccountContext(accountContext);
 
     // 检查是否有图片
     if (!imageAssets || imageAssets.length === 0) {
@@ -764,6 +802,7 @@ export const uploadImages = async (
       referer || `https://wap.newsmth.net/post?boardId=${boardId}`
     );
 
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     const responseText = await new Promise<string>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', API_URL);
@@ -798,6 +837,7 @@ export const uploadImages = async (
     });
 
     const result = JSON.parse(responseText);
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     logRequest.success(API_URL, result);
 
     // 根据浏览器抓包响应格式：
@@ -854,16 +894,18 @@ export const uploadImage = async (
  * @param articleId 要删除的帖子/回复ID
  * @returns 删除响应
  */
-export const deleteArticle = async (articleId: string, boardId?: string, topicId?: string): Promise<PostResponse> => {
+export const deleteArticle = async (
+  articleId: string,
+  boardId?: string,
+  topicId?: string,
+  expectedContext?: AccountCacheContext | null,
+): Promise<PostResponse> => {
   try {
     const API_URL = `https://wap.newsmth.net/wap/api/topic/delete/article/${articleId}`;
-    const accountContext = await getAccountCacheContext();
+    const accountContext = await resolveRequestAccountContext(expectedContext);
 
     // 获取登录凭证
-    const cookies = await AsyncStorage.getItem('cookies');
-    if (!cookies) {
-      throw new Error('未登录，请先登录');
-    }
+    const cookies = await getCookiesForAccountContext(accountContext);
 
     // 构建请求头
     const headers = buildPostHeaders(
@@ -888,10 +930,12 @@ export const deleteArticle = async (articleId: string, boardId?: string, topicId
     }
 
     const result = await response.json();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     logRequest.success(API_URL, result);
 
     if ((result.code === 0 || result.code === 1) && (result.kbsCode === 0 || result.kbsCode === undefined)) {
       await invalidateContentCache(accountContext, 'reply', {boardId, topicId});
+      if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
       return {
         code: 1,
         message: result.message || '删除成功',

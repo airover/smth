@@ -12,7 +12,7 @@ import {
 import {useRoute, useNavigation, useFocusEffect} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {getFavoriteBoards} from '../services/api';
-import {getAccountCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
+import {AccountCacheContext, getAccountCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
 import {removeBoardFavorite} from '../services/dataFetcher';
 import {Board} from '../types';
 import {useTheme} from '../components/ThemedComponents';
@@ -34,16 +34,36 @@ const BoardListScreen: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const reloadForAccountRef = React.useRef<() => void>(() => {});
+  const loadRequestGenerationRef = React.useRef(0);
+  const loginRequestGenerationRef = React.useRef(0);
+  // 聚焦时的登录状态检查单独计数，不能作废挂载时同时发起的加载流程。
+  const loginStatusGenerationRef = React.useRef(0);
 
   useEffect(() => subscribeAccountCacheChange(() => {
+    const requestGeneration = ++loadRequestGenerationRef.current;
+    loginRequestGenerationRef.current += 1;
+    loginStatusGenerationRef.current += 1;
     setBoards([]);
     setDataLoaded(false);
+    setIsLoggedIn(false);
+    setLoading(true);
+    setRefreshing(false);
     void getAccountCacheContext().then(context => {
-      if (context) reloadForAccountRef.current();
+      if (requestGeneration !== loadRequestGenerationRef.current) return;
+      if (!context) {
+        setLoading(false);
+        return;
+      }
+      setIsLoggedIn(true);
+      if (favorites) reloadForAccountRef.current();
+      else setLoading(false);
+    }).catch(error => {
+      console.error('Reload board list after account change error:', error);
+      if (requestGeneration === loadRequestGenerationRef.current) setLoading(false);
     });
-  }), []);
-  const [refreshing, setRefreshing] = useState(false);
+  }), [favorites]);
 
   useEffect(() => {
     checkLoginAndLoadBoards();
@@ -58,11 +78,15 @@ const BoardListScreen: React.FC = () => {
   );
 
   const checkLoginAndLoadBoards = async () => {
+    const requestGeneration = ++loginRequestGenerationRef.current;
     try {
       setLoading(true);
+      const accountContext = await getAccountCacheContext();
       // 检查登录状态
       const loginStatus = await AsyncStorage.getItem('isLoggedIn');
-      const loggedIn = loginStatus === 'true';
+      if (requestGeneration !== loginRequestGenerationRef.current
+        || (accountContext && !isAccountCacheCurrent(accountContext))) return;
+      const loggedIn = loginStatus === 'true' && !!accountContext;
       setIsLoggedIn(loggedIn);
 
       if (!loggedIn) {
@@ -78,15 +102,19 @@ const BoardListScreen: React.FC = () => {
     } catch (error) {
       console.error('Check login and load boards error:', error);
     } finally {
-      setLoading(false);
+      if (requestGeneration === loginRequestGenerationRef.current) setLoading(false);
     }
   };
 
   const checkLoginStatus = async () => {
+    const requestGeneration = ++loginStatusGenerationRef.current;
     try {
+      const accountContext = await getAccountCacheContext();
       // 只检查登录状态，不重新加载数据
       const loginStatus = await AsyncStorage.getItem('isLoggedIn');
-      const loggedIn = loginStatus === 'true';
+      if (requestGeneration !== loginStatusGenerationRef.current
+        || (accountContext && !isAccountCacheCurrent(accountContext))) return;
+      const loggedIn = loginStatus === 'true' && !!accountContext;
       setIsLoggedIn(loggedIn);
     } catch (error) {
       console.error('Check login status error:', error);
@@ -94,17 +122,22 @@ const BoardListScreen: React.FC = () => {
   };
 
   const loadFavoriteBoards = async (forceRefresh: boolean = false, silent: boolean = false) => {
+    const requestGeneration = ++loadRequestGenerationRef.current;
+    let accountContext: AccountCacheContext | null = null;
     try {
-      const accountContext = await getAccountCacheContext();
+      accountContext = await getAccountCacheContext();
+      if (requestGeneration !== loadRequestGenerationRef.current) return;
       if (!accountContext) return;
       if (!silent && !forceRefresh && boards.length === 0) {
         setLoading(true);
       }
       const data = await getFavoriteBoards(forceRefresh);
-      if (!isAccountCacheCurrent(accountContext)) return;
+      if (requestGeneration !== loadRequestGenerationRef.current || !isAccountCacheCurrent(accountContext)) return;
       setBoards(data);
       setDataLoaded(true);
     } catch (error: any) {
+      if (requestGeneration !== loadRequestGenerationRef.current
+        || (accountContext && !isAccountCacheCurrent(accountContext))) return;
       console.error('Load favorite boards error:', error);
       
       // 处理登录过期错误
@@ -129,8 +162,10 @@ const BoardListScreen: React.FC = () => {
       }
       // 接口失败时不设置dataLoaded，避免显示"暂无收藏版面"
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (requestGeneration === loadRequestGenerationRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   };
 
@@ -167,8 +202,12 @@ const BoardListScreen: React.FC = () => {
           text: '确定',
           style: 'destructive',
           onPress: async () => {
+            let accountContext: AccountCacheContext | null = null;
             try {
-              const result = await removeBoardFavorite(board.id);
+              accountContext = await getAccountCacheContext();
+              if (!accountContext) return;
+              const result = await removeBoardFavorite(board.id, accountContext);
+              if (!isAccountCacheCurrent(accountContext)) return;
               if (result.success) {
                 // 从列表中移除该版面
                 setBoards(prevBoards => prevBoards.filter(b => b.id !== board.id));
@@ -177,6 +216,7 @@ const BoardListScreen: React.FC = () => {
                 Alert.alert('失败', result.message || '取消收藏失败');
               }
             } catch (error) {
+              if (!isAccountCacheCurrent(accountContext)) return;
               console.error('Remove favorite error:', error);
               Alert.alert('错误', '取消收藏时发生错误');
             }

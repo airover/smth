@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useCallback} from 'react';
+import React, {useState, useEffect, useCallback, useRef} from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
 import {getBlackList} from '../services/api';
-import {getAccountCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
+import {AccountCacheContext, getAccountCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
 import {useTheme} from '../components/ThemedComponents';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {BanIcon, ChevronRightIcon} from '../components/SvgIcons';
@@ -38,16 +38,34 @@ const BlacklistScreen: React.FC = () => {
   const [blacklist, setBlacklist] = useState<UserItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const requestGenerationRef = useRef(0);
+  const reloadForAccountRef = useRef<() => void>(() => {});
 
-  useEffect(() => subscribeAccountCacheChange(() => setBlacklist([])), []);
+  useEffect(() => subscribeAccountCacheChange(() => {
+    const requestGeneration = ++requestGenerationRef.current;
+    setBlacklist([]);
+    setLoading(true);
+    setRefreshing(false);
+    void getAccountCacheContext().then(accountContext => {
+      if (requestGeneration !== requestGenerationRef.current) return;
+      if (accountContext) reloadForAccountRef.current();
+      else setLoading(false);
+    }).catch(error => {
+      console.error('Reload blacklist after account change error:', error);
+      if (requestGeneration === requestGenerationRef.current) setLoading(false);
+    });
+  }), []);
 
   // 加载黑名单列表
   const loadBlacklist = async (forceRefresh: boolean = false, silent: boolean = false) => {
+    const requestGeneration = ++requestGenerationRef.current;
+    let accountContext: AccountCacheContext | null = null;
     try {
-      const accountContext = await getAccountCacheContext();
+      accountContext = await getAccountCacheContext();
+      if (requestGeneration !== requestGenerationRef.current) return;
       if (!accountContext) return;
       const result = await getBlackList(forceRefresh);
-      if (!isAccountCacheCurrent(accountContext)) return;
+      if (requestGeneration !== requestGenerationRef.current || !isAccountCacheCurrent(accountContext)) return;
       
       if (result.success && result.blacklist) {
         // API直接返回用户信息数组
@@ -63,6 +81,8 @@ const BlacklistScreen: React.FC = () => {
         Alert.alert('提示', result.message || '获取黑名单失败');
       }
     } catch (error: any) {
+      if (requestGeneration !== requestGenerationRef.current
+        || (accountContext && !isAccountCacheCurrent(accountContext))) return;
       console.error('Load blacklist error:', error);
       if (!silent && error.message === 'LOGIN_EXPIRED') {
         Alert.alert(
@@ -80,9 +100,15 @@ const BlacklistScreen: React.FC = () => {
         Alert.alert('错误', '加载失败，请稍后重试');
       }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (requestGeneration === requestGenerationRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
+  };
+
+  reloadForAccountRef.current = () => {
+    void loadBlacklist(false, true);
   };
 
   // 初始加载

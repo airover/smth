@@ -54,11 +54,25 @@ const FavoritesDrawer: React.FC<FavoritesDrawerProps> = ({visible, onClose, cont
   const [topics, setTopics] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [show, setShow] = useState(false);
+  const loadRequestIdRef = useRef(0);
+  const loadDataRef = useRef<() => void>(() => {});
 
   useEffect(() => subscribeAccountCacheChange(() => {
+    const requestId = ++loadRequestIdRef.current;
     setBoards([]);
     setTopics([]);
-  }), []);
+    setLoading(visible);
+    if (visible) {
+      void getAccountCacheContext().then(accountContext => {
+        if (requestId !== loadRequestIdRef.current) return;
+        if (accountContext) loadDataRef.current();
+        else setLoading(false);
+      }).catch(error => {
+        console.error('Reload favorites drawer after account change error:', error);
+        if (requestId === loadRequestIdRef.current) setLoading(false);
+      });
+    }
+  }), [visible]);
 
   const pan = useRef(
     PanResponder.create({
@@ -105,23 +119,28 @@ const FavoritesDrawer: React.FC<FavoritesDrawerProps> = ({visible, onClose, cont
   useEffect(() => { if (visible && !show) open(); }, [visible, show, open]);
 
   const loadData = useCallback(async () => {
+    const requestId = ++loadRequestIdRef.current;
     setLoading(true);
     try {
       const accountContext = await getAccountCacheContext();
-      if (!accountContext) return;
+      if (!accountContext || requestId !== loadRequestIdRef.current) return;
       const [boardsResult, topicsResult] = await Promise.allSettled([
         getFavoriteBoards(false),
         getFavoriteTopics(0, 5),
       ]);
-      if (!isAccountCacheCurrent(accountContext)) return;
+      if (requestId !== loadRequestIdRef.current || !isAccountCacheCurrent(accountContext)) return;
       if (boardsResult.status === 'fulfilled') setBoards(boardsResult.value);
       if (topicsResult.status === 'fulfilled') setTopics(topicsResult.value.topics);
     } catch (error) {
       console.error('Load favorites drawer error:', error);
     } finally {
-      setTimeout(() => setLoading(false), 150);
+      setTimeout(() => {
+        if (requestId === loadRequestIdRef.current) setLoading(false);
+      }, 150);
     }
   }, []);
+
+  loadDataRef.current = () => { void loadData(); };
 
   const goBoard = useCallback((board: any) => {
     close();

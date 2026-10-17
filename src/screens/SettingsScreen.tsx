@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {getAccountCacheContext, isAccountCacheCurrent, readAccountSnapshot, subscribeAccountCacheChange} from '../services/accountCache';
+import {AccountCacheContext, getAccountCacheContext, isAccountCacheCurrent, readAccountSnapshot, subscribeAccountCacheChange} from '../services/accountCache';
 import {getCacheRevision} from '../services/cacheManager';
 import {getUserInfo, logout} from '../services/api';
 import {getMessages, getReplyNotifications} from '../services/dataFetcher';
@@ -49,6 +49,8 @@ const SettingsScreen: React.FC = () => {
   const [unreadMailCount, setUnreadMailCount] = useState<number>(0);
   const unreadMailFetchedAtRef = useRef(0);
   const unreadMailRequestRef = useRef<Promise<void> | null>(null);
+  const unreadMailGenerationRef = useRef(0);
+  const userInfoGenerationRef = useRef(0);
 
   useEffect(() => {
     loadUserInfo(false);
@@ -56,11 +58,16 @@ const SettingsScreen: React.FC = () => {
   }, []);
 
   useEffect(() => subscribeAccountCacheChange(() => {
+    userInfoGenerationRef.current += 1;
+    unreadMailGenerationRef.current += 1;
+    unreadMailRequestRef.current = null;
     setUser(null);
     setUsername('');
+    setIsLoggedIn(false);
     setUnreadMailCount(0);
     unreadMailFetchedAtRef.current = 0;
-    loadUserInfo(false, true);
+    void loadUserInfo(false).catch(error => console.error('Reload user info after account change error:', error));
+    loadUnreadMailCount(true);
   }), []);
 
   // 获取未读邮件数量
@@ -72,9 +79,20 @@ const SettingsScreen: React.FC = () => {
       return unreadMailRequestRef.current;
     }
 
+    const requestGeneration = unreadMailGenerationRef.current;
     const request = (async () => {
       try {
+        const accountContext = await getAccountCacheContext();
+        if (!accountContext) {
+          if (requestGeneration === unreadMailGenerationRef.current) {
+            setUnreadMailCount(0);
+            unreadMailFetchedAtRef.current = Date.now();
+          }
+          return;
+        }
+
         const loginStatus = await AsyncStorage.getItem('isLoggedIn');
+        if (requestGeneration !== unreadMailGenerationRef.current || !isAccountCacheCurrent(accountContext)) return;
         if (loginStatus !== 'true') {
           setUnreadMailCount(0);
           unreadMailFetchedAtRef.current = Date.now();
@@ -84,6 +102,7 @@ const SettingsScreen: React.FC = () => {
           getMessages(0),
           getReplyNotifications(1, 1),
         ]);
+        if (requestGeneration !== unreadMailGenerationRef.current || !isAccountCacheCurrent(accountContext)) return;
         const count = messages.reduce((sum, mail) => sum + (mail.unread || 0), 0)
           + replyNotifications.items.filter(item => item.status === 1).length;
         setUnreadMailCount(count);
@@ -98,14 +117,25 @@ const SettingsScreen: React.FC = () => {
     try {
       await request;
     } finally {
-      unreadMailRequestRef.current = null;
+      if (unreadMailRequestRef.current === request) {
+        unreadMailRequestRef.current = null;
+      }
     }
   };
 
   const loadUserInfo = async (forceRefresh: boolean = false, silent: boolean = false) => {
+    const requestGeneration = ++userInfoGenerationRef.current;
+    let accountContext: AccountCacheContext | null = null;
+    const isRequestCurrent = () => requestGeneration === userInfoGenerationRef.current
+      && (!accountContext || isAccountCacheCurrent(accountContext));
+
     try {
+      accountContext = await getAccountCacheContext();
+      if (!isRequestCurrent()) return;
+
       // 先检查本地登录状态
       const loginStatus = await AsyncStorage.getItem('isLoggedIn');
+      if (!isRequestCurrent()) return;
       const isStoredLoggedIn = loginStatus === 'true';
       
       if (!isStoredLoggedIn) {
@@ -123,6 +153,7 @@ const SettingsScreen: React.FC = () => {
       // getUserInfo 会自动处理：内存缓存 -> 持久化缓存 -> 服务器获取
       // forceRefresh=true 时会跳过缓存直接从服务器获取
       const userInfo = await getUserInfo(forceRefresh);
+      if (!isRequestCurrent()) return;
       console.log('SettingsScreen getUserInfo result:', userInfo);
       
       if (userInfo && userInfo.username) {
@@ -146,7 +177,9 @@ const SettingsScreen: React.FC = () => {
         // API 返回 null，但本地显示已登录，保持登录状态
         // 显示本地存储的用户名（如果有）
         const storedUsername = await AsyncStorage.getItem('username');
-        if (storedUsername) {
+        if (!isRequestCurrent()) return;
+        if (storedUsername && accountContext
+          && storedUsername.trim().toLowerCase() === accountContext.username.trim().toLowerCase()) {
           setUsername(storedUsername);
           setUser({username: storedUsername});
           setIsLoggedIn(true);
@@ -158,25 +191,30 @@ const SettingsScreen: React.FC = () => {
         }
       }
     } catch (error) {
+      if (!isRequestCurrent()) return;
       console.error('Load user info error:', error);
       
       // 出错时保持本地存储的状态不变（遵循项目规则）
       try {
-        const accountContext = await getAccountCacheContext();
         const revision = getCacheRevision('userInfo');
         const storedUserInfo = accountContext
           ? await readAccountSnapshot<User>('userInfo', accountContext, 7 * 24 * 60 * 60 * 1000,
             () => getCacheRevision('userInfo') === revision)
           : null;
+        if (!isRequestCurrent()) return;
         const storedUsername = await AsyncStorage.getItem('username');
+        if (!isRequestCurrent()) return;
         
-        if (storedUserInfo && !storedUserInfo.isExpired && isAccountCacheCurrent(accountContext)) {
+        if (storedUserInfo && !storedUserInfo.isExpired && isAccountCacheCurrent(accountContext)
+          && storedUserInfo.data?.username?.trim().toLowerCase() === accountContext?.username.trim().toLowerCase()) {
           // 优先使用完整的用户信息缓存
           const cachedUser = storedUserInfo.data;
           setUser(cachedUser);
           setUsername(cachedUser.username);
           setIsLoggedIn(true);
-        } else if (storedUsername && isAccountCacheCurrent(accountContext)) {
+        } else if (storedUsername && accountContext
+          && storedUsername.trim().toLowerCase() === accountContext.username.trim().toLowerCase()
+          && isAccountCacheCurrent(accountContext)) {
           // 降级方案：只有用户名
           setUsername(storedUsername);
           setUser({username: storedUsername});
@@ -189,7 +227,7 @@ const SettingsScreen: React.FC = () => {
       // 如果是下拉刷新导致的错误，抛出异常让上层处理
       throw error;
     } finally {
-      if (!silent) {
+      if (!silent && requestGeneration === userInfoGenerationRef.current) {
         setLoading(false);
       }
     }
@@ -211,14 +249,17 @@ const SettingsScreen: React.FC = () => {
   // 下拉刷新 - 遵循项目规则：同步等待后台返回最新数据
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
+    const request = loadUserInfo(true);
+    const requestGeneration = userInfoGenerationRef.current;
     try {
       // 使用 forceRefresh=true 强制从服务器获取最新数据
       // 如果服务器返回失败，getUserInfo 会抛出异常，旧缓存不会被清除
-      await loadUserInfo(true);
+      await request;
       
       // 刷新成功
       console.log('用户信息刷新成功');
     } catch (error) {
+      if (requestGeneration !== userInfoGenerationRef.current) return;
       console.error('Refresh user info error:', error);
       
       // 遵循项目规则：访问接口失败时不更新本地数据
@@ -229,7 +270,7 @@ const SettingsScreen: React.FC = () => {
         [{text: '确定'}]
       );
     } finally {
-      setRefreshing(false);
+      if (requestGeneration === userInfoGenerationRef.current) setRefreshing(false);
     }
   }, []);
 
@@ -267,7 +308,7 @@ const SettingsScreen: React.FC = () => {
             style={[styles.profileCard, {backgroundColor: theme.cardBackground}]}
             onPress={() => {
               if (isLoggedIn && (user?.username || username)) {
-                navigation.navigate('UserProfile', { username: user?.username || username });
+                navigation.navigate('UserProfile', {self: true});
               } else if (!isLoggedIn) {
                 handleLogin();
               }

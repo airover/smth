@@ -11,7 +11,7 @@ import {
 import {SwipeListView} from 'react-native-swipe-list-view';
 import {useNavigation} from '@react-navigation/native';
 import {getFavoriteTopics, getFavoriteBoards} from '../services/dataFetcher';
-import {getAccountCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
+import {AccountCacheContext, getAccountCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
 import {markFavoriteTopicRead, removeFavoriteTopic} from '../services/api';
 import {Board} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
@@ -80,24 +80,42 @@ const FavoritesScreen: React.FC = () => {
   const [topicsPage, setTopicsPage] = useState(0);
   const [hasMoreTopics, setHasMoreTopics] = useState(false);
   const [removingTopic, setRemovingTopic] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
   const reloadForAccountRef = useRef<() => void>(() => {});
 
   useEffect(() => subscribeAccountCacheChange(() => {
+    requestIdRef.current += 1;
+    const requestId = requestIdRef.current;
     setTopics([]);
     setBoards([]);
     setTopicsPage(0);
+    setHasMoreTopics(false);
     setTopicsLoadError(false);
     setBoardsLoadError(false);
+    setRemovingTopic(null);
+    setLoading(true);
+    setRefreshing(false);
+    setLoadingMore(false);
     void getAccountCacheContext().then(context => {
-      if (context) reloadForAccountRef.current();
+      if (requestId !== requestIdRef.current) return;
+      if (context) {
+        reloadForAccountRef.current();
+      } else {
+        setLoading(false);
+      }
+    }).catch(error => {
+      console.error('Reload favorites after account change error:', error);
+      if (requestId === requestIdRef.current) setLoading(false);
     });
   }), []);
 
   // 加载收藏的文章
   const loadTopics = useCallback(async (page: number = 0, _isRefresh: boolean = false) => {
+    const requestId = ++requestIdRef.current;
+    let accountContext: AccountCacheContext | null = null;
     try {
-      const accountContext = await getAccountCacheContext();
-      if (!accountContext) return;
+      accountContext = await getAccountCacheContext();
+      if (!accountContext || requestId !== requestIdRef.current) return;
       if (page === 0) {
         setLoading(true);
       } else {
@@ -105,7 +123,7 @@ const FavoritesScreen: React.FC = () => {
       }
       
       const result = await getFavoriteTopics(page, 20);
-      if (!isAccountCacheCurrent(accountContext)) return;
+      if (requestId !== requestIdRef.current || !isAccountCacheCurrent(accountContext)) return;
       
       if (page === 0) {
         setTopics(result.topics);
@@ -118,6 +136,7 @@ const FavoritesScreen: React.FC = () => {
       setHasMoreTopics((page + 1) * 20 < result.totalItems);
     } catch (error: any) {
       console.error('Load favorite topics error:', error);
+      if (requestId !== requestIdRef.current || error.message === 'ACCOUNT_CHANGED') return;
       
       if (error.message === 'NOT_LOGGED_IN' || error.message === 'LOGIN_EXPIRED') {
         Alert.alert(
@@ -139,28 +158,34 @@ const FavoritesScreen: React.FC = () => {
         setTopicsLoadError(true);
       }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
-      setLoadingMore(false);
+      if (requestId === requestIdRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+        setLoadingMore(false);
+      }
     }
   }, [navigation]);
 
   // 加载收藏的版面
   const loadBoards = useCallback(async (forceRefresh: boolean = false, silent: boolean = false) => {
+    const requestId = ++requestIdRef.current;
+    let accountContext: AccountCacheContext | null = null;
     try {
-      const accountContext = await getAccountCacheContext();
-      if (!accountContext) return;
+      accountContext = await getAccountCacheContext();
+      if (!accountContext || requestId !== requestIdRef.current) return;
       if (!silent) {
         setLoading(true);
       }
       const result = await getFavoriteBoards(forceRefresh);
-      if (isAccountCacheCurrent(accountContext)) {
+      if (requestId === requestIdRef.current && isAccountCacheCurrent(accountContext)) {
         setBoards(result);
         setBoardsLoadError(false);
       }
     } catch (error: any) {
       console.error('Load favorite boards error:', error);
-      if (error.message === 'CACHE_REQUEST_INVALIDATED') return;
+      if (requestId !== requestIdRef.current
+        || error.message === 'CACHE_REQUEST_INVALIDATED'
+        || (accountContext && !isAccountCacheCurrent(accountContext))) return;
       
       if ((error.message === 'NOT_LOGGED_IN' || error.message === 'LOGIN_EXPIRED') && !silent) {
         Alert.alert(
@@ -182,8 +207,10 @@ const FavoritesScreen: React.FC = () => {
         setBoardsLoadError(true);
       }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (requestId === requestIdRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [navigation]);
 
@@ -239,12 +266,14 @@ const FavoritesScreen: React.FC = () => {
     }
 
     try {
+      const accountContext = await getAccountCacheContext();
+      if (!accountContext) return;
       // 使用当前的回复数作为已读位置
       const readOrder = item.replyCount || 1;
       
-      const result = await markFavoriteTopicRead(item.topicId, readOrder);
+      const result = await markFavoriteTopicRead(item.topicId, readOrder, accountContext);
       
-      if (result.success) {
+      if (result.success && isAccountCacheCurrent(accountContext)) {
         // 更新本地状态，移除"新"标识
         setTopics(prev => 
           prev.map(t => 
@@ -266,10 +295,14 @@ const FavoritesScreen: React.FC = () => {
       return;
     }
 
+    let accountContext: AccountCacheContext | null = null;
     try {
+      accountContext = await getAccountCacheContext();
+      if (!accountContext) return;
       setRemovingTopic(item.topicId);
       
-      const result = await removeFavoriteTopic(item.topicId);
+      const result = await removeFavoriteTopic(item.topicId, accountContext);
+      if (!isAccountCacheCurrent(accountContext)) return;
       
       if (result.success) {
         // 从列表中移除
@@ -280,9 +313,11 @@ const FavoritesScreen: React.FC = () => {
       }
     } catch (error: any) {
       console.error('Remove favorite error:', error);
-      Alert.alert('错误', error.message || '操作失败');
+      if (accountContext && isAccountCacheCurrent(accountContext)) {
+        Alert.alert('错误', error.message || '操作失败');
+      }
     } finally {
-      setRemovingTopic(null);
+      if (accountContext && isAccountCacheCurrent(accountContext)) setRemovingTopic(null);
     }
   }, [removingTopic]);
 
