@@ -15,8 +15,8 @@ import {
 import {WebView} from 'react-native-webview';
 // 以下工具函数用于 WebView 登录流程
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {fetchAuthenticatedUsername, getWapAuthCookiesFromJar, setLoggedIn} from '../services/auth';
-import {useNavigation} from '@react-navigation/native';
+import {fetchAuthenticatedUsername, getWapAuthCookiesFromJar, restoreWapAuthCookieJar, setLoggedIn} from '../services/auth';
+import {useNavigation, useRoute} from '@react-navigation/native';
 import {
   handleWebViewMessage,
   getCookieScript,
@@ -24,7 +24,8 @@ import {
   showTencentCaptcha,
   // getTencentCaptchaAppId, autoHandleTencentCaptcha - 用于 WebView 登录流程
 } from '../services/webview';
-import {saveCredentials} from '../utils/storage';
+import {getSavedCredentials, saveCredentials} from '../utils/storage';
+import {preserveCurrentSession, profileFromServerAccount, sameAccount, saveAccount} from '../services/savedAccounts';
 import {recognizeCaptcha} from '../services/captchaRecognizer';
 import {recognizeCaptchaWithFreeOCR} from '../services/captchaRecognizerLocal';
 import {
@@ -77,18 +78,25 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredent
   const [captchaVerified, setCaptchaVerified] = useState(false); // 验证码是否已验证（避免重复检测）
   const [loginRetryCount, setLoginRetryCount] = useState(0); // 登录重试次数
   const webViewRef = useRef<WebView>(null);
+  const route = useRoute<any>();
+  const isAddingAccount = !!route.params?.addAccount;
+  // 从多账号页重新登录某个账号时，预填该账号和它自己保存的密码。
+  const reloginUsername: string | undefined = route.params?.reloginUsername;
+  // 记录当前密码框是为哪个账号自动填入的，便于切换用户名时替换或清空。
+  const autofilledPasswordForRef = useRef<string | null>(null);
+  const usernameRef = useRef(username);
+  usernameRef.current = username;
 
   // 在组件加载时，尝试获取保存的凭据（如果没有通过 props 传入）
   useEffect(() => {
     const loadSavedCredentials = async () => {
-      // 如果已经通过 props 传入了凭据，则不需要再加载
-      if (initialCredentials?.username) {
+      // 如果已经通过 props 传入了凭据，或是从多账号页添加新账号，则不预填
+      if (initialCredentials?.username || isAddingAccount) {
         return;
       }
       
       try {
-        const {getSavedCredentials} = require('../utils/storage');
-        const saved = await getSavedCredentials();
+        const saved = await getSavedCredentials(reloginUsername);
         console.log('加载保存的凭据:', {
           username: saved.username,
           hasPassword: !!saved.password,
@@ -97,9 +105,11 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredent
         
         if (saved.username) {
           setUsername(saved.username);
+          usernameRef.current = saved.username;
         }
-        if (saved.password && saved.remember) {
+        if (saved.password) {
           setPassword(saved.password);
+          autofilledPasswordForRef.current = saved.username;
         }
         setRememberPassword(saved.remember);
       } catch (error) {
@@ -108,7 +118,25 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredent
     };
     
     loadSavedCredentials();
-  }, [initialCredentials]);
+  }, [initialCredentials, isAddingAccount, reloginUsername]);
+
+  // 用户名输入完成后，填入该账号自己保存的密码；换成没有记录的账号时清掉之前自动填入的密码。
+  const handleUsernameBlur = async () => {
+    const name = username.trim();
+    const autofilledFor = autofilledPasswordForRef.current;
+    if (!name || (autofilledFor && autofilledFor.toLowerCase() === name.toLowerCase())) return;
+    const saved = await getSavedCredentials(name);
+    if (name !== usernameRef.current.trim()) return;
+    if (saved.password) {
+      if (password && !autofilledFor) return; // 不覆盖用户手动输入的密码
+      setPassword(saved.password);
+      setRememberPassword(true);
+      autofilledPasswordForRef.current = name;
+    } else if (autofilledFor) {
+      setPassword('');
+      autofilledPasswordForRef.current = null;
+    }
+  };
 
   // 当处于加载状态时，设置超时自动重置，避免卡死
   useEffect(() => {
@@ -490,55 +518,31 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredent
         setLoginRetryCount(0);
         
         // 保存用户名
-        const {cookies: loginCookies, fromJar} = await resolveWebViewCookies(message.data.cookies);
+        const {cookies: loginCookies} = await resolveWebViewCookies(message.data.cookies);
         const serverName = message.data.account?.name?.trim();
-        const verifiedName = loginCookies && (fromJar || !serverName)
-          ? await fetchAuthenticatedUsername(loginCookies) : null;
-        if (fromJar && (!verifiedName || (serverName && verifiedName.toLowerCase() !== serverName.toLowerCase()))) {
+        const verifiedName = loginCookies ? await fetchAuthenticatedUsername(loginCookies) : null;
+        const expectedUsername = username.trim() || serverName;
+        if (!loginCookies || !verifiedName
+          || (serverName && !sameAccount(serverName, verifiedName))
+          || (expectedUsername && !sameAccount(expectedUsername, verifiedName))) {
+          // Android 上 WebView 与 fetch 共用 cookie jar，未提交的登录不能留在 jar 里。
+          await restoreWapAuthCookieJar();
           Alert.alert('登录状态未确认', '无法确认 Cookie 所属账号，请重新登录');
           return;
         }
-        const accountName = serverName || verifiedName;
-        if (!accountName || !loginCookies) {
-          Alert.alert('登录状态未确认', '未能获取账号名或 Cookie，请重新登录');
-          return;
-        }
+        const accountName = verifiedName;
+        await preserveCurrentSession();
         await setLoggedIn(accountName, loginCookies);
         
-        // 保存账号到多账号列表
+        // 保存账号到多账号列表（统一走串行写入，避免覆盖已有账号）
         try {
           const cookies = await AsyncStorage.getItem('cookies');
-          if (cookies && accountName) {
-            const savedAccountsJson = await AsyncStorage.getItem('savedAccounts');
-            let savedAccounts = savedAccountsJson ? JSON.parse(savedAccountsJson) : [];
-            
-            // 检查账号是否已存在
-            const existingIndex = savedAccounts.findIndex((acc: any) =>
-              acc.username?.trim().toLowerCase() === accountName.toLowerCase());
-            
-            const accountInfo = {
+          if (cookies) {
+            await saveAccount({
               username: accountName,
-              nickname: message.data.account?.nickname,
-              avatar: message.data.account?.avatar,
-              cookies: cookies,
-              isCurrent: true,
-            };
-            
-            if (existingIndex >= 0) {
-              // 更新现有账号
-              savedAccounts[existingIndex] = accountInfo;
-            } else {
-              // 添加新账号
-              savedAccounts.push(accountInfo);
-            }
-            
-            // 将其他账号标记为非当前
-            savedAccounts = savedAccounts.map((acc: any) => ({
-              ...acc,
-              isCurrent: acc.username?.trim().toLowerCase() === accountName.toLowerCase(),
-            }));
-            
-            await AsyncStorage.setItem('savedAccounts', JSON.stringify(savedAccounts));
+              ...profileFromServerAccount(message.data.account),
+              cookies,
+            });
             console.log('账号已保存到多账号列表');
           }
         } catch (error) {
@@ -597,27 +601,26 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredent
         },
         async (isLoggedIn, detectedUsername, documentCookies) => {
           if (isLoggedIn) {
-            const {cookies: loginCookies, fromJar} = await resolveWebViewCookies(documentCookies);
+            const {cookies: loginCookies} = await resolveWebViewCookies(documentCookies);
             const verifiedName = loginCookies ? await fetchAuthenticatedUsername(loginCookies) : null;
-            if (fromJar && (!verifiedName || (username.trim()
-              && verifiedName.toLowerCase() !== username.trim().toLowerCase()))) {
+            const expectedUsername = username.trim() || detectedUsername?.trim();
+            if (!loginCookies || !verifiedName || (expectedUsername && !sameAccount(verifiedName, expectedUsername))) {
+              await restoreWapAuthCookieJar();
               setLoading(false);
               Alert.alert('登录状态未确认', '无法确认 Cookie 所属账号，请重新登录');
               return;
             }
-            const finalUsername = verifiedName
-              || detectedUsername?.trim();
-            if (!finalUsername) {
-              setLoading(false);
-              Alert.alert('登录状态未确认', '未能获取账号名，请重新登录');
-              return;
-            }
-            if (!loginCookies) {
-              setLoading(false);
-              Alert.alert('登录状态未确认', '未能获取登录 Cookie，请重新登录');
-              return;
-            }
+            const finalUsername = verifiedName;
+            await preserveCurrentSession();
             await setLoggedIn(finalUsername, loginCookies);
+            try {
+              const cookies = await AsyncStorage.getItem('cookies');
+              if (cookies) {
+                await saveAccount({username: finalUsername, cookies});
+              }
+            } catch (error) {
+              console.error('保存账号到多账号列表失败:', error);
+            }
             setLoading(false);
             setShowWebView(false);
             
@@ -1077,6 +1080,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredent
             placeholderTextColor={theme.secondaryText}
             value={username}
             onChangeText={setUsername}
+            onBlur={() => { handleUsernameBlur().catch(error => console.error('读取账号密码失败:', error)); }}
             autoCapitalize="none"
             autoCorrect={false}
           />
@@ -1088,7 +1092,10 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredent
             placeholder="密码"
             placeholderTextColor={theme.secondaryText}
             value={password}
-            onChangeText={setPassword}
+            onChangeText={text => {
+              setPassword(text);
+              autofilledPasswordForRef.current = null;
+            }}
             secureTextEntry
             autoCapitalize="none"
             autoCorrect={false}

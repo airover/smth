@@ -60,8 +60,10 @@ const MailScreen: React.FC = () => {
   const replyLoadingMoreRef = useRef(false);
   const refreshInFlightRef = useRef<Promise<void> | null>(null);
   const reloadForAccountRef = useRef<() => void>(() => {});
+  const requestGenerationRef = useRef(0);
 
   useEffect(() => subscribeAccountCacheChange(() => {
+    const requestGeneration = ++requestGenerationRef.current;
     replyRequestGenerationRef.current += 1;
     refreshInFlightRef.current = null;
     setMails([]);
@@ -70,8 +72,16 @@ const MailScreen: React.FC = () => {
     setReplyLoaded(false);
     setReplyPage(1);
     setReplyHasMore(true);
+    setIsLoggedIn(false);
+    setRefreshing(false);
+    setLoading(true);
     void getAccountCacheContext().then(context => {
+      if (requestGeneration !== requestGenerationRef.current) return;
       if (context) reloadForAccountRef.current();
+      else setLoading(false);
+    }).catch(error => {
+      console.error('Reload messages after account change error:', error);
+      if (requestGeneration === requestGenerationRef.current) setLoading(false);
     });
   }), []);
 
@@ -114,15 +124,19 @@ const MailScreen: React.FC = () => {
       return refreshInFlightRef.current;
     }
 
+    const requestGeneration = ++requestGenerationRef.current;
     const request = (async () => {
       try {
         const accountContext = await getAccountCacheContext();
+        if (requestGeneration !== requestGenerationRef.current
+          || (accountContext && !isAccountCacheCurrent(accountContext))) return;
         if (!silent) {
           setLoading(true);
         }
 
         const loginStatus = await AsyncStorage.getItem('isLoggedIn');
-        if (accountContext && !isAccountCacheCurrent(accountContext)) return;
+        if (requestGeneration !== requestGenerationRef.current
+          || (accountContext && !isAccountCacheCurrent(accountContext))) return;
         const loggedIn = loginStatus === 'true' && !!accountContext;
         setIsLoggedIn(loggedIn);
 
@@ -167,9 +181,10 @@ const MailScreen: React.FC = () => {
             : Promise.resolve(),
         ]);
       } catch (error) {
+        if (requestGeneration !== requestGenerationRef.current) return;
         console.error('Check login and load mails error:', error);
       } finally {
-        if (!silent) {
+        if (!silent && requestGeneration === requestGenerationRef.current) {
           setLoading(false);
         }
       }
@@ -186,7 +201,7 @@ const MailScreen: React.FC = () => {
   };
 
   reloadForAccountRef.current = () => {
-    void checkLoginAndLoadMails(false, true);
+    void checkLoginAndLoadMails(false, false);
   };
 
   useEffect(() => {
@@ -328,8 +343,10 @@ const MailScreen: React.FC = () => {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await checkLoginAndLoadMails(true, false);
-    setRefreshing(false);
+    const request = checkLoginAndLoadMails(true, false);
+    const requestGeneration = requestGenerationRef.current;
+    await request;
+    if (requestGeneration === requestGenerationRef.current) setRefreshing(false);
   };
 
   const renderMailItem = ({item}: {item: Mail}) => {
@@ -372,6 +389,8 @@ const MailScreen: React.FC = () => {
   };
 
   const handleNotificationPress = async (item: ReplyNotification) => {
+    const accountContext = await getAccountCacheContext();
+    if (!accountContext || !isAccountCacheCurrent(accountContext)) return;
     const previousStatus = item.status;
     if (item.status === 1) {
       setReplyNotifications(prev => prev.map(notification => (
@@ -381,14 +400,17 @@ const MailScreen: React.FC = () => {
       // 这个页面时，从缓存里先闪一下这条“未读”，再被后续请求纠正回来。
       clearCache('replyNotificationsFirstPage');
       try {
-        await markReplyNotificationAsRead(item.id);
+        await markReplyNotificationAsRead(item.id, accountContext);
       } catch (error) {
+        if (!isAccountCacheCurrent(accountContext)) return;
         console.error('Mark reply notification read error:', error);
         setReplyNotifications(prev => prev.map(notification => (
           notification.id === item.id ? {...notification, status: previousStatus} : notification
         )));
       }
     }
+
+    if (!isAccountCacheCurrent(accountContext)) return;
 
     if (!item.topicId) {
       Alert.alert('提示', '该回复关联的帖子已不可查看');

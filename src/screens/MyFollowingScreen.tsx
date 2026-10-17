@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useCallback} from 'react';
+import React, {useState, useEffect, useCallback, useRef} from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
 import {getFriendsList} from '../services/api';
-import {getAccountCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
+import {AccountCacheContext, getAccountCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
 import {useTheme} from '../components/ThemedComponents';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {ChevronRightIcon, UsersIcon} from '../components/SvgIcons';
@@ -42,11 +42,26 @@ const MyFollowingScreen: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalFollowing, setTotalFollowing] = useState(0);
   const [hasMore, setHasMore] = useState(true);
+  const requestGenerationRef = useRef(0);
+  const reloadForAccountRef = useRef<() => void>(() => {});
 
   useEffect(() => subscribeAccountCacheChange(() => {
+    const requestGeneration = ++requestGenerationRef.current;
     setFollowing([]);
     setCurrentPage(1);
     setTotalFollowing(0);
+    setHasMore(true);
+    setLoading(true);
+    setRefreshing(false);
+    setLoadingMore(false);
+    void getAccountCacheContext().then(accountContext => {
+      if (requestGeneration !== requestGenerationRef.current) return;
+      if (accountContext) reloadForAccountRef.current();
+      else setLoading(false);
+    }).catch(error => {
+      console.error('Reload following list after account change error:', error);
+      if (requestGeneration === requestGenerationRef.current) setLoading(false);
+    });
   }), []);
 
   // 加载关注列表
@@ -56,20 +71,22 @@ const MyFollowingScreen: React.FC = () => {
     append: boolean = false,
     silent: boolean = false,
   ) => {
+    const requestGeneration = ++requestGenerationRef.current;
+    let accountContext: AccountCacheContext | null = null;
     try {
-      const accountContext = await getAccountCacheContext();
+      accountContext = await getAccountCacheContext();
+      if (requestGeneration !== requestGenerationRef.current) return;
       const username = accountContext?.username || '';
       
       if (!username) {
         if (!silent) {
           Alert.alert('提示', '请先登录');
         }
-        setLoading(false);
         return;
       }
 
       const result = await getFriendsList(username, page, forceRefresh);
-      if (!isAccountCacheCurrent(accountContext)) return;
+      if (requestGeneration !== requestGenerationRef.current || !isAccountCacheCurrent(accountContext)) return;
       
       if (result.success && result.friends) {
         // friends现在直接是用户对象数组，包含完整的用户信息
@@ -99,6 +116,8 @@ const MyFollowingScreen: React.FC = () => {
         }
       }
     } catch (error: any) {
+      if (requestGeneration !== requestGenerationRef.current
+        || (accountContext && !isAccountCacheCurrent(accountContext))) return;
       console.error('Load following error:', error);
       if (!silent && error.message === 'LOGIN_EXPIRED') {
         Alert.alert(
@@ -116,10 +135,16 @@ const MyFollowingScreen: React.FC = () => {
         Alert.alert('错误', '加载失败，请稍后重试');
       }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
-      setLoadingMore(false);
+      if (requestGeneration === requestGenerationRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+        setLoadingMore(false);
+      }
     }
+  };
+
+  reloadForAccountRef.current = () => {
+    void loadFollowing(1, false, false, true);
   };
 
   // 初始加载

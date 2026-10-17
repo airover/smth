@@ -143,7 +143,8 @@ const UserProfileScreen: React.FC = () => {
   const navigation = useNavigation();
   const theme = useTheme();
   const styles = useThemedStyles(createStyles);
-  const {username} = route.params as {username?: string};
+  const profileParams = (route.params || {}) as {username?: string; self?: boolean};
+  const username = profileParams.self ? undefined : profileParams.username;
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -164,22 +165,31 @@ const UserProfileScreen: React.FC = () => {
   const [hasPermission, setHasPermission] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
   const isProcessingQR = useRef(false); // 使用 ref 防止重复处理
+  const profileLoadGenerationRef = useRef(0);
   const device = useCameraDevice('back');
 
   const checkAndLoadUserInfo = async () => {
+    const requestGeneration = ++profileLoadGenerationRef.current;
+    let accountContext: AccountCacheContext | null = null;
+    const isRequestCurrent = () => requestGeneration === profileLoadGenerationRef.current
+      && (!accountContext || isAccountCacheCurrent(accountContext));
     try {
+      accountContext = await getAccountCacheContext();
+      if (!isRequestCurrent()) return;
+
       // 检查是否查看自己的资料
-      const currentUsername = await AsyncStorage.getItem('username');
+      const currentUsername = accountContext?.username;
       const isSelf = !username || username.trim().toLowerCase() === currentUsername?.trim().toLowerCase();
       setIsCurrentUser(isSelf);
       
       // 加载背景图片配置
       if (isSelf) {
-        const context = await getAccountCacheContext();
-        const path = context ? await migrateBackgroundImage(context) : null;
+        const path = accountContext ? await migrateBackgroundImage(accountContext) : null;
+        if (!isRequestCurrent()) return;
         const bgExists = path ? await RNFetchBlob.fs.exists(path) : false;
+        if (!isRequestCurrent()) return;
         if (bgExists) {
-          if (context && isAccountCacheCurrent(context)) setBackgroundImage(`file://${path}`);
+          setBackgroundImage(`file://${path}`);
         } else {
           setBackgroundImage(null);
         }
@@ -187,7 +197,8 @@ const UserProfileScreen: React.FC = () => {
         setBackgroundImage(null);
       }
       
-      const userInfo = await loadUserInfo(isSelf);
+      const userInfo = await loadUserInfo(isSelf, false, false, accountContext, requestGeneration);
+      if (!isRequestCurrent()) return;
       
       // 如果是查看他人资料，检查关注状态和黑名单状态
       // 传入userInfo，因为此时user状态可能还没更新
@@ -196,6 +207,7 @@ const UserProfileScreen: React.FC = () => {
         await checkBlacklistStatus(username, false, userInfo);
       }
     } catch (err) {
+      if (!isRequestCurrent()) return;
       console.error('Check and load user info error:', err);
     }
   };
@@ -272,9 +284,12 @@ const UserProfileScreen: React.FC = () => {
           {
             text: '确定',
             onPress: async () => {
+              const accountContext = await getAccountCacheContext();
+              if (!accountContext) return;
               try {
                 setBlacklistLoading(true);
-                const result = await removeBlack(userId);
+                const result = await removeBlack(userId, accountContext);
+                if (!isAccountCacheCurrent(accountContext)) return;
                 if (result.success) {
                   setIsInBlacklist(false);
                   Alert.alert('成功', result.message || '已移除黑名单');
@@ -284,6 +299,7 @@ const UserProfileScreen: React.FC = () => {
                   Alert.alert('失败', result.message || '移除失败');
                 }
               } catch (err: any) {
+                if (!isAccountCacheCurrent(accountContext)) return;
                 console.error('Remove from blacklist error:', err);
                 if (err.message === 'LOGIN_EXPIRED') {
                   Alert.alert(
@@ -298,7 +314,7 @@ const UserProfileScreen: React.FC = () => {
                   Alert.alert('错误', '移除失败，请稍后重试');
                 }
               } finally {
-                setBlacklistLoading(false);
+                if (isAccountCacheCurrent(accountContext)) setBlacklistLoading(false);
               }
             },
           },
@@ -315,9 +331,12 @@ const UserProfileScreen: React.FC = () => {
             text: '确定',
             style: 'destructive',
             onPress: async () => {
+              const accountContext = await getAccountCacheContext();
+              if (!accountContext) return;
               try {
                 setBlacklistLoading(true);
-                const result = await addBlack(userId);
+                const result = await addBlack(userId, accountContext);
+                if (!isAccountCacheCurrent(accountContext)) return;
                 if (result.success) {
                   setIsInBlacklist(true);
                   Alert.alert('成功', result.message || '拉黑成功');
@@ -327,6 +346,7 @@ const UserProfileScreen: React.FC = () => {
                   Alert.alert('失败', result.message || '拉黑失败');
                 }
               } catch (err: any) {
+                if (!isAccountCacheCurrent(accountContext)) return;
                 console.error('Block user error:', err);
                 if (err.message === 'LOGIN_EXPIRED') {
                   Alert.alert(
@@ -341,7 +361,7 @@ const UserProfileScreen: React.FC = () => {
                   Alert.alert('错误', '拉黑失败，请稍后重试');
                 }
               } finally {
-                setBlacklistLoading(false);
+                if (isAccountCacheCurrent(accountContext)) setBlacklistLoading(false);
               }
             },
           },
@@ -370,9 +390,12 @@ const UserProfileScreen: React.FC = () => {
           {
             text: '确定',
             onPress: async () => {
+              const accountContext = await getAccountCacheContext();
+              if (!accountContext) return;
               try {
                 setFollowingLoading(true);
-                const result = await removeFriend(userId);
+                const result = await removeFriend(userId, accountContext);
+                if (!isAccountCacheCurrent(accountContext)) return;
                 if (result.success) {
                   setIsFollowing(false);
                   Alert.alert('成功', result.message || '已取消关注');
@@ -382,6 +405,7 @@ const UserProfileScreen: React.FC = () => {
                   Alert.alert('失败', result.message || '取消关注失败');
                 }
               } catch (err: any) {
+                if (!isAccountCacheCurrent(accountContext)) return;
                 console.error('Unfollow error:', err);
                 if (err.message === 'LOGIN_EXPIRED') {
                   Alert.alert(
@@ -396,7 +420,7 @@ const UserProfileScreen: React.FC = () => {
                   Alert.alert('错误', '取消关注失败，请稍后重试');
                 }
               } finally {
-                setFollowingLoading(false);
+                if (isAccountCacheCurrent(accountContext)) setFollowingLoading(false);
               }
             },
           },
@@ -404,18 +428,22 @@ const UserProfileScreen: React.FC = () => {
       );
     } else {
       // 关注：先检查是否被对方拉黑
+      const accountContext = await getAccountCacheContext();
+      if (!accountContext) return;
       try {
         setFollowingLoading(true);
         
         // 检查是否被对方拉黑
-        const blackResult = await checkIsHerBlack(userId);
+        const blackResult = await checkIsHerBlack(userId, accountContext);
+        if (!isAccountCacheCurrent(accountContext)) return;
         if (blackResult.isBlack) {
           Alert.alert('无法关注', '对方已将您拉黑，无法关注');
           return;
         }
         
         // 执行关注
-        const result = await addFriend(userId);
+        const result = await addFriend(userId, accountContext);
+        if (!isAccountCacheCurrent(accountContext)) return;
         if (result.success) {
           setIsFollowing(true);
           Alert.alert('成功', result.message || '关注成功');
@@ -425,6 +453,7 @@ const UserProfileScreen: React.FC = () => {
           Alert.alert('失败', result.message || '关注失败');
         }
       } catch (err: any) {
+        if (!isAccountCacheCurrent(accountContext)) return;
         console.error('Follow error:', err);
         if (err.message === 'LOGIN_EXPIRED') {
           Alert.alert(
@@ -439,7 +468,7 @@ const UserProfileScreen: React.FC = () => {
           Alert.alert('错误', '关注失败，请稍后重试');
         }
       } finally {
-        setFollowingLoading(false);
+        if (isAccountCacheCurrent(accountContext)) setFollowingLoading(false);
       }
     }
   };
@@ -450,10 +479,21 @@ const UserProfileScreen: React.FC = () => {
   }, [username]);
 
   useEffect(() => subscribeAccountCacheChange(() => {
+    profileLoadGenerationRef.current += 1;
     setUser(null);
     setIsFollowing(false);
     setIsInBlacklist(false);
     setBackgroundImage(null);
+    setIsCurrentUser(false);
+    setError(null);
+    setLoading(true);
+    setRefreshing(false);
+    setShowMessageModal(false);
+    setMessageSubject('');
+    setMessageBody('');
+    setSendingMessage(false);
+    setFollowingLoading(false);
+    setBlacklistLoading(false);
     checkAndLoadUserInfo();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [username]);
@@ -523,14 +563,18 @@ const UserProfileScreen: React.FC = () => {
             {
               text: '确定',
               onPress: async () => {
+                const accountContext = await getAccountCacheContext();
+                if (!accountContext) return;
                 try {
-                  const result = await addFriend(qrData.userId);
+                  const result = await addFriend(qrData.userId, accountContext);
+                  if (!isAccountCacheCurrent(accountContext)) return;
                   if (result.success) {
                     Alert.alert('成功', result.message || '关注成功');
                   } else {
                     Alert.alert('失败', result.message || '关注失败');
                   }
                 } catch (err: any) {
+                  if (!isAccountCacheCurrent(accountContext)) return;
                   console.error('Follow user error:', err);
                   if (err.message === 'LOGIN_EXPIRED') {
                     Alert.alert(
@@ -718,8 +762,19 @@ const UserProfileScreen: React.FC = () => {
     isSelf: boolean = isCurrentUser,
     forceRefresh: boolean = false,
     silent: boolean = false,
+    expectedContext?: AccountCacheContext | null,
+    expectedGeneration?: number,
   ): Promise<User | null> => {
+    const requestGeneration = expectedGeneration ?? ++profileLoadGenerationRef.current;
+    let accountContext = expectedContext;
+    const isRequestCurrent = () => requestGeneration === profileLoadGenerationRef.current
+      && (!accountContext || isAccountCacheCurrent(accountContext));
+
     try {
+      if (expectedGeneration === undefined) {
+        accountContext = await getAccountCacheContext();
+        if (!isRequestCurrent()) return null;
+      }
       if (!silent) {
         setLoading(true);
       }
@@ -729,11 +784,15 @@ const UserProfileScreen: React.FC = () => {
       if (isSelf) {
         // 查看自己的资料，使用getUserInfo
         userInfo = await getUserInfo(forceRefresh);
+        if (!isRequestCurrent()) return null;
         console.log('UserProfileScreen getUserInfo result:', userInfo);
       } else {
         // 查看他人资料，使用fetchUserInfo
         console.log('Fetching user info for:', username);
-        const accountContext = await getAccountCacheContext();
+        if (expectedGeneration === undefined) {
+          accountContext = await getAccountCacheContext();
+          if (!isRequestCurrent()) return null;
+        }
         const cacheRevision = getCacheRevision('otherUserInfo');
         
         // 如果不是强制刷新，先尝试从缓存获取
@@ -743,6 +802,7 @@ const UserProfileScreen: React.FC = () => {
             const age = Date.now() - cachedData.timestamp;
             console.log('UserProfileScreen: Using cached data for', username, 'age:', Math.floor(age / 1000), 's');
             if (age < PROFILE_MAX_STALE_AGE) {
+              if (!isRequestCurrent()) return null;
               const publicProfile = publicUserProfile(cachedData.data);
               if ('isFollowing' in cachedData.data || 'isBlack' in cachedData.data || 'isFans' in cachedData.data) {
                 setCacheWithTimestamp('otherUserInfo', username!, publicProfile, cachedData.timestamp);
@@ -756,6 +816,7 @@ const UserProfileScreen: React.FC = () => {
                 const requestKey = `${accountContext?.generation ?? 'guest'}:${cacheRevision}:${username}`;
                 refreshUserProfileOnce(username!, requestKey).then(freshData => {
                   if (freshData && getCacheRevision('otherUserInfo') === cacheRevision
+                    && requestGeneration === profileLoadGenerationRef.current
                     && (!accountContext || isAccountCacheCurrent(accountContext))) {
                     console.log('UserProfileScreen: Background update for', username);
                     // 如果积分为负数，不更新界面和缓存（数据可能异常）
@@ -781,7 +842,7 @@ const UserProfileScreen: React.FC = () => {
         
         // 没有缓存或强制刷新，从API获取
         userInfo = await fetchUserInfo(username!);
-        if (accountContext && !isAccountCacheCurrent(accountContext)) return null;
+        if (!isRequestCurrent()) return null;
         console.log('UserProfileScreen fetchUserInfo result:', userInfo);
         
         // 如果积分为负数，不更新界面和缓存（数据可能异常）
@@ -809,6 +870,7 @@ const UserProfileScreen: React.FC = () => {
         }
       }
       
+      if (!isRequestCurrent()) return null;
       if (userInfo) {
         setUser(userInfo);
         console.log('UserProfileScreen loaded:', userInfo.username, 'isSelf:', isSelf, 'posts:', userInfo.recentPosts?.length || 0);
@@ -818,11 +880,12 @@ const UserProfileScreen: React.FC = () => {
         return null;
       }
     } catch (err: any) {
+      if (!isRequestCurrent()) return null;
       console.error('Load user info error:', err);
       setError(err.message || '加载失败');
       return null;
     } finally {
-      if (!silent) {
+      if (!silent && isRequestCurrent()) {
         setLoading(false);
       }
     }
@@ -847,14 +910,20 @@ const UserProfileScreen: React.FC = () => {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    // 下拉刷新时强制从API获取最新数据
-    const userInfo = await loadUserInfo(isCurrentUser, true);
-    // 如果是查看他人资料，强制刷新关注状态和黑名单状态
-    if (!isCurrentUser && username) {
-      await checkFollowingStatus(username, true, userInfo);
-      await checkBlacklistStatus(username, true, userInfo);
+    const request = loadUserInfo(isCurrentUser, true);
+    const requestGeneration = profileLoadGenerationRef.current;
+    try {
+      // 下拉刷新时强制从API获取最新数据
+      const userInfo = await request;
+      if (requestGeneration !== profileLoadGenerationRef.current) return;
+      // 如果是查看他人资料，强制刷新关注状态和黑名单状态
+      if (!isCurrentUser && username) {
+        await checkFollowingStatus(username, true, userInfo);
+        await checkBlacklistStatus(username, true, userInfo);
+      }
+    } finally {
+      if (requestGeneration === profileLoadGenerationRef.current) setRefreshing(false);
     }
-    setRefreshing(false);
   };
 
   // 选择背景图片来源
@@ -1031,13 +1100,17 @@ const UserProfileScreen: React.FC = () => {
       return;
     }
 
+    const accountContext = await getAccountCacheContext();
+    if (!accountContext) return;
     try {
       setSendingMessage(true);
       const result = await sendMessage(
         user?.username || username || '',
         messageBody.trim(),
-        messageSubject.trim()
+        messageSubject.trim(),
+        accountContext,
       );
+      if (!isAccountCacheCurrent(accountContext)) return;
 
       if (result.success) {
         Alert.alert('成功', result.message || '消息发送成功');
@@ -1048,6 +1121,7 @@ const UserProfileScreen: React.FC = () => {
         Alert.alert('失败', result.message || '消息发送失败');
       }
     } catch (err: any) {
+      if (!isAccountCacheCurrent(accountContext)) return;
       console.error('Send message error:', err);
       if (err.message === 'LOGIN_EXPIRED') {
         Alert.alert(
@@ -1068,7 +1142,7 @@ const UserProfileScreen: React.FC = () => {
         Alert.alert('错误', '发送消息失败，请稍后重试');
       }
     } finally {
-      setSendingMessage(false);
+      if (isAccountCacheCurrent(accountContext)) setSendingMessage(false);
     }
   };
 

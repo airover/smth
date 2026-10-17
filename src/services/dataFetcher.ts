@@ -2060,7 +2060,10 @@ export const getConversationMessages = async (
   total: number;
 }> => {
   try {
+    const accountContext = await getAccountCacheContext();
+    if (!accountContext) throw new Error('NOT_LOGGED_IN');
     const cookies = await getCookies();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     
     // 严格校验登录态：必须有Cookie才能调用
     if (!cookies) {
@@ -2088,6 +2091,7 @@ export const getConversationMessages = async (
     }
 
     const json = await response.json();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     console.log('getConversationMessages API response code:', json.code);
     
     // 检查API返回码
@@ -2175,7 +2179,7 @@ export const getConversationMessages = async (
   } catch (error: any) {
     console.error('Get conversation messages error:', error);
     // 登录相关错误需要抛出，让调用方处理
-    if (error.message === 'NOT_LOGGED_IN' || error.message === 'LOGIN_EXPIRED') {
+    if (error.message === 'NOT_LOGGED_IN' || error.message === 'LOGIN_EXPIRED' || error.message === 'ACCOUNT_CHANGED') {
       throw error;
     }
     // 其他错误返回空数据
@@ -2191,10 +2195,15 @@ export const getConversationMessages = async (
 
 // 标记消息已读
 // API: GET https://wap.newsmth.net/wap/api/message/read?t={timestamp}&speakId={speakerId}
-export const markMessageAsRead = async (speakerId: string): Promise<{success: boolean, message?: string}> => {
+export const markMessageAsRead = async (
+  speakerId: string,
+  expectedContext?: AccountCacheContext | null,
+): Promise<{success: boolean, message?: string}> => {
   try {
-    const accountContext = await getAccountCacheContext();
+    const accountContext = expectedContext === undefined ? await getAccountCacheContext() : expectedContext;
+    if (!accountContext) throw new Error('NOT_LOGGED_IN');
     const cookies = await getCookies();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     
     if (!cookies) {
       console.error('markMessageAsRead: 未登录，无Cookie');
@@ -2221,6 +2230,7 @@ export const markMessageAsRead = async (speakerId: string): Promise<{success: bo
     }
 
     const json = await response.json();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     console.log('markMessageAsRead API response:', json);
     
     if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
@@ -2231,7 +2241,7 @@ export const markMessageAsRead = async (speakerId: string): Promise<{success: bo
     return {success: false, message: json.message || '标记失败'};
   } catch (error: any) {
     console.error('Mark message as read error:', error);
-    if (error.message === 'LOGIN_EXPIRED') {
+    if (error.message === 'LOGIN_EXPIRED' || error.message === 'ACCOUNT_CHANGED') {
       throw error;
     }
     return {success: false, message: '标记失败'};
@@ -2244,11 +2254,15 @@ export const markMessageAsRead = async (speakerId: string): Promise<{success: bo
 export const sendMessage = async (
   recipientName: string,
   body: string,
-  subject: string = ''
+  subject: string = '',
+  expectedContext?: AccountCacheContext | null,
 ): Promise<{success: boolean, message?: string}> => {
   try {
-    const accountContext = await getAccountCacheContext();
+    const accountContext = expectedContext === undefined ? await getAccountCacheContext() : expectedContext;
+    if (!accountContext) throw new Error('NOT_LOGGED_IN');
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     const cookies = await getCookies();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     
     if (!cookies) {
       console.error('sendMessage: 未登录，无Cookie');
@@ -2288,6 +2302,7 @@ export const sendMessage = async (
     }
 
     const json = await response.json();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     console.log('sendMessage API response:', json);
     
     if (json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)) {
@@ -2298,7 +2313,7 @@ export const sendMessage = async (
     return {success: false, message: json.message || '发送失败'};
   } catch (error: any) {
     console.error('Send message error:', error);
-    if (error.message === 'LOGIN_EXPIRED') {
+    if (error.message === 'LOGIN_EXPIRED' || error.message === 'ACCOUNT_CHANGED') {
       throw error;
     }
     return {success: false, message: '发送失败'};
@@ -2309,11 +2324,15 @@ export const sendMessage = async (
 // API: POST https://wap.newsmth.net/wap/api/profile/add/friend/{userId}
 // 响应: {"code":1,"kbsCode":0,"message":"操作成功"}
 export const addFriend = async (
-  userId: string
+  userId: string,
+  expectedContext?: AccountCacheContext | null,
 ): Promise<{success: boolean, message?: string}> => {
   try {
-    const accountContext = await getAccountCacheContext();
+    const accountContext = expectedContext === undefined ? await getAccountCacheContext() : expectedContext;
+    if (!accountContext) return {success: false, message: '请先登录'};
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     const cookies = await getCookies();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     
     if (!cookies) {
       console.error('addFriend: 未登录，无Cookie');
@@ -2345,6 +2364,7 @@ export const addFriend = async (
     }
 
     const json = await response.json();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     console.log('addFriend API response:', json);
     
     // 检查 code 和 kbsCode
@@ -2356,7 +2376,7 @@ export const addFriend = async (
     return {success: false, message: json.message || '关注失败'};
   } catch (error: any) {
     console.error('Add friend error:', error);
-    if (error.message === 'LOGIN_EXPIRED') {
+    if (error.message === 'LOGIN_EXPIRED' || error.message === 'ACCOUNT_CHANGED') {
       throw error;
     }
     return {success: false, message: '关注失败'};
@@ -2367,11 +2387,15 @@ export const addFriend = async (
 // API: DELETE https://wap.newsmth.net/wap/api/profile/remove/friend/{userId}
 // 响应: {"code":1,"kbsCode":0,"message":"操作成功"}
 export const removeFriend = async (
-  userId: string
+  userId: string,
+  expectedContext?: AccountCacheContext | null,
 ): Promise<{success: boolean, message?: string}> => {
   try {
-    const accountContext = await getAccountCacheContext();
+    const accountContext = expectedContext === undefined ? await getAccountCacheContext() : expectedContext;
+    if (!accountContext) return {success: false, message: '请先登录'};
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     const cookies = await getCookies();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     
     if (!cookies) {
       console.error('removeFriend: 未登录，无Cookie');
@@ -2402,6 +2426,7 @@ export const removeFriend = async (
     }
 
     const json = await response.json();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     console.log('removeFriend API response:', json);
     
     // 检查 code 和 kbsCode
@@ -2413,7 +2438,7 @@ export const removeFriend = async (
     return {success: false, message: json.message || '取消关注失败'};
   } catch (error: any) {
     console.error('Remove friend error:', error);
-    if (error.message === 'LOGIN_EXPIRED') {
+    if (error.message === 'LOGIN_EXPIRED' || error.message === 'ACCOUNT_CHANGED') {
       throw error;
     }
     return {success: false, message: '取消关注失败'};
@@ -2426,10 +2451,15 @@ export const removeFriend = async (
 // 响应: {"code":1,"data":false,"kbsCode":0,"message":"操作成功"}
 // data为true表示被对方拉黑，false表示未被拉黑
 export const checkIsHerBlack = async (
-  userId: string
+  userId: string,
+  expectedContext?: AccountCacheContext | null,
 ): Promise<{success: boolean, isBlack: boolean, message?: string}> => {
   try {
+    const accountContext = expectedContext === undefined ? await getAccountCacheContext() : expectedContext;
+    if (!accountContext) return {success: false, isBlack: false, message: '请先登录'};
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     const cookies = await getCookies();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     
     if (!cookies) {
       console.error('checkIsHerBlack: 未登录，无Cookie');
@@ -2467,6 +2497,7 @@ export const checkIsHerBlack = async (
     }
 
     const json = await response.json();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     console.log('checkIsHerBlack API response:', json);
     
     // 检查 code 和 kbsCode
@@ -2482,7 +2513,7 @@ export const checkIsHerBlack = async (
     return {success: false, isBlack: false, message: json.message || '检查失败'};
   } catch (error: any) {
     console.error('Check is her black error:', error);
-    if (error.message === 'LOGIN_EXPIRED') {
+    if (error.message === 'LOGIN_EXPIRED' || error.message === 'ACCOUNT_CHANGED') {
       throw error;
     }
     return {success: false, isBlack: false, message: '检查失败'};
@@ -2494,11 +2525,15 @@ export const checkIsHerBlack = async (
 // 请求参数: accountid={userId}&t={timestamp}
 // 响应: {"code":1,"data":true,"kbsCode":0,"message":"操作成功"}
 export const addBlack = async (
-  userId: string
+  userId: string,
+  expectedContext?: AccountCacheContext | null,
 ): Promise<{success: boolean, message?: string}> => {
   try {
-    const accountContext = await getAccountCacheContext();
+    const accountContext = expectedContext === undefined ? await getAccountCacheContext() : expectedContext;
+    if (!accountContext) return {success: false, message: '请先登录'};
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     const cookies = await getCookies();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     
     if (!cookies) {
       console.error('addBlack: 未登录，无Cookie');
@@ -2536,6 +2571,7 @@ export const addBlack = async (
     }
 
     const json = await response.json();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     console.log('addBlack API response:', json);
     
     // 检查 code 和 kbsCode
@@ -2547,7 +2583,7 @@ export const addBlack = async (
     return {success: false, message: json.message || '拉黑失败'};
   } catch (error: any) {
     console.error('Add black error:', error);
-    if (error.message === 'LOGIN_EXPIRED') {
+    if (error.message === 'LOGIN_EXPIRED' || error.message === 'ACCOUNT_CHANGED') {
       throw error;
     }
     return {success: false, message: '拉黑失败'};
@@ -2558,11 +2594,15 @@ export const addBlack = async (
 // API: DELETE https://wap.newsmth.net/wap/api/black/delblack?accountid={userId}
 // 响应: {"code":1,"data":true,"kbsCode":0,"message":"操作成功"}
 export const removeBlack = async (
-  userId: string
+  userId: string,
+  expectedContext?: AccountCacheContext | null,
 ): Promise<{success: boolean, message?: string}> => {
   try {
-    const accountContext = await getAccountCacheContext();
+    const accountContext = expectedContext === undefined ? await getAccountCacheContext() : expectedContext;
+    if (!accountContext) return {success: false, message: '请先登录'};
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     const cookies = await getCookies();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     
     if (!cookies) {
       console.error('removeBlack: 未登录，无Cookie');
@@ -2592,6 +2632,7 @@ export const removeBlack = async (
     }
 
     const json = await response.json();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     console.log('removeBlack API response:', json);
     
     // 检查 code 和 kbsCode
@@ -2603,7 +2644,7 @@ export const removeBlack = async (
     return {success: false, message: json.message || '移除失败'};
   } catch (error: any) {
     console.error('Remove black error:', error);
-    if (error.message === 'LOGIN_EXPIRED') {
+    if (error.message === 'LOGIN_EXPIRED' || error.message === 'ACCOUNT_CHANGED') {
       throw error;
     }
     return {success: false, message: '移除失败'};
@@ -2930,7 +2971,10 @@ const fetchFansListFromAPI = async (
 // API: GET https://wap.newsmth.net/wap/api/message/conversations?t={timestamp}&page={page}
 export const getMessages = async (_page: number = 0): Promise<Mail[]> => {
   try {
+    const accountContext = await getAccountCacheContext();
+    if (!accountContext) throw new Error('NOT_LOGGED_IN');
     const cookies = await getCookies();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     
     // 严格校验登录态：必须有Cookie才能调用
     if (!cookies) {
@@ -2959,6 +3003,7 @@ export const getMessages = async (_page: number = 0): Promise<Mail[]> => {
     }
 
     const json = await response.json();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     console.log('getMessages API response code:', json.code);
     
     // 检查API返回码
@@ -3029,7 +3074,10 @@ export const getReplyNotifications = async (
   totalPages?: number;
   hasMore: boolean;
 }> => {
+  const accountContext = await getAccountCacheContext();
+  if (!accountContext) throw new Error('NOT_LOGGED_IN');
   const cookies = await getCookies();
+  if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
   if (!cookies) {
     throw new Error('NOT_LOGGED_IN');
   }
@@ -3048,6 +3096,7 @@ export const getReplyNotifications = async (
   }
 
   const json = await response.json();
+  if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
   if (json.code !== 1) {
     if (isLoginExpiredApiResponse(json)) {
       throw new Error('LOGIN_EXPIRED');
@@ -3092,9 +3141,15 @@ export const getReplyNotifications = async (
 };
 
 /** 标记一条 WAP 回复提醒为已读。 */
-export const markReplyNotificationAsRead = async (notificationId: string): Promise<void> => {
-  const accountContext = await getAccountCacheContext();
+export const markReplyNotificationAsRead = async (
+  notificationId: string,
+  expectedContext?: AccountCacheContext | null,
+): Promise<void> => {
+  const accountContext = expectedContext === undefined ? await getAccountCacheContext() : expectedContext;
+  if (!accountContext) throw new Error('NOT_LOGGED_IN');
+  if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
   const cookies = await getCookies();
+  if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
   if (!cookies) throw new Error('NOT_LOGGED_IN');
 
   const response = await fetchWithRetry(
@@ -3107,6 +3162,7 @@ export const markReplyNotificationAsRead = async (notificationId: string): Promi
   );
   if (response.status === 401 || response.status === 403) throw new Error('LOGIN_EXPIRED');
   const json = await response.json();
+  if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
   if (json.code !== 1 || (json.kbsCode !== 0 && json.kbsCode !== undefined)) {
     throw new Error(json.message || json.msg || 'MARK_REPLY_NOTIFICATION_READ_FAILED');
   }
@@ -3114,9 +3170,16 @@ export const markReplyNotificationAsRead = async (notificationId: string): Promi
 };
 
 // 检查版面是否已收藏
-export const checkBoardFavorite = async (boardId: string): Promise<boolean> => {
+export const checkBoardFavorite = async (
+  boardId: string,
+  expectedContext?: AccountCacheContext | null,
+): Promise<boolean> => {
   try {
+    const accountContext = expectedContext === undefined ? await getAccountCacheContext() : expectedContext;
+    if (!accountContext) return false;
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     const cookies = await getCookies();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     
     if (!cookies) {
       console.log('checkBoardFavorite: 未登录，无Cookie');
@@ -3136,6 +3199,7 @@ export const checkBoardFavorite = async (boardId: string): Promise<boolean> => {
     }, 5000); // 5秒超时
 
     const json = await response.json();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     console.log('checkBoardFavorite API response:', json);
 
     if (json.code === 1 && json.data) {
@@ -3150,11 +3214,16 @@ export const checkBoardFavorite = async (boardId: string): Promise<boolean> => {
 };
 
 // 添加版面到收藏
-export const addBoardFavorite = async (boardId: string): Promise<{success: boolean, message?: string}> => {
+export const addBoardFavorite = async (
+  boardId: string,
+  expectedContext?: AccountCacheContext | null,
+): Promise<{success: boolean, message?: string}> => {
   try {
-    const accountContext = await getAccountCacheContext();
+    const accountContext = expectedContext === undefined ? await getAccountCacheContext() : expectedContext;
     if (!accountContext) return {success: false, message: '请先登录'};
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     const cookies = await getCookies();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     
     if (!cookies) {
       console.log('addBoardFavorite: 未登录，无Cookie');
@@ -3178,10 +3247,11 @@ export const addBoardFavorite = async (boardId: string): Promise<{success: boole
     }, 10000); // 10秒超时
 
     const json = await response.json();
+    if (json.code === 1) await invalidateFavoriteBoardsCache(accountContext);
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     console.log('addBoardFavorite API response:', json);
 
     if (json.code === 1) {
-      await invalidateFavoriteBoardsCache(accountContext);
       return {success: true, message: json.message || '收藏成功'};
     }
     
@@ -3196,11 +3266,16 @@ export const addBoardFavorite = async (boardId: string): Promise<{success: boole
 };
 
 // 取消版面收藏
-export const removeBoardFavorite = async (boardId: string): Promise<{success: boolean, message?: string}> => {
+export const removeBoardFavorite = async (
+  boardId: string,
+  expectedContext?: AccountCacheContext | null,
+): Promise<{success: boolean, message?: string}> => {
   try {
-    const accountContext = await getAccountCacheContext();
+    const accountContext = expectedContext === undefined ? await getAccountCacheContext() : expectedContext;
     if (!accountContext) return {success: false, message: '请先登录'};
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     const cookies = await getCookies();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     
     if (!cookies) {
       console.log('removeBoardFavorite: 未登录，无Cookie');
@@ -3222,10 +3297,11 @@ export const removeBoardFavorite = async (boardId: string): Promise<{success: bo
     }, 10000); // 10秒超时
 
     const json = await response.json();
+    if (json.code === 1) await invalidateFavoriteBoardsCache(accountContext);
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     console.log('removeBoardFavorite API response:', json);
 
     if (json.code === 1) {
-      await invalidateFavoriteBoardsCache(accountContext);
       return {success: true, message: json.message || '取消收藏成功'};
     }
     
@@ -3246,7 +3322,10 @@ export const getFavoriteTopics = async (
   pageSize: number = 20
 ): Promise<{topics: any[], totalPages: number, totalItems: number}> => {
   try {
+    const accountContext = await getAccountCacheContext();
+    if (!accountContext) throw new Error('NOT_LOGGED_IN');
     const cookies = await getCookies();
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     
     // 严格校验登录态：必须有Cookie才能调用
     if (!cookies) {
@@ -3267,6 +3346,7 @@ export const getFavoriteTopics = async (
     }, 10000); // 10秒超时
 
     const json = await safeJsonParse(response);
+    if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
     console.log('getFavoriteTopics API response:', json);
 
     if (json.code === 1 && Array.isArray(json.data?.favTopic)) {
@@ -3309,6 +3389,9 @@ export const getFavoriteTopics = async (
     console.error('Get favorite topics error:', error);
     
     if (error.message === 'NOT_LOGGED_IN') {
+      throw error;
+    }
+    if (error.message === 'ACCOUNT_CHANGED') {
       throw error;
     }
     if (error.message === 'LOGIN_EXPIRED' || error.message?.includes('HTTP 401') || error.message?.includes('HTTP 403')) {

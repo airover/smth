@@ -1,4 +1,4 @@
-import React, {useState, useEffect} from 'react';
+import React, {useState} from 'react';
 import {
   View,
   Text,
@@ -8,13 +8,24 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
-import {useNavigation} from '@react-navigation/native';
+import {useNavigation, useFocusEffect} from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import RNFetchBlob from 'rn-fetch-blob';
 import {activateAccountCache, removeAllAccountData} from '../services/accountCache';
+import {
+  SavedAccount,
+  loadSavedAccounts,
+  normalizeAccounts,
+  removeSavedAccount,
+  sameAccount,
+  saveAccount,
+  saveAccountIfMissing,
+  updateSavedAccountProfile,
+} from '../services/savedAccounts';
 import {waitForReadingProgressWrites} from '../utils/readingProgress';
-import {clearMSiteCookieJar, invalidateMSiteLogin, removeMSiteAccountData, setLoggedIn} from '../services/auth';
-import {getUserInfo} from '../services/api';
+import {clearSavedCredentials} from '../utils/storage';
+import {clearMSiteCookieJar, fetchAuthenticatedUsername, invalidateMSiteLogin, removeMSiteAccountData, setLoggedIn} from '../services/auth';
+import {fetchUserInfo, getUserInfo} from '../services/api';
 // logout 功能暂时未使用
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {useTheme} from '../components/ThemedComponents';
@@ -26,17 +37,6 @@ import {
   scaleModerate,
 } from '../utils/responsive';
 
-interface SavedAccount {
-  username: string;
-  nickname?: string;
-  avatar?: string;
-  cookies: string;
-  isCurrent: boolean;
-}
-
-const sameAccount = (left: string | null | undefined, right: string | null | undefined): boolean =>
-  !!left && !!right && left.trim().toLowerCase() === right.trim().toLowerCase();
-
 const AccountSwitchScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const theme = useTheme();
@@ -44,47 +44,55 @@ const AccountSwitchScreen: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [currentUsername, setCurrentUsername] = useState<string>('');
 
-  useEffect(() => {
-    loadAccounts();
-  }, []);
+  // 每次进入页面都重新读取，避免登录页写入后仍显示旧列表。
+  useFocusEffect(
+    React.useCallback(() => {
+      loadAccounts().catch(error => console.error('Load accounts error:', error));
+    }, []),
+  );
 
   const loadAccounts = async () => {
     try {
       setLoading(true);
-      
-      // 获取当前登录的用户
-      const username = await AsyncStorage.getItem('username');
-      const currentCookies = await AsyncStorage.getItem('cookies');
-      setCurrentUsername(username || '');
-      
-      // 获取保存的账号列表
-      const savedAccountsJson = await AsyncStorage.getItem('savedAccounts');
-      let savedAccounts: SavedAccount[] = savedAccountsJson ? JSON.parse(savedAccountsJson) : [];
-      
-      // 标记当前账号
-      savedAccounts = savedAccounts.map(acc => ({
-        ...acc,
-        isCurrent: sameAccount(acc.username, username),
-      }));
-      
-      // 如果当前登录的账号不在列表中，添加进去
-      if (username && currentCookies) {
-        const currentAccountExists = savedAccounts.some(acc => sameAccount(acc.username, username));
-        if (!currentAccountExists) {
-          savedAccounts.push({
-            username,
-            cookies: currentCookies,
-            isCurrent: true,
-          });
-        }
+
+      // 登录和切换路径在提交前已验证凭证归属，这里只补登记旧版本遗留的当前账号，不覆盖已有条目。
+      const [storedUsername, currentCookies, loginStatus] = await AsyncStorage.multiGet([
+        'username',
+        'cookies',
+        'isLoggedIn',
+      ]).then(entries => entries.map(([, value]) => value));
+      const currentName = loginStatus === 'true' && currentCookies ? storedUsername?.trim() || '' : '';
+      if (currentName && currentCookies) {
+        await saveAccountIfMissing({username: currentName, cookies: currentCookies}, {markCurrent: true})
+          .catch(error => console.error('Sync current account error:', error));
       }
-      
+      setCurrentUsername(currentName);
+      const savedAccounts = normalizeAccounts(await loadSavedAccounts(), currentName || null);
       setAccounts(savedAccounts);
+      void backfillProfiles(savedAccounts, currentName || null);
     } catch (error) {
       console.error('Load accounts error:', error);
     } finally {
       setLoading(false);
     }
+  };
+
+  // 旧记录缺少昵称或头像时，用公开资料接口在后台补齐，每个账号每次进入页面最多查一次。
+  const backfillProfiles = async (list: SavedAccount[], currentName: string | null) => {
+    const missing = list.filter(account => !account.avatar || !account.nickname);
+    if (missing.length === 0) return;
+    let updated = false;
+    for (const account of missing) {
+      try {
+        const info = await fetchUserInfo(account.username);
+        if (!info || !sameAccount(info.username, account.username)) continue;
+        await updateSavedAccountProfile(account.username, {nickname: info.nickname, avatar: info.avatar});
+        updated = true;
+      } catch (error) {
+        console.error('Backfill account profile error:', error);
+      }
+    }
+    if (updated) setAccounts(normalizeAccounts(await loadSavedAccounts(), currentName));
   };
 
   const handleSwitchAccount = async (account: SavedAccount) => {
@@ -93,21 +101,50 @@ const AccountSwitchScreen: React.FC = () => {
       return;
     }
 
-    invalidateMSiteLogin();
-
     let previousUsername: string | null = null;
     let previousCookies: string | null = null;
+    let switchStarted = false;
     try {
-      // 保存当前账号信息
+      // 保存当前账号信息（仅更新凭证，不改变当前标记）
       previousCookies = await AsyncStorage.getItem('cookies');
       previousUsername = await AsyncStorage.getItem('username');
-      
-      if (previousUsername && previousCookies) {
+
+      // 切换前核对保存的凭证归属，避免历史错配的 Cookie 让界面显示另一个账号的数据。
+      const [targetCookieUsername, currentCookieUsername] = await Promise.all([
+        fetchAuthenticatedUsername(account.cookies),
+        previousUsername && previousCookies
+          ? fetchAuthenticatedUsername(previousCookies)
+          : Promise.resolve(null),
+      ]);
+      // 重新登录成功后，新凭证会覆盖列表里失效或错配的条目。
+      const reloginButtons = [
+        {text: '取消', style: 'cancel' as const},
+        {text: '重新登录', onPress: () => navigation.navigate('Login', {reloginUsername: account.username})},
+      ];
+      if (!targetCookieUsername) {
+        Alert.alert('无法验证账号', '该账号保存的登录凭证可能已失效，也可能是网络问题。可以重试，或重新登录该账号。', reloginButtons);
+        return;
+      }
+      if (!sameAccount(targetCookieUsername, account.username)) {
+        Alert.alert(
+          '账号凭证不匹配',
+          `本机保存的账号“${account.username}”的凭证实际属于“${targetCookieUsername}”，可能是旧版本留下的错误记录。请重新登录该账号。`,
+          reloginButtons,
+        );
+        return;
+      }
+
+      if (previousUsername && previousCookies && sameAccount(currentCookieUsername, previousUsername)) {
         await saveCurrentAccount(previousUsername, previousCookies);
+      } else if (previousUsername && previousCookies) {
+        console.warn('Skip saving current account because its Cookie owner does not match the username');
       }
 
       // 切换到选中的账号
+      invalidateMSiteLogin();
+      switchStarted = true;
       await setLoggedIn(account.username, account.cookies);
+      await saveAccount({username: account.username, cookies: account.cookies}, {markCurrent: true});
       // 绕过资料快照，后台重建当前账号的 set_identity Cookie。
       void getUserInfo(true).catch(error => console.error('Refresh switched account identity error:', error));
       try {
@@ -127,54 +164,28 @@ const AccountSwitchScreen: React.FC = () => {
         },
       ]);
     } catch (error) {
-      if (previousUsername && previousCookies) {
+      if (switchStarted && previousUsername && previousCookies) {
         try {
           await setLoggedIn(previousUsername, previousCookies);
         } catch (rollbackError) {
           console.error('Restore previous account error:', rollbackError);
         }
       }
-      activateAccountCache(previousUsername);
+      if (switchStarted) activateAccountCache(previousUsername);
       console.error('Switch account error:', error);
       Alert.alert('错误', '切换账号失败，请重试');
     }
   };
 
   const saveCurrentAccount = async (username: string, cookies: string) => {
-    try {
-      const savedAccountsJson = await AsyncStorage.getItem('savedAccounts');
-      let savedAccounts: SavedAccount[] = savedAccountsJson ? JSON.parse(savedAccountsJson) : [];
-      
-      // 检查是否已存在
-      const existingIndex = savedAccounts.findIndex(acc => sameAccount(acc.username, username));
-      
-      const accountInfo: SavedAccount = {
-        username,
-        cookies,
-        isCurrent: false,
-      };
-      
-      if (existingIndex >= 0) {
-        // 更新现有账号
-        savedAccounts[existingIndex] = {
-          ...savedAccounts[existingIndex],
-          ...accountInfo,
-        };
-      } else {
-        // 添加新账号
-        savedAccounts.push(accountInfo);
-      }
-      
-      await AsyncStorage.setItem('savedAccounts', JSON.stringify(savedAccounts));
-    } catch (error) {
-      console.error('Save current account error:', error);
-    }
+    await saveAccount({username, cookies}, {markCurrent: false}).catch(error =>
+      console.error('Save current account error:', error));
   };
 
   const handleRemoveAccount = (account: SavedAccount) => {
     Alert.alert(
       '确认删除',
-      `确定要删除账号 ${account.nickname || account.username} 吗？该账号在本机的历史记录、草稿、缓存和背景图也会清除。`,
+      `确定要删除账号 ${account.nickname || account.username} 吗？该账号在本机的历史记录、草稿、缓存、背景图和保存的密码也会清除。`,
       [
         {
           text: '取消',
@@ -184,17 +195,11 @@ const AccountSwitchScreen: React.FC = () => {
           text: '删除',
           style: 'destructive',
           onPress: async () => {
-            let savedAccountsJson: string | null = null;
             try {
-              savedAccountsJson = await AsyncStorage.getItem('savedAccounts');
-              let savedAccounts: SavedAccount[] = savedAccountsJson ? JSON.parse(savedAccountsJson) : [];
-              
-              // 删除指定账号
-              savedAccounts = savedAccounts.filter(acc => !sameAccount(acc.username, account.username));
-              await AsyncStorage.setItem('savedAccounts', JSON.stringify(savedAccounts));
               await waitForReadingProgressWrites();
               await removeAllAccountData(account.username);
               await removeMSiteAccountData(account.username);
+              await clearSavedCredentials(account.username);
               const userDataDir = `${RNFetchBlob.fs.dirs.DocumentDir}/user_data`;
               if (await RNFetchBlob.fs.exists(userDataDir)) {
                 const files = await RNFetchBlob.fs.ls(userDataDir);
@@ -210,14 +215,13 @@ const AccountSwitchScreen: React.FC = () => {
                   }
                 }
               }
+
+              // 数据清理都成功后再从列表移除，失败时保留可见的账号记录。
+              await removeSavedAccount(account.username);
               
               // 刷新列表
               await loadAccounts();
             } catch (error) {
-              if (savedAccountsJson !== null) {
-                await AsyncStorage.setItem('savedAccounts', savedAccountsJson).catch(rollbackError =>
-                  console.error('Restore account list error:', rollbackError));
-              }
               console.error('Remove account error:', error);
               Alert.alert('错误', '删除账号失败');
             }
@@ -228,7 +232,7 @@ const AccountSwitchScreen: React.FC = () => {
   };
 
   const handleAddAccount = () => {
-    navigation.navigate('Login');
+    navigation.navigate('Login', {addAccount: true});
   };
 
   if (loading) {

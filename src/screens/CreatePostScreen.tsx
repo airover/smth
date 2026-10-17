@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useMemo, useRef} from 'react';
+import React, {useState, useEffect, useMemo, useRef, useCallback} from 'react';
 import {
   View,
   Text,
@@ -36,6 +36,7 @@ import {getCardElevation, getFontSizes, ThemeColors} from '../utils/theme';
 import {CameraIcon, ImageIcon, CheckCircleIcon, CheckIcon, LightbulbIcon, TrashIcon, SaveIcon, SendIcon, FileIcon} from '../components/SvgIcons';
 import {notifySuccess} from '../utils/haptics';
 import {Attachment} from '../types';
+import {AccountCacheContext, getLocalCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
 import {isImageAttachment, isImageUrl} from '../utils/imageUtils';
 import AiReplyConfigModal from '../components/AiReplyConfigModal';
 import AiReplyDraftModal from '../components/AiReplyDraftModal';
@@ -90,6 +91,8 @@ const CreatePostScreen: React.FC = () => {
   const [content, setContent] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [loadingDraft, setLoadingDraft] = useState(true);
+  const [draftContext, setDraftContext] = useState<AccountCacheContext | null>(null);
+  const [accountChanged, setAccountChanged] = useState(false);
   const [showCaptchaModal, setShowCaptchaModal] = useState(false);
   const [captchaTicket, setCaptchaTicket] = useState<string | null>(null);
   const [captchaRandstr, setCaptchaRandstr] = useState<string | null>(null);
@@ -118,6 +121,8 @@ const CreatePostScreen: React.FC = () => {
   // 键盘工具栏ID - 使用useRef生成唯一ID，确保组件实例间不冲突，且在组件生命周期内保持不变
   const inputAccessoryViewID = useRef(`createPostKeyboardAccessory_${Date.now()}`).current;
   const contentInputRef = useRef<TextInput>(null);
+  const draftLoadGenerationRef = useRef(0);
+  const submitGenerationRef = useRef(0);
 
   // 设置导航栏
   const setHeaderOptions = useFloatingHeader();
@@ -143,36 +148,40 @@ const CreatePostScreen: React.FC = () => {
     });
   }, [navigation, isReplyMode, isEditMode, submitting, title, content, captchaVerified, captchaTicket, captchaRandstr, selectedImages, uploadToken, uploading, existingAttachments, deletedAttachmentNames, theme, styles]);
 
-  // 加载草稿 / 编辑模式填充原始内容
-  useEffect(() => {
-    const loadDraft = async () => {
-      // 编辑模式：填充原始标题和内容
+  // 加载当前账号的草稿 / 编辑模式原始内容。
+  const loadDraftForCurrentContext = useCallback(async () => {
+    const requestGeneration = ++draftLoadGenerationRef.current;
+    setLoadingDraft(true);
+    try {
+      const context = await getLocalCacheContext();
+      if (requestGeneration !== draftLoadGenerationRef.current || !isAccountCacheCurrent(context)) return;
+      setDraftContext(context);
+      setAccountChanged(false);
+
       if (isEditMode) {
         setExistingAttachments(params.editAttachments || []);
         setDeletedAttachmentNames([]);
-        if (params.editTitle) {
-          setTitle(params.editTitle);
-        }
-        if (params.editContent) {
-          setContent(params.editContent);
-        }
-        setLoadingDraft(false);
+        setTitle(params.editTitle || '');
+        setContent(params.editContent || '');
         return;
       }
+
       if (!isReplyMode && params.boardId) {
-        const draft = await getDraft(params.boardId);
+        const draft = await getDraft(params.boardId, context);
+        if (requestGeneration !== draftLoadGenerationRef.current || !isAccountCacheCurrent(context)) return;
         if (draft) {
           Alert.alert('提示', '检测到未发布的草稿，是否继续编辑？', [
             {
               text: '放弃',
               style: 'destructive',
               onPress: () => {
-                clearDraft(params.boardId);
+                if (isAccountCacheCurrent(context)) void clearDraft(params.boardId, context);
               },
             },
             {
               text: '继续编辑',
               onPress: () => {
+                if (!isAccountCacheCurrent(context)) return;
                 setTitle(draft.subject);
                 setContent(draft.body);
               },
@@ -180,38 +189,78 @@ const CreatePostScreen: React.FC = () => {
           ]);
         }
       }
-      // 如果是回复模式，自动填充Re:标题
+
       if (isReplyMode && params.reTitle) {
         const reTitle = params.reTitle.startsWith('Re: ')
           ? params.reTitle
           : `Re: ${params.reTitle}`;
         setTitle(reTitle);
+      } else if (!isReplyMode) {
+        setTitle('');
       }
-      // 如果有引用内容，自动填充到内容框，并在最上方预留一行空白
       if (isReplyMode && params.quotedContent) {
         setContent('\n' + params.quotedContent);
+      } else if (!isReplyMode) {
+        setContent('');
       }
-      setLoadingDraft(false);
-    };
-    loadDraft();
-  }, [params.boardId, isReplyMode, isEditMode, params.reTitle, params.quotedContent, params.editTitle, params.editContent, params.editAttachments]);
+    } catch (error) {
+      console.error('加载草稿失败:', error);
+    } finally {
+      if (requestGeneration === draftLoadGenerationRef.current) setLoadingDraft(false);
+    }
+  }, [isEditMode, isReplyMode, params.boardId, params.editAttachments, params.editContent, params.editTitle, params.quotedContent, params.reTitle]);
+
+  useEffect(() => {
+    void loadDraftForCurrentContext();
+  }, [loadDraftForCurrentContext]);
+
+  // 切换账号时结束当前编辑会话，避免把旧账号的草稿留在屏幕上或保存到新账号。
+  useEffect(() => subscribeAccountCacheChange(() => {
+    draftLoadGenerationRef.current += 1;
+    submitGenerationRef.current += 1;
+    setDraftContext(null);
+    setAccountChanged(true);
+    setLoadingDraft(false);
+    setTitle('');
+    setContent('');
+    setSelectedImages([]);
+    setUploadToken(null);
+    setUploading(false);
+    setUploadProgress(0);
+    setCaptchaTicket(null);
+    setCaptchaRandstr(null);
+    setCaptchaVerified(false);
+    setExistingAttachments([]);
+    setDeletedAttachmentNames([]);
+    setSubmitting(false);
+  }), []);
 
   // 自动保存草稿（编辑模式下不保存草稿）
   useEffect(() => {
-    if (!isReplyMode && !isEditMode && !loadingDraft && (title || content)) {
+    if (!isReplyMode && !isEditMode && !loadingDraft && draftContext
+      && isAccountCacheCurrent(draftContext) && (title || content)) {
+      const context = draftContext;
       const timer = setTimeout(() => {
+        if (!isAccountCacheCurrent(context)) return;
         saveDraft({
           boardId: params.boardId,
           boardName: params.boardName,
           subject: title,
           body: content,
-        });
+        }, context);
       }, 2000); // 2秒后自动保存
       return () => clearTimeout(timer);
     }
-  }, [title, content, params.boardId, params.boardName, isReplyMode, loadingDraft]);
+  }, [title, content, params.boardId, params.boardName, isReplyMode, isEditMode, loadingDraft, draftContext]);
 
   const handleSubmit = async () => {
+    if (accountChanged || !draftContext || !isAccountCacheCurrent(draftContext)) {
+      Alert.alert('账号已切换', '请返回后重新进入发帖页面');
+      return;
+    }
+    const submitContext = draftContext;
+    const requestGeneration = ++submitGenerationRef.current;
+
     // 验证输入
     if (!title.trim()) {
       Alert.alert('提示', '请输入标题');
@@ -255,9 +304,11 @@ const CreatePostScreen: React.FC = () => {
         // 编辑模式：在同一个附件 token 上先删除旧附件、再上传新增图片，最后更新文章。
         const articleId = params.articleId!;
         const topicId = params.topicId || articleId;
-        const editUploadToken = await getArticleFileToken(articleId, topicId);
+        const editUploadToken = await getArticleFileToken(articleId, topicId, submitContext);
+        if (requestGeneration !== submitGenerationRef.current || !isAccountCacheCurrent(submitContext)) return;
         if (deletedAttachmentNames.length > 0) {
-          await deleteUploadedFiles(editUploadToken, deletedAttachmentNames);
+          await deleteUploadedFiles(editUploadToken, deletedAttachmentNames, submitContext);
+          if (requestGeneration !== submitGenerationRef.current || !isAccountCacheCurrent(submitContext)) return;
         }
         if (selectedImages.length > 0) {
           setUploading(true);
@@ -268,13 +319,15 @@ const CreatePostScreen: React.FC = () => {
               editUploadToken,
               selectedImages,
               progress => {
-                setUploadProgress(progress);
+                if (isAccountCacheCurrent(submitContext)) setUploadProgress(progress);
               },
               `https://wap.newsmth.net/post?id=${encodeURIComponent(topicId)}`,
+              submitContext,
             );
+            if (requestGeneration !== submitGenerationRef.current || !isAccountCacheCurrent(submitContext)) return;
             setUploadProgress(100);
           } finally {
-            setUploading(false);
+            if (isAccountCacheCurrent(submitContext)) setUploading(false);
           }
         }
 
@@ -285,7 +338,7 @@ const CreatePostScreen: React.FC = () => {
           subject: title.trim(),
           body: content.trim(),
           uploadToken: editUploadToken,
-        });
+        }, submitContext);
       } else {
         const postParams = {
           boardId: params.boardId,
@@ -299,14 +352,16 @@ const CreatePostScreen: React.FC = () => {
         };
 
         await (isReplyMode
-          ? replyPost(postParams)
-          : createPost(postParams));
+          ? replyPost(postParams, submitContext)
+          : createPost(postParams, submitContext));
 
         // 发帖成功后清除草稿
         if (!isReplyMode) {
-          await clearDraft(params.boardId);
+          await clearDraft(params.boardId, submitContext);
         }
       }
+
+      if (requestGeneration !== submitGenerationRef.current || !isAccountCacheCurrent(submitContext)) return;
 
       const successMsg = isEditMode ? '保存成功' : (isReplyMode ? '回复成功' : '发帖成功');
       notifySuccess();
@@ -319,6 +374,7 @@ const CreatePostScreen: React.FC = () => {
         },
       ]);
     } catch (error: any) {
+      if (requestGeneration !== submitGenerationRef.current || !isAccountCacheCurrent(submitContext)) return;
       console.error('提交失败:', error);
       const failMsg = isEditMode ? '保存失败' : (isReplyMode ? '回复失败' : '发帖失败');
       Alert.alert('失败', error.message || failMsg);
@@ -329,7 +385,9 @@ const CreatePostScreen: React.FC = () => {
         setCaptchaVerified(false);
       }
     } finally {
-      setSubmitting(false);
+      if (requestGeneration === submitGenerationRef.current && isAccountCacheCurrent(submitContext)) {
+        setSubmitting(false);
+      }
     }
   };
 
@@ -551,6 +609,9 @@ const CreatePostScreen: React.FC = () => {
 
   // 上传图片（批量上传）
   const handleUploadImages = async () => {
+    const uploadContext = draftContext;
+    if (accountChanged || !uploadContext || !isAccountCacheCurrent(uploadContext)) return;
+
     if (selectedImages.length === 0) {
       return;
     }
@@ -576,13 +637,16 @@ const CreatePostScreen: React.FC = () => {
         : buildCreatePostReferer(params.boardId, params.boardName);
 
       // 先检查发帖权限
-      await checkPublish(params.boardId, pageReferer);
+      await checkPublish(params.boardId, pageReferer, uploadContext);
+      if (!isAccountCacheCurrent(uploadContext)) return;
       
       // 回复场景请求一次 token；新发帖保留 WAP 的两次 token 请求流程。
-      const firstToken = await getUploadToken(params.boardId, pageReferer);
+      const firstToken = await getUploadToken(params.boardId, pageReferer, uploadContext);
+      if (!isAccountCacheCurrent(uploadContext)) return;
       const uploadTokenForRequest = isReplyMode
         ? firstToken
-        : await getUploadToken(params.boardId, pageReferer);
+        : await getUploadToken(params.boardId, pageReferer, uploadContext);
+      if (!isAccountCacheCurrent(uploadContext)) return;
       
       // 批量上传所有图片（一次HTTP请求），并监听进度
       await uploadImages(
@@ -590,25 +654,41 @@ const CreatePostScreen: React.FC = () => {
         uploadTokenForRequest,
         validImages,
         progress => {
-          setUploadProgress(progress);
+          if (isAccountCacheCurrent(uploadContext)) setUploadProgress(progress);
         },
         pageReferer,
+        uploadContext,
       );
 
+      if (!isAccountCacheCurrent(uploadContext)) return;
       setUploadToken(uploadTokenForRequest);
       setUploadProgress(100);
     } catch (error: any) {
+      if (!isAccountCacheCurrent(uploadContext) || error.message === 'ACCOUNT_CHANGED') return;
       console.error('上传图片失败:', error);
       console.error('错误堆栈:', error.stack);
       setUploadProgress(0);
       Alert.alert('失败', '上传图片失败: ' + error.message);
     } finally {
-      setUploading(false);
+      if (isAccountCacheCurrent(uploadContext)) setUploading(false);
     }
   };
 
   // handleCancel 函数暂未使用，保留供未来使用
   // const handleCancel = () => { ... }
+
+  if (accountChanged) {
+    return (
+      <View style={[styles.container, {justifyContent: 'center', alignItems: 'center', padding: SPACING.lg}]}>
+        <Text style={{color: theme.secondaryText, fontSize: FONT_SIZE.lg, textAlign: 'center'}}>
+          账号已切换，请返回后重新进入发帖页面
+        </Text>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={{marginTop: SPACING.lg}}>
+          <Text style={{color: theme.primary, fontSize: FONT_SIZE.lg}}>返回</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   if (loadingDraft) {
     return (

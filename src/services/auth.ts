@@ -102,7 +102,10 @@ export const getWapAuthCookiesFromJar = async (): Promise<string | null> => {
   }
 };
 
-/** 仅向服务端确认当前 Cookie 对应的用户名，不修改本地登录状态。 */
+/**
+ * 仅向服务端确认当前 Cookie 对应的用户名，不修改本地登录状态。
+ * 必须 omit：带 credentials 时系统 cookie jar 会覆盖手动 Cookie 头，验证的就不是传入的凭证了。
+ */
 export const fetchAuthenticatedUsername = async (cookies?: string): Promise<string | null> => {
   const credential = cookies || await AsyncStorage.getItem(STORAGE_KEYS.COOKIES);
   if (!credential) return null;
@@ -110,7 +113,7 @@ export const fetchAuthenticatedUsername = async (cookies?: string): Promise<stri
     const response = await fetchWithRetry('https://wap.newsmth.net/wap/api/profile', {
       method: 'POST',
       headers: buildPostHeaders(credential, 'application/x-www-form-urlencoded'),
-      credentials: 'include',
+      credentials: 'omit',
     }, 10000, 0);
     const json = await response.json();
     return json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)
@@ -170,26 +173,73 @@ export const checkIsLoggedIn = async (): Promise<boolean> => {
   }
 };
 
+const WAP_URL = 'https://wap.newsmth.net';
+const WAP_AUTH_COOKIE_NAMES = ['kbs-info', 'kbs-key'];
+
+/** 从 Cookie 头或 Set-Cookie 响应头中提取 wap 认证 Cookie，缺任一项返回 null。 */
+export const extractWapAuthCookies = (raw: string | null | undefined): string | null => {
+  if (!raw) return null;
+  const parts = WAP_AUTH_COOKIE_NAMES.map(name => {
+    const match = raw.match(new RegExp(`(?:^|[;,\\s])${name}=([^;,\\s]+)`));
+    return match ? `${name}=${match[1]}` : null;
+  });
+  return parts.every(Boolean) ? parts.join('; ') : null;
+};
+
+/**
+ * 让系统 cookie jar 里的 wap 认证 Cookie 与指定账号一致；传 null 时只清除。
+ * RN fetch 带 credentials 时 jar 优先于手动设置的 Cookie 头，
+ * 不同步的话切换账号后请求仍以 jar 里的旧账号身份发出。
+ */
+export const syncWapAuthCookieJar = async (cookies: string | null): Promise<void> => {
+  for (const name of WAP_AUTH_COOKIE_NAMES) {
+    if (Platform.OS === 'ios') {
+      // clearByName 会同时删除 wap 主机和父域名下的同名 Cookie。
+      await CookieManager.clearByName(WAP_URL, name);
+    } else {
+      // Android 无 clearByName：对仅主机、wap 域、父域三种写法都写入过期值。
+      for (const domain of ['', '; Domain=wap.newsmth.net', '; Domain=.newsmth.net']) {
+        await CookieManager.setFromResponse(WAP_URL, `${name}=; Path=/; Max-Age=0${domain}`);
+      }
+    }
+  }
+  const authCookies = extractWapAuthCookies(cookies);
+  if (authCookies) {
+    for (const part of authCookies.split('; ')) {
+      await CookieManager.setFromResponse(WAP_URL, `${part}; Path=/`);
+    }
+  }
+  if (Platform.OS === 'android') await CookieManager.flush();
+};
+
+/** 放弃未提交的登录时，把 jar 恢复为本地已提交账号的凭证。 */
+export const restoreWapAuthCookieJar = async (): Promise<void> => {
+  try {
+    const [loginStatus, cookies] = await AsyncStorage.multiGet([STORAGE_KEYS.IS_LOGGED_IN, STORAGE_KEYS.COOKIES])
+      .then(entries => entries.map(([, value]) => value));
+    await syncWapAuthCookieJar(loginStatus === 'true' ? cookies : null);
+  } catch (error) {
+    console.error('[Auth] 恢复主站 Cookie jar 失败:', error);
+  }
+};
+
 /**
  * 设置登录状态
  */
 export const setLoggedIn = async (username: string, cookies: string): Promise<void> => {
   try {
     if (!username.trim() || !cookies) throw new Error('MISSING_ACCOUNT_IDENTITY');
-    const authCookies = cookies.split(';').map(part => part.trim())
-      .filter(part => /^kbs-(info|key)=/.test(part));
-    if (!authCookies.some(part => part.startsWith('kbs-info='))
-      || !authCookies.some(part => part.startsWith('kbs-key='))) {
-      throw new Error('MISSING_AUTH_COOKIES');
-    }
+    const authCookies = extractWapAuthCookies(cookies);
+    if (!authCookies) throw new Error('MISSING_AUTH_COOKIES');
     const previous = await currentMSiteUsername();
     if (!sameMSiteAccount(previous, username)) {
       invalidateMSiteLogin();
       await clearMSiteCookieJar();
     }
+    await syncWapAuthCookieJar(authCookies);
     await AsyncStorage.multiSet([
       [STORAGE_KEYS.USERNAME, username.trim()],
-      [STORAGE_KEYS.COOKIES, authCookies.join('; ')],
+      [STORAGE_KEYS.COOKIES, authCookies],
       [STORAGE_KEYS.IS_LOGGED_IN, 'true'],
     ]);
     activateAccountCache(username);
@@ -751,17 +801,13 @@ const silentMSiteReLogin = async (): Promise<void> => {
     const { getSavedCredentials } = require('../utils/storage');
     const { requestSilentCaptcha } = require('./silentCaptchaEvent');
 
-    const credentials = await getSavedCredentials();
-    if (!credentials.username || !credentials.password) {
-      console.log('[M站静默登录] 无保存的凭据，放弃自动登录');
-      const currentUsername = await currentMSiteUsername();
-      if (currentUsername) await setMSiteActionRequired(true, currentUsername);
-      return;
-    }
     const currentUsername = await currentMSiteUsername();
-    if (!currentUsername || !sameMSiteAccount(credentials.username, currentUsername)) {
-      console.log('[M站静默登录] 保存的密码不属于当前账号，停止自动登录');
-      if (currentUsername) await setMSiteActionRequired(true, currentUsername);
+    if (!currentUsername) return;
+    // 密码按账号保存，直接取当前账号自己的记录。
+    const credentials = await getSavedCredentials(currentUsername);
+    if (!credentials.username || !credentials.password) {
+      console.log('[M站静默登录] 当前账号无保存的密码，放弃自动登录');
+      await setMSiteActionRequired(true, currentUsername);
       return;
     }
     if (await getMSiteActionRequired()) return;

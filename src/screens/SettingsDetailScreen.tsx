@@ -59,6 +59,7 @@ const SettingsDetailScreen: React.FC = () => {
   useFocusEffect(
     useCallback(() => {
       if (!isLoggedIn) {
+        setUsername('');
         setMSiteEnabledState(false);
         setMSiteLoggedIn(null);
         return;
@@ -106,9 +107,7 @@ const SettingsDetailScreen: React.FC = () => {
       const storedUsername = await AsyncStorage.getItem('username');
       // const loginStatus = await AsyncStorage.getItem('isLoggedIn'); // 不需要手动读取
       
-      if (storedUsername) {
-        setUsername(storedUsername);
-      }
+      setUsername(storedUsername || '');
       // setIsLoggedIn(loginStatus === 'true'); // 不需要手动设置
     } catch (error) {
       console.error('Load user status error:', error);
@@ -140,12 +139,12 @@ const SettingsDetailScreen: React.FC = () => {
   const handleMSiteToggle = async (value: boolean) => {
     if (value) {
       // 开启 M 站登录
-      const credentials = await getSavedCredentials();
       const currentName = await getCurrentUsername();
-      if (!currentName || !credentials.username
-        || credentials.username.trim().toLowerCase() !== currentName.trim().toLowerCase()) {
-        Alert.alert('提示', '保存的密码不属于当前账号，请重新登录主站并勾选“记住密码”');
-      } else if (credentials.password) {
+      // 密码按账号保存，只读取当前账号自己的记录。
+      const credentials = currentName ? await getSavedCredentials(currentName) : null;
+      if (!currentName) {
+        Alert.alert('提示', '请先登录主站');
+      } else if (credentials?.password) {
         setUsername(currentName);
         setSavedPassword(credentials.password);
         setShowCaptcha(true);
@@ -336,7 +335,7 @@ const subject = encodeURIComponent('海月水母用户反馈');
             <View style={[styles.card, {backgroundColor: theme.cardBackground}]}>
               <TouchableOpacity 
                 style={styles.menuItem}
-                onPress={() => navigation.navigate('UserProfile', { username })}>
+                onPress={() => navigation.navigate('UserProfile', {self: true})}>
                 <View style={styles.menuItemLeft}>
                   <Text style={[styles.menuItemText, {color: theme.text}]}>个人资料</Text>
                 </View>

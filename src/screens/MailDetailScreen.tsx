@@ -18,6 +18,7 @@ import {Mail} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {getConversationMessages, markMessageAsRead, sendMessage} from '../services/api';
+import {AccountCacheContext, getAccountCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
 import {useTheme} from '../components/ThemedComponents';
 import {useFloatingHeader} from '../components/ThemeHeader';
 import {
@@ -60,8 +61,10 @@ const MailDetailScreen: React.FC = () => {
   const [speaker, setSpeaker] = useState<any>(null);
   const [replyText, setReplyText] = useState('');
   const [sending, setSending] = useState(false);
+  const [accountChanged, setAccountChanged] = useState(false);
   
   const isLoadingRef = useRef(false);
+  const requestGenerationRef = useRef(0);
   
   // WebView 内容高度状态
   const [contentHeights, setContentHeights] = useState<{[key: string]: number}>({});
@@ -199,9 +202,16 @@ const MailDetailScreen: React.FC = () => {
     }
     
     isLoadingRef.current = true;
+    const requestGeneration = ++requestGenerationRef.current;
+    let accountContext: AccountCacheContext | null = null;
     
     try {
+      accountContext = await getAccountCacheContext();
+      if (!accountContext) return;
+      if (requestGeneration !== requestGenerationRef.current) return;
+
       const result = await getConversationMessages(speakerId, pageNum);
+      if (requestGeneration !== requestGenerationRef.current || !isAccountCacheCurrent(accountContext)) return;
       
       // 按时间降序排序
       
@@ -223,6 +233,9 @@ const MailDetailScreen: React.FC = () => {
       setPage(pageNum);
       setHasMore(result.hasMore);
     } catch (error: any) {
+      if (requestGeneration !== requestGenerationRef.current
+        || error.message === 'ACCOUNT_CHANGED'
+        || (accountContext && !isAccountCacheCurrent(accountContext))) return;
       console.error('[MailDetail] 加载消息失败:', error);
       
       if (error.message === 'NOT_LOGGED_IN' || error.message === 'LOGIN_EXPIRED') {
@@ -243,12 +256,30 @@ const MailDetailScreen: React.FC = () => {
         );
       }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
-      setLoadingMore(false);
-      isLoadingRef.current = false;
+      if (requestGeneration === requestGenerationRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+        setLoadingMore(false);
+        isLoadingRef.current = false;
+      }
     }
   }, [speakerId, navigation]);
+
+  useEffect(() => subscribeAccountCacheChange(() => {
+    requestGenerationRef.current += 1;
+    isLoadingRef.current = false;
+    setMessages([]);
+    setSpeaker(null);
+    setPage(1);
+    setHasMore(false);
+    setReplyText('');
+    setContentHeights({});
+    setRefreshing(false);
+    setLoadingMore(false);
+    setSending(false);
+    setLoading(false);
+    setAccountChanged(true);
+  }), [loadMessages]);
 
   // 初始加载
   useEffect(() => {
@@ -256,21 +287,22 @@ const MailDetailScreen: React.FC = () => {
     
     // 只在有未读消息时才标记已读
     if (mail.unread > 0) {
-      markMessageAsRead(speakerId).catch(error => {
-        console.error('[MailDetail] 标记已读失败:', error);
-      });
+      void getAccountCacheContext().then(accountContext => {
+        if (accountContext && isAccountCacheCurrent(accountContext)) {
+          return markMessageAsRead(speakerId, accountContext);
+        }
+        return undefined;
+      }).catch(error => console.error('[MailDetail] 标记已读失败:', error));
     }
   }, [loadMessages, speakerId, mail.unread]);
 
   // 设置导航标题
   const setHeaderOptions = useFloatingHeader();
   useEffect(() => {
-    if (speaker?.nick || speaker?.name || mail.fromNickname || mail.from) {
-      setHeaderOptions({
-        title: speaker?.nick || speaker?.name || mail.fromNickname || mail.from,
-      });
-    }
-  }, [speaker, mail, navigation]);
+    setHeaderOptions({
+      title: accountChanged ? '消息' : speaker?.nick || speaker?.name || mail.fromNickname || mail.from || '消息',
+    });
+  }, [speaker, mail, accountChanged, navigation]);
 
   // 下拉刷新
   const onRefresh = useCallback(async () => {
@@ -371,7 +403,7 @@ const MailDetailScreen: React.FC = () => {
 
   // 发送回复
   const handleSend = useCallback(async () => {
-    if (!replyText.trim()) {
+    if (accountChanged || !replyText.trim()) {
       return;
     }
     
@@ -400,10 +432,14 @@ const MailDetailScreen: React.FC = () => {
       }
     }
     
-    setSending(true);
-    
+    let accountContext: AccountCacheContext | null = null;
     try {
-      const result = await sendMessage(recipientName, replyText.trim(), replySubject);
+      accountContext = await getAccountCacheContext();
+      if (!accountContext) return;
+      setSending(true);
+
+      const result = await sendMessage(recipientName, replyText.trim(), replySubject, accountContext);
+      if (!isAccountCacheCurrent(accountContext)) return;
       
       if (result.success) {
         // 发送成功，清空输入框并刷新消息列表
@@ -414,6 +450,8 @@ const MailDetailScreen: React.FC = () => {
         Alert.alert('发送失败', result.message || '请稍后重试');
       }
     } catch (error: any) {
+      if (error.message === 'ACCOUNT_CHANGED'
+        || (accountContext && !isAccountCacheCurrent(accountContext))) return;
       console.error('Send reply error:', error);
       if (error.message === 'LOGIN_EXPIRED') {
         Alert.alert('登录已过期', '请重新登录');
@@ -421,9 +459,24 @@ const MailDetailScreen: React.FC = () => {
         Alert.alert('发送失败', '请稍后重试');
       }
     } finally {
-      setSending(false);
+      if (accountContext && isAccountCacheCurrent(accountContext)) setSending(false);
     }
-  }, [replyText, sending, speaker, mail, loadMessages, messages]);
+  }, [accountChanged, replyText, sending, speaker, mail, loadMessages, messages]);
+
+  if (accountChanged) {
+    return (
+      <View style={[styles.container, {backgroundColor: theme.background}]}>
+        <View style={styles.emptyContainer}>
+          <Text style={[styles.emptyText, {color: theme.secondaryText, textAlign: 'center'}]}>
+            账号已切换，请返回邮件列表后重新打开对话
+          </Text>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={{marginTop: SPACING.lg}}>
+            <Text style={[styles.emptyText, {color: theme.primary}]}>返回邮件列表</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
 
   if (loading) {
     return (

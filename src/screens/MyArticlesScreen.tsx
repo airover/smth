@@ -73,6 +73,7 @@ const MyArticlesScreen: React.FC = () => {
   
   // Tab状态：0=帖子, 1=回复, 2=喜欢
   const [activeTab, setActiveTab] = useState<0 | 1 | 2>(0);
+  const [accountChangeVersion, setAccountChangeVersion] = useState(0);
   const [loadErrors, setLoadErrors] = useState<Record<MyArticlesTab, boolean>>({0: false, 1: false, 2: false});
   
   // 帖子数据
@@ -102,8 +103,6 @@ const MyArticlesScreen: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
 
-  // 防止重复加载
-  const isLoadingRef = useRef(false);
   const requestIdRef = useRef(0);
 
   // 加载缓存数据
@@ -145,11 +144,6 @@ const MyArticlesScreen: React.FC = () => {
     isRefresh: boolean = false,
     _silent: boolean = false,
   ) => {
-    if (isLoadingRef.current) {
-      return;
-    }
-
-    isLoadingRef.current = true;
     const requestId = ++requestIdRef.current;
     let requestContext: AccountCacheContext | null = null;
 
@@ -185,6 +179,7 @@ const MyArticlesScreen: React.FC = () => {
             () => getCacheRevision(CATEGORY_BY_TAB[type]) === revision,
           );
           if (
+            requestId === requestIdRef.current &&
             isAccountCacheCurrent(accountContext) &&
             persisted?.data &&
             !persisted.isExpired &&
@@ -211,12 +206,14 @@ const MyArticlesScreen: React.FC = () => {
         }
       }
 
+      if (requestId !== requestIdRef.current || !isAccountCacheCurrent(accountContext)) return;
       if (!shouldRequest) {
         return;
       }
 
       const result = type === 2 ? await getMyLikes(page) : await getMyArticles(type, page);
-      if (!isAccountCacheCurrent(accountContext) || getCacheRevision(CATEGORY_BY_TAB[type]) !== revision) return;
+      if (requestId !== requestIdRef.current || !isAccountCacheCurrent(accountContext)
+        || getCacheRevision(CATEGORY_BY_TAB[type]) !== revision) return;
       if (page === 1) setLoadErrors(previous => ({...previous, [type]: false}));
 
       if (page === 1) {
@@ -252,25 +249,24 @@ const MyArticlesScreen: React.FC = () => {
       }
     } catch (error) {
       console.error('loadData error:', error);
-      if (page === 1 && isAccountCacheCurrent(requestContext)) {
+      if (page === 1 && requestId === requestIdRef.current && isAccountCacheCurrent(requestContext)) {
         setLoadErrors(previous => ({...previous, [type]: true}));
       }
     } finally {
       // 不管成功还是失败都标记为“已尝试加载过”，避免请求失败时永远卡在骨架屏；
       // 失败时如果也没有缓存可用，会落到空状态而不是转不停的菊花。
       // 旧账号请求结束时，不能把新账号的页面标记为已加载。
-      if (requestIdRef.current === requestId && isAccountCacheCurrent(requestContext)) {
+      if (requestIdRef.current === requestId
+        && (!requestContext || isAccountCacheCurrent(requestContext))) {
         setLoadedFlag(type, true);
         setRefreshing(false);
         setLoadingMore(false);
-        isLoadingRef.current = false;
       }
     }
   }, [applySnapshot, setLoadedFlag]);
 
   useEffect(() => subscribeAccountCacheChange(() => {
     requestIdRef.current += 1;
-    isLoadingRef.current = false;
     setArticles([]);
     setReplies([]);
     setLikes([]);
@@ -278,6 +274,9 @@ const MyArticlesScreen: React.FC = () => {
     setRepliesLoaded(false);
     setLikesLoaded(false);
     setLoadErrors({0: false, 1: false, 2: false});
+    setRefreshing(false);
+    setLoadingMore(false);
+    setAccountChangeVersion(version => version + 1);
   }), []);
 
   // 首次挂载和 Tab 切换都会命中下面这个 effect（activeTab 的“首次渲染”本身就算
@@ -288,7 +287,7 @@ const MyArticlesScreen: React.FC = () => {
   useEffect(() => {
     const currentLoaded = activeTab === 0 ? articlesLoaded : activeTab === 1 ? repliesLoaded : likesLoaded;
     loadData(activeTab, 1, false, currentLoaded);
-  }, [activeTab, articlesLoaded, likesLoaded, loadData, repliesLoaded]);
+  }, [activeTab, accountChangeVersion, articlesLoaded, likesLoaded, loadData, repliesLoaded]);
 
   const refreshActiveTabSilently = useCallback(() => {
     const currentPage = activeTab === 0 ? articlesPage : activeTab === 1 ? repliesPage : likesPage;
@@ -315,13 +314,13 @@ const MyArticlesScreen: React.FC = () => {
     const hasMore = activeTab === 0 ? articlesHasMore : activeTab === 1 ? repliesHasMore : likesHasMore;
     const currentPage = activeTab === 0 ? articlesPage : activeTab === 1 ? repliesPage : likesPage;
     
-    if (!hasMore || loadingMore || isLoadingRef.current) {
+    if (!hasMore || loadingMore || refreshing) {
       return;
     }
     
     setLoadingMore(true);
     loadData(activeTab, currentPage + 1);
-  }, [activeTab, articlesHasMore, repliesHasMore, likesHasMore, articlesPage, repliesPage, likesPage, loadingMore, loadData]);
+  }, [activeTab, articlesHasMore, repliesHasMore, likesHasMore, articlesPage, repliesPage, likesPage, loadingMore, refreshing, loadData]);
 
   // 点击帖子
   const handleArticlePress = (item: MyArticle) => {

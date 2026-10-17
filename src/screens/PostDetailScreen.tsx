@@ -35,6 +35,7 @@ import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import ImageViewer from '../components/ImageViewer';
 import EggThrowEffect from '../components/EggThrowEffect';
 import {cacheManager} from '../services/cacheManager';
+import {AccountCacheContext, getAccountCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
 import {saveBrowsingHistory} from './BrowsingHistoryScreen';
 import {sendMessage} from '../services/dataFetcher';
 import {useSettings} from '../context/SettingsContext';
@@ -353,6 +354,7 @@ const PostDetailScreen: React.FC = () => {
   const [imageSizes, setImageSizes] = useState<{[key: string]: {width: number; height: number}}>({});
   const [failedImages, setFailedImages] = useState<Set<string>>(new Set()); // 跟踪加载失败的图片
   const [currentUsername, setCurrentUsername] = useState<string | null>(null);
+  const [accountChangeVersion, setAccountChangeVersion] = useState(0);
   const [ratingModalVisible, setRatingModalVisible] = useState(false);
   const [ratingType, setRatingType] = useState<'like' | 'dislike'>('like');
   const [ratingComment, setRatingComment] = useState('');
@@ -461,7 +463,7 @@ const PostDetailScreen: React.FC = () => {
       replyListGenerationRef.current += 1;
       backfillGenerationRef.current += 1;
     };
-  }, [settingsLoading, postId, navigationArticleId]);
+  }, [settingsLoading, postId, navigationArticleId, accountChangeVersion]);
 
   useEffect(() => {
     currentPageRef.current = page;
@@ -633,27 +635,52 @@ const PostDetailScreen: React.FC = () => {
     });
   }, [navigation, currentUsername, post]);
 
-  const loadCurrentUser = async () => {
+  const loadCurrentUser = useCallback(async () => {
     try {
+      const accountContext = await getAccountCacheContext();
+      if (!accountContext) {
+        setCurrentUsername(null);
+        return;
+      }
       const userInfo = await getUserInfo();
+      if (!isAccountCacheCurrent(accountContext)) return;
       if (userInfo && userInfo.username) {
         setCurrentUsername(userInfo.username);
+      } else {
+        setCurrentUsername(null);
       }
     } catch (error) {
       console.error('Load current user error:', error);
     }
-  };
+  }, []);
 
-  const loadPermissions = async () => {
+  const loadPermissions = useCallback(async () => {
     try {
+      const accountContext = await getAccountCacheContext();
+      if (!accountContext) {
+        setPermissions(null);
+        return;
+      }
       const result = await getPostPermissions(postId);
+      if (!isAccountCacheCurrent(accountContext)) return;
       if (result.success && result.data) {
         setPermissions(result.data);
+      } else {
+        setPermissions(null);
       }
     } catch (error) {
       console.error('Load permissions error:', error);
     }
-  };
+  }, [postId]);
+
+  useEffect(() => subscribeAccountCacheChange(() => {
+    setCurrentUsername(null);
+    setPermissions(null);
+    setReadingProgress(null);
+    setResumePositionReady(false);
+    setResumeEarlierRequest(null);
+    setAccountChangeVersion(version => version + 1);
+  }), []);
 
   const getPostDetailLoadErrorMessage = (error: any): string => {
     const message = String(error?.message || error || '');
@@ -1101,6 +1128,8 @@ const PostDetailScreen: React.FC = () => {
   };
 
   const handleDeletePost = async () => {
+    const accountContext = await getAccountCacheContext();
+    if (!accountContext) return;
     Alert.alert(
       '确认删除',
       '确定要删除这篇帖子吗？删除后无法恢复。',
@@ -1113,13 +1142,15 @@ const PostDetailScreen: React.FC = () => {
           text: '删除',
           style: 'destructive',
           onPress: async () => {
+            if (!isAccountCacheCurrent(accountContext)) return;
             try {
               // 使用 articleId 而不是 topicId
               if (!post?.articleId) {
                 Alert.alert('错误', '无法获取帖子ID');
                 return;
               }
-              const result = await deletePost(post.articleId, post?.title, board, postId);
+              const result = await deletePost(post.articleId, post?.title, board, postId, accountContext);
+              if (!isAccountCacheCurrent(accountContext)) return;
               if (result.success) {
                 Alert.alert('成功', result.message || '删除成功', [
                   {
@@ -1131,6 +1162,7 @@ const PostDetailScreen: React.FC = () => {
                 Alert.alert('失败', result.message || '删除失败');
               }
             } catch (error) {
+              if (!isAccountCacheCurrent(accountContext)) return;
               Alert.alert('错误', '删除失败，请稍后重试');
             }
           }
@@ -1145,14 +1177,19 @@ const PostDetailScreen: React.FC = () => {
       return;
     }
     
+    let accountContext: AccountCacheContext | null = null;
     try {
-      const result = await addFavoriteTopic(post.id);
+      accountContext = await getAccountCacheContext();
+      if (!accountContext) return;
+      const result = await addFavoriteTopic(post.id, accountContext);
+      if (!isAccountCacheCurrent(accountContext)) return;
       if (result.success) {
         Alert.alert('成功', result.message || '收藏成功');
       } else {
         Alert.alert('失败', result.message || '收藏失败');
       }
     } catch (error) {
+      if (accountContext && !isAccountCacheCurrent(accountContext)) return;
       Alert.alert('错误', '收藏失败，请稍后重试');
     }
   };
@@ -1242,20 +1279,25 @@ const PostDetailScreen: React.FC = () => {
 
   // 处理引用回复
   // 处理删除回复
-  const handleDeleteReply = (reply: Reply) => {
+  const handleDeleteReply = async (reply: Reply) => {
+    const accountContext = await getAccountCacheContext();
+    if (!accountContext) return;
     Alert.alert('确认删除', '确定要删除这条回复吗？', [
       {text: '取消', style: 'cancel'},
       {
         text: '删除',
         style: 'destructive',
         onPress: async () => {
+          if (!isAccountCacheCurrent(accountContext)) return;
           try {
-            await deleteArticle(reply.id, board, postId);
+            await deleteArticle(reply.id, board, postId, accountContext);
+            if (!isAccountCacheCurrent(accountContext)) return;
             // 删除成功后从列表中移除
             LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
             setReplies(prev => prev.filter(r => r.id !== reply.id));
             Alert.alert('成功', '回复已删除');
           } catch (error: any) {
+            if (!isAccountCacheCurrent(accountContext)) return;
             console.error('删除回复失败:', error);
             Alert.alert('失败', error.message || '删除回复失败');
           }
@@ -1348,14 +1390,18 @@ const PostDetailScreen: React.FC = () => {
         `请管理员审核处理，谢谢！`,
       ].join('\n');
       
+      const accountContext = await getAccountCacheContext();
+      if (!accountContext) return;
       try {
-        const result = await sendMessage('SYSOP', body, subject);
+        const result = await sendMessage('SYSOP', body, subject, accountContext);
+        if (!isAccountCacheCurrent(accountContext)) return;
         if (result.success) {
           Alert.alert('举报已提交', `举报信息已通过站内信发送给系统管理员(SYSOP)，我们将尽快审核处理。`);
         } else {
           Alert.alert('举报失败', result.message || '发送站内信失败，请稍后重试');
         }
       } catch (error: any) {
+        if (!isAccountCacheCurrent(accountContext)) return;
         console.error('Report error:', error);
         if (error.message === 'LOGIN_EXPIRED') {
           Alert.alert('登录已过期', '请重新登录后再进行举报');
