@@ -17,6 +17,7 @@ import {setCache, setCacheWithTimestamp, getCache, getCacheWithTimestamp, getCac
 import {AccountCacheContext, getAccountCacheContext, isAccountCacheCurrent, readAccountSnapshot, writeAccountSnapshot, removeAccountSnapshotsForUser} from './accountCache';
 import {extractStaticAttachmentUrls, isImageAttachment, normalizeImageUrl} from '../utils/imageUtils';
 import {getCookies, getMSiteCookies, getMSiteResponseStatus, handleMSiteCookieExpired, triggerSilentMSiteReLogin} from './auth';
+import {reportLoginExpired} from './wapSession';
 import {cleanHtml} from '../utils/htmlParser';
 
 const WAP_BASE_URL = 'https://wap.newsmth.net';
@@ -80,6 +81,12 @@ const invalidateSocialGraphCache = (context: AccountCacheContext | null): void =
   clearCache('friendsList');
   clearCache('fansList');
   clearCache('otherUserInfo');
+};
+
+/** 登录失效错误；同时请求后台确认会话，确认失效后由 AuthContext 统一提示重新登录。 */
+const loginExpiredError = (): Error => {
+  reportLoginExpired();
+  return new Error('LOGIN_EXPIRED');
 };
 
 const isLoginExpiredApiResponse = (json: any): boolean => {
@@ -183,7 +190,7 @@ const fetchStaticAttachmentUrls = async (
     const response = await fetchWithRetry(url, {
       method: 'GET',
       headers,
-      credentials: 'include',
+      credentials: 'omit', // 只用当前账号自己的 M 站 Cookie；jar 里可能是 guest 或上一个账号的
       mode: 'cors',
     });
 
@@ -367,7 +374,7 @@ const fetchMSiteBoardPagePosts = async (boardName: string, page: number): Promis
       const response = await fetchWithRetry(url, {
         method: 'GET',
         headers,
-        credentials: 'include',
+        credentials: 'omit', // 只用当前账号自己的 M 站 Cookie；jar 里可能是 guest 或上一个账号的
       }, 10000);
 
       if (!response.ok) {
@@ -1173,7 +1180,7 @@ export const getFavoriteBoards = async (forceRefresh: boolean = false): Promise<
         // 清除本地登录状态
         // 注意：不在这里清除登录态，让上层UI决定如何处理
         // 登录态只在用户主动退出登录时才清除
-        throw new Error('LOGIN_EXPIRED');
+        throw loginExpiredError();
       }
 
       const json = await response.json();
@@ -1187,7 +1194,7 @@ export const getFavoriteBoards = async (forceRefresh: boolean = false): Promise<
         console.error('getFavoriteBoards: API返回错误，code:', json.code, 'message:', json.message);
         if (json.code === 401 || json.code === 403 || json.message?.includes('登录')) {
           // 注意：不在这里清除登录态，让上层UI决定如何处理
-          throw new Error('LOGIN_EXPIRED');
+          throw loginExpiredError();
         }
         throw new Error(json.message || 'API_ERROR');
       }
@@ -1259,7 +1266,7 @@ export const getFavoriteBoards = async (forceRefresh: boolean = false): Promise<
   } catch (error: any) {
     console.error('Get favorite boards error:', error);
     if (error.message?.includes('HTTP 401') || error.message?.includes('HTTP 403')) {
-      throw new Error('LOGIN_EXPIRED');
+      throw loginExpiredError();
     }
     // 登录相关错误需要抛出，让调用方处理
     if (error.message === 'NOT_LOGGED_IN' || error.message === 'LOGIN_EXPIRED') {
@@ -1439,7 +1446,7 @@ export const getBoardPosts = async (
     if (json.code !== 1 || (json.kbsCode !== 0 && json.kbsCode !== undefined)) {
       console.error('getBoardPosts API returned failure, code:', json.code, 'kbsCode:', json.kbsCode, 'message:', json.message);
       if (isLoginExpiredApiResponse(json)) {
-        throw new Error('LOGIN_EXPIRED');
+        throw loginExpiredError();
       }
       throw new Error(json.message || json.msg || `GET_BOARD_POSTS_FAILED_${json.code || 'UNKNOWN'}`);
     }
@@ -1569,7 +1576,7 @@ export const getBoardPosts = async (
       error.message?.includes('HTTP 401') ||
       error.message?.includes('HTTP 403')
     ) {
-      throw new Error('LOGIN_EXPIRED');
+      throw loginExpiredError();
     }
     throw error;
   }
@@ -1606,7 +1613,7 @@ export const getPostDetail = async (
     if (json.code !== 1) {
       console.error('getPostDetail API returned failure, code:', json.code, 'message:', json.message);
       if (isLoginExpiredApiResponse(json)) {
-        throw new Error('LOGIN_EXPIRED');
+        throw loginExpiredError();
       }
       if (isPostMissingApiResponse(json)) {
         return null;
@@ -1789,7 +1796,7 @@ export const getPostDetail = async (
       error.message?.includes('HTTP 401') ||
       error.message?.includes('HTTP 403')
     ) {
-      throw new Error('LOGIN_EXPIRED');
+      throw loginExpiredError();
     }
     throw error;
   }
@@ -1828,7 +1835,7 @@ export const getTopicReplies = async (
     if (json.code !== 1) {
       console.error('getTopicReplies API returned failure, code:', json.code, 'message:', json.message);
       if (isLoginExpiredApiResponse(json)) {
-        throw new Error('LOGIN_EXPIRED');
+        throw loginExpiredError();
       }
       throw new Error(json.message || json.msg || 'GET_TOPIC_REPLIES_FAILED');
     }
@@ -1915,7 +1922,7 @@ export const getTopicReplies = async (
       error.message?.includes('HTTP 401') ||
       error.message?.includes('HTTP 403')
     ) {
-      throw new Error('LOGIN_EXPIRED');
+      throw loginExpiredError();
     }
     throw error;
   }
@@ -2087,7 +2094,7 @@ export const getConversationMessages = async (
       console.error('getConversationMessages: Cookie已过期或无权限，状态码:', response.status);
       // 注意：不在这里清除登录态，让上层UI决定如何处理
       // 登录态只在用户主动退出登录时才清除
-      throw new Error('LOGIN_EXPIRED');
+      throw loginExpiredError();
     }
 
     const json = await response.json();
@@ -2099,7 +2106,7 @@ export const getConversationMessages = async (
       console.error('getConversationMessages: API返回错误，code:', json.code, 'message:', json.message);
       if (json.code === 401 || json.code === 403 || json.message?.includes('登录')) {
         // 注意：不在这里清除登录态，让上层UI决定如何处理
-        throw new Error('LOGIN_EXPIRED');
+        throw loginExpiredError();
       }
       throw new Error(json.message || 'API_ERROR');
     }
@@ -2226,7 +2233,7 @@ export const markMessageAsRead = async (
       console.error('markMessageAsRead: Cookie已过期或无权限');
       // 注意：不在这里清除登录态，让上层UI决定如何处理
       // 登录态只在用户主动退出登录时才清除
-      throw new Error('LOGIN_EXPIRED');
+      throw loginExpiredError();
     }
 
     const json = await response.json();
@@ -2298,7 +2305,7 @@ export const sendMessage = async (
       console.error('sendMessage: Cookie已过期或无权限');
       // 注意：不在这里清除登录态，让上层UI决定如何处理
       // 登录态只在用户主动退出登录时才清除
-      throw new Error('LOGIN_EXPIRED');
+      throw loginExpiredError();
     }
 
     const json = await response.json();
@@ -2360,7 +2367,7 @@ export const addFriend = async (
       console.error('addFriend: Cookie已过期或无权限');
       // 注意：不在这里清除登录态，让上层UI决定如何处理
       // 登录态只在用户主动退出登录时才清除
-      throw new Error('LOGIN_EXPIRED');
+      throw loginExpiredError();
     }
 
     const json = await response.json();
@@ -2422,7 +2429,7 @@ export const removeFriend = async (
       console.error('removeFriend: Cookie已过期或无权限');
       // 注意：不在这里清除登录态，让上层UI决定如何处理
       // 登录态只在用户主动退出登录时才清除
-      throw new Error('LOGIN_EXPIRED');
+      throw loginExpiredError();
     }
 
     const json = await response.json();
@@ -2493,7 +2500,7 @@ export const checkIsHerBlack = async (
       console.error('checkIsHerBlack: Cookie已过期或无权限');
       // 注意：不在这里清除登录态，让上层UI决定如何处理
       // 登录态只在用户主动退出登录时才清除
-      throw new Error('LOGIN_EXPIRED');
+      throw loginExpiredError();
     }
 
     const json = await response.json();
@@ -2567,7 +2574,7 @@ export const addBlack = async (
       console.error('addBlack: Cookie已过期或无权限');
       // 注意：不在这里清除登录态，让上层UI决定如何处理
       // 登录态只在用户主动退出登录时才清除
-      throw new Error('LOGIN_EXPIRED');
+      throw loginExpiredError();
     }
 
     const json = await response.json();
@@ -2628,7 +2635,7 @@ export const removeBlack = async (
       console.error('removeBlack: Cookie已过期或无权限');
       // 注意：不在这里清除登录态，让上层UI决定如何处理
       // 登录态只在用户主动退出登录时才清除
-      throw new Error('LOGIN_EXPIRED');
+      throw loginExpiredError();
     }
 
     const json = await response.json();
@@ -2751,7 +2758,7 @@ const fetchFriendsListFromAPI = async (
   if (response.status === 401 || response.status === 403) {
     console.error('getFriendsList: Cookie已过期或无权限');
     // 注意：不在这里清除登录态，让上层UI决定如何处理
-    throw new Error('LOGIN_EXPIRED');
+    throw loginExpiredError();
   }
 
   const json = await response.json();
@@ -2909,7 +2916,7 @@ const fetchFansListFromAPI = async (
   if (response.status === 401 || response.status === 403) {
     console.error('getFansList: Cookie已过期或无权限');
     // 注意：不在这里清除登录态，让上层UI决定如何处理
-    throw new Error('LOGIN_EXPIRED');
+    throw loginExpiredError();
   }
 
   const json = await response.json();
@@ -2999,7 +3006,7 @@ export const getMessages = async (_page: number = 0): Promise<Mail[]> => {
       console.error('getMessages: Cookie已过期或无权限，状态码:', response.status);
       // 注意：不在这里清除登录态，让上层UI决定如何处理
       // 登录态只在用户主动退出登录时才清除
-      throw new Error('LOGIN_EXPIRED');
+      throw loginExpiredError();
     }
 
     const json = await response.json();
@@ -3011,7 +3018,7 @@ export const getMessages = async (_page: number = 0): Promise<Mail[]> => {
       console.error('getMessages: API返回错误，code:', json.code, 'message:', json.message);
       if (json.code === 401 || json.code === 403 || json.message?.includes('登录')) {
         // 注意：不在这里清除登录态，让上层UI决定如何处理
-        throw new Error('LOGIN_EXPIRED');
+        throw loginExpiredError();
       }
       throw new Error(json.message || 'API_ERROR');
     }
@@ -3052,7 +3059,7 @@ export const getMessages = async (_page: number = 0): Promise<Mail[]> => {
   } catch (error: any) {
     console.error('Get messages error:', error);
     if (error.message?.includes('HTTP 401') || error.message?.includes('HTTP 403')) {
-      throw new Error('LOGIN_EXPIRED');
+      throw loginExpiredError();
     }
     throw error;
   }
@@ -3092,14 +3099,14 @@ export const getReplyNotifications = async (
   });
 
   if (response.status === 401 || response.status === 403) {
-    throw new Error('LOGIN_EXPIRED');
+    throw loginExpiredError();
   }
 
   const json = await response.json();
   if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
   if (json.code !== 1) {
     if (isLoginExpiredApiResponse(json)) {
-      throw new Error('LOGIN_EXPIRED');
+      throw loginExpiredError();
     }
     throw new Error(json.message || json.msg || 'GET_REPLY_NOTIFICATIONS_FAILED');
   }
@@ -3160,7 +3167,7 @@ export const markReplyNotificationAsRead = async (
       credentials: 'include',
     },
   );
-  if (response.status === 401 || response.status === 403) throw new Error('LOGIN_EXPIRED');
+  if (response.status === 401 || response.status === 403) throw loginExpiredError();
   const json = await response.json();
   if (!isAccountCacheCurrent(accountContext)) throw new Error('ACCOUNT_CHANGED');
   if (json.code !== 1 || (json.kbsCode !== 0 && json.kbsCode !== undefined)) {
@@ -3395,7 +3402,7 @@ export const getFavoriteTopics = async (
       throw error;
     }
     if (error.message === 'LOGIN_EXPIRED' || error.message?.includes('HTTP 401') || error.message?.includes('HTTP 403')) {
-      throw new Error('LOGIN_EXPIRED');
+      throw loginExpiredError();
     }
     
     if (error.message === '请求超时') {
@@ -3493,7 +3500,7 @@ const fetchBlackListFromAPI = async (
   if (response.status === 401 || response.status === 403) {
     console.error('getBlackList: Cookie已过期或无权限');
     // 注意：不在这里清除登录态，让上层UI决定如何处理
-    throw new Error('LOGIN_EXPIRED');
+    throw loginExpiredError();
   }
 
   const json = await response.json();

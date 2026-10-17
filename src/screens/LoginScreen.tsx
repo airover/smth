@@ -15,7 +15,7 @@ import {
 import {WebView} from 'react-native-webview';
 // 以下工具函数用于 WebView 登录流程
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {fetchAuthenticatedUsername, getWapAuthCookiesFromJar, restoreWapAuthCookieJar, setLoggedIn} from '../services/auth';
+import {fetchAuthenticatedUsername, getWapAuthCookiesFromJar, holdWapLogin, restoreWapAuthCookieJar, setLoggedIn} from '../services/auth';
 import {useNavigation, useRoute} from '@react-navigation/native';
 import {
   handleWebViewMessage,
@@ -83,9 +83,14 @@ const LoginScreen: React.FC<LoginScreenProps> = ({onLoginSuccess, initialCredent
   // 从多账号页重新登录某个账号时，预填该账号和它自己保存的密码。
   const reloginUsername: string | undefined = route.params?.reloginUsername;
   // 记录当前密码框是为哪个账号自动填入的，便于切换用户名时替换或清空。
-  const autofilledPasswordForRef = useRef<string | null>(null);
+  const autofilledPasswordForRef = useRef<string | null>(
+    initialCredentials?.password ? initialCredentials.username : null,
+  );
   const usernameRef = useRef(username);
   usernameRef.current = username;
+
+  // 登录过程中 jar 会暂存未提交的新账号 Cookie，期间暂停后台的 jar 校正。
+  useEffect(() => holdWapLogin(), []);
 
   // 在组件加载时，尝试获取保存的凭据（如果没有通过 props 传入）
   useEffect(() => {

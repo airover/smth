@@ -89,39 +89,89 @@ export const removeMSiteAccountData = async (username: string): Promise<void> =>
 
 let accountNameRecovery: Promise<string | null> | null = null;
 
-/** WebView 的 document.cookie 可能看不到 HttpOnly 认证 Cookie。 */
-export const getWapAuthCookiesFromJar = async (): Promise<string | null> => {
+type WapCookieAttrs = {domain?: string; path?: string};
+
+/** 读取 jar 里的 wap 认证 Cookie 及其 Domain/Path（Android 只能拿到值）。 */
+export const readWapAuthCookieJar = async (): Promise<{cookies: string | null; attrs: WapCookieAttrs}> => {
   try {
     const jar = await CookieManager.get('https://wap.newsmth.net');
-    const info = jar['kbs-info']?.value;
-    const key = jar['kbs-key']?.value;
-    return info && key ? `kbs-info=${info}; kbs-key=${key}` : null;
+    const info = jar['kbs-info'];
+    const key = jar['kbs-key'];
+    return {
+      cookies: info?.value && key?.value ? `kbs-info=${info.value}; kbs-key=${key.value}` : null,
+      attrs: {domain: key?.domain || undefined, path: key?.path || undefined},
+    };
   } catch (error) {
     console.error('[Auth] 读取主站 Cookie jar 失败:', error);
-    return null;
+    return {cookies: null, attrs: {}};
   }
 };
 
+/** WebView 的 document.cookie 可能看不到 HttpOnly 认证 Cookie。 */
+export const getWapAuthCookiesFromJar = async (): Promise<string | null> =>
+  (await readWapAuthCookieJar()).cookies;
+
+let wapSessionQueue: Promise<unknown> = Promise.resolve();
+
 /**
- * 仅向服务端确认当前 Cookie 对应的用户名，不修改本地登录状态。
+ * 串行化所有改动"当前账号 + 系统 jar"的操作（登录提交、切换、jar 校正、过期退出），
+ * 保证 username、AsyncStorage cookies 与 jar 始终指向同一账号。
+ */
+export const withWapSessionLock = <T,>(task: () => Promise<T>): Promise<T> => {
+  const run = wapSessionQueue.catch(() => undefined).then(task);
+  wapSessionQueue = run.catch(() => undefined);
+  return run;
+};
+
+let wapLoginHolds = 0;
+
+/** 登录页存活期间 jar 可能暂存未提交的新账号 Cookie，此时禁止后台校正 jar。 */
+export const holdWapLogin = (): (() => void) => {
+  wapLoginHolds += 1;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    wapLoginHolds -= 1;
+  };
+};
+
+export const isWapLoginHeld = (): boolean => wapLoginHolds > 0;
+
+export type AuthProbeResult =
+  | {status: 'ok'; name: string}
+  | {status: 'anonymous'}
+  | {status: 'error'};
+
+/**
+ * 用指定 Cookie 向服务端确认身份，区分"未登录"和"网络/未知错误"。
  * 必须 omit：带 credentials 时系统 cookie jar 会覆盖手动 Cookie 头，验证的就不是传入的凭证了。
  */
-export const fetchAuthenticatedUsername = async (cookies?: string): Promise<string | null> => {
-  const credential = cookies || await AsyncStorage.getItem(STORAGE_KEYS.COOKIES);
-  if (!credential) return null;
+export const probeAuthenticatedUsername = async (cookies: string): Promise<AuthProbeResult> => {
   try {
     const response = await fetchWithRetry('https://wap.newsmth.net/wap/api/profile', {
       method: 'POST',
-      headers: buildPostHeaders(credential, 'application/x-www-form-urlencoded'),
+      headers: buildPostHeaders(cookies, 'application/x-www-form-urlencoded'),
       credentials: 'omit',
     }, 10000, 0);
     const json = await response.json();
-    return json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)
-      ? json.data?.account?.name?.trim() || null : null;
+    const name = json.code === 1 && (json.kbsCode === 0 || json.kbsCode === undefined)
+      ? json.data?.account?.name?.trim() : null;
+    if (name) return {status: 'ok', name};
+    if (json.code === 401 || json.code === 403 || json.kbsCode === 7) return {status: 'anonymous'};
+    return {status: 'error'};
   } catch (error) {
     console.error('[Auth] 确认账号身份失败:', error);
-    return null;
+    return {status: 'error'};
   }
+};
+
+/** 仅向服务端确认当前 Cookie 对应的用户名，不修改本地登录状态。 */
+export const fetchAuthenticatedUsername = async (cookies?: string): Promise<string | null> => {
+  const credential = cookies || await AsyncStorage.getItem(STORAGE_KEYS.COOKIES);
+  if (!credential) return null;
+  const result = await probeAuthenticatedUsername(credential);
+  return result.status === 'ok' ? result.name : null;
 };
 
 /** Cookie 有效而用户名缺失时，使用服务端资料恢复账号身份。 */
@@ -186,10 +236,29 @@ export const extractWapAuthCookies = (raw: string | null | undefined): string | 
   return parts.every(Boolean) ? parts.join('; ') : null;
 };
 
+const WAP_COOKIE_ATTRS_KEY = 'wapCookieAttrs';
+const WAP_COOKIE_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000;
+
+/** 记住服务端签发 Cookie 的 Domain/Path，回写 jar 时保持一致，避免同名 Cookie 并存。 */
+const rememberWapCookieAttrs = async (attrs: WapCookieAttrs): Promise<void> => {
+  if (!attrs.domain && !attrs.path) return;
+  await AsyncStorage.setItem(WAP_COOKIE_ATTRS_KEY, JSON.stringify(attrs));
+};
+
+const loadWapCookieAttrs = async (): Promise<WapCookieAttrs> => {
+  try {
+    return JSON.parse(await AsyncStorage.getItem(WAP_COOKIE_ATTRS_KEY) || '{}') || {};
+  } catch {
+    return {};
+  }
+};
+
 /**
  * 让系统 cookie jar 里的 wap 认证 Cookie 与指定账号一致；传 null 时只清除。
  * RN fetch 带 credentials 时 jar 优先于手动设置的 Cookie 头，
  * 不同步的话切换账号后请求仍以 jar 里的旧账号身份发出。
+ * 写入的是带 Expires 的持久 Cookie：会话 Cookie 在进程被回收后丢失，会退回到可能过期的本地副本。
+ * 调用方需持有 withWapSessionLock。
  */
 export const syncWapAuthCookieJar = async (cookies: string | null): Promise<void> => {
   for (const name of WAP_AUTH_COOKIE_NAMES) {
@@ -205,28 +274,35 @@ export const syncWapAuthCookieJar = async (cookies: string | null): Promise<void
   }
   const authCookies = extractWapAuthCookies(cookies);
   if (authCookies) {
+    const {domain, path} = await loadWapCookieAttrs();
+    // iOS 中仅主机 Cookie 的 domain 不带前导点；只有父域 Cookie 才需要显式写 Domain。
+    const domainAttr = domain?.startsWith('.') ? `; Domain=${domain}` : '';
+    const expires = new Date(Date.now() + WAP_COOKIE_LIFETIME_MS).toUTCString();
     for (const part of authCookies.split('; ')) {
-      await CookieManager.setFromResponse(WAP_URL, `${part}; Path=/`);
+      await CookieManager.setFromResponse(WAP_URL, `${part}; Path=${path || '/'}; Expires=${expires}${domainAttr}`);
     }
   }
   if (Platform.OS === 'android') await CookieManager.flush();
 };
 
 /** 放弃未提交的登录时，把 jar 恢复为本地已提交账号的凭证。 */
-export const restoreWapAuthCookieJar = async (): Promise<void> => {
+export const restoreWapAuthCookieJar = (): Promise<void> => withWapSessionLock(async () => {
   try {
     const [loginStatus, cookies] = await AsyncStorage.multiGet([STORAGE_KEYS.IS_LOGGED_IN, STORAGE_KEYS.COOKIES])
       .then(entries => entries.map(([, value]) => value));
-    await syncWapAuthCookieJar(loginStatus === 'true' ? cookies : null);
+    const target = loginStatus === 'true' ? extractWapAuthCookies(cookies) : null;
+    // jar 已经是已提交账号的凭证时不要重写，保留服务端签发的原始属性。
+    if (target && (await readWapAuthCookieJar()).cookies === target) return;
+    await syncWapAuthCookieJar(target);
   } catch (error) {
     console.error('[Auth] 恢复主站 Cookie jar 失败:', error);
   }
-};
+});
 
 /**
  * 设置登录状态
  */
-export const setLoggedIn = async (username: string, cookies: string): Promise<void> => {
+export const setLoggedIn = (username: string, cookies: string): Promise<void> => withWapSessionLock(async () => {
   try {
     if (!username.trim() || !cookies) throw new Error('MISSING_ACCOUNT_IDENTITY');
     const authCookies = extractWapAuthCookies(cookies);
@@ -236,7 +312,13 @@ export const setLoggedIn = async (username: string, cookies: string): Promise<vo
       invalidateMSiteLogin();
       await clearMSiteCookieJar();
     }
-    await syncWapAuthCookieJar(authCookies);
+    const jar = await readWapAuthCookieJar();
+    if (jar.cookies === authCookies) {
+      // 刚登录时 jar 里就是服务端签发的这份 Cookie，保留其原始属性和续期能力。
+      await rememberWapCookieAttrs(jar.attrs);
+    } else {
+      await syncWapAuthCookieJar(authCookies);
+    }
     await AsyncStorage.multiSet([
       [STORAGE_KEYS.USERNAME, username.trim()],
       [STORAGE_KEYS.COOKIES, authCookies],
@@ -247,7 +329,7 @@ export const setLoggedIn = async (username: string, cookies: string): Promise<vo
     console.error('Set logged in error:', error);
     throw error;
   }
-};
+});
 
 /**
  * 登出
@@ -475,7 +557,8 @@ export const getMSiteResponseStatus = (html: string, expectedUsername: string):
   if (!html) return 'unknown';
   if (html.includes('您无权阅读此版面')) return 'anonymous';
   const link = html.match(/<a\b[^>]*href\s*=\s*["'][^"']*\/user\/logout(?:[?/#][^"']*)?["'][^>]*>([\s\S]*?)<\/a>/i);
-  if (!link) return /id=["']loginForm["']|\/user\/login/.test(html) ? 'anonymous' : 'unknown';
+  // 未登录访问 /favor 等页面只显示"您未登录,请登录后继续操作"，没有登录表单。
+  if (!link) return /id=["']loginForm["']|\/user\/login|您未登录/.test(html) ? 'anonymous' : 'unknown';
   const label = link[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/gi, ' ').trim();
   const name = label.match(/注销\s*[（(]\s*([^（）()]+?)\s*[）)]/);
   if (!name) return 'unknown';
@@ -588,14 +671,10 @@ export const clearMSiteCookieJar = async (): Promise<void> => {
           // iOS: 使用 clearByName 彻底删除 cookie
           await CookieManager.clearByName(M_SITE_URL, name);
         } else {
-          // Android: 没有 clearByName，用设置过期方式
-          await CookieManager.set(M_SITE_URL, {
-            name,
-            value: '',
-            domain: '.newsmth.net',
-            path: '/',
-            expires: new Date(0).toISOString(),
-          });
+          // Android: 没有 clearByName；仅主机、m 域、父域三种写法都要过期，否则残留上一个账号的会话。
+          for (const domain of ['', '; Domain=m.newsmth.net', '; Domain=.newsmth.net']) {
+            await CookieManager.setFromResponse(M_SITE_URL, `${name}=; Path=/; Max-Age=0${domain}`);
+          }
         }
         clearedNames.push(name);
       } catch (_e) {
@@ -735,7 +814,7 @@ const doMSiteKeepAlive = async (): Promise<void> => {
         'Accept-Language': 'zh-CN,zh;q=0.9',
         'Referer': 'https://m.newsmth.net/favor',
       },
-      credentials: 'include',
+      credentials: 'omit', // 只用当前账号自己的 M 站 Cookie；jar 里可能是 guest 或上一个账号的
       signal: controller.signal,
     } as any);
 

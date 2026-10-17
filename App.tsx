@@ -25,7 +25,7 @@ const EmptyScreen = () => {
 const RootStack = createNativeStackNavigator();
 
 const AppContent = () => {
-  const {isLoggedIn, isLoading: authLoading, login} = useAuth();
+  const {isLoggedIn, isLoading: authLoading, reloginCredentials, login} = useAuth();
   const {settings} = useSettings();
   const [appReady, setAppReady] = useState(false);
   const [preloadedCredentials, setPreloadedCredentials] = useState<{
@@ -140,7 +140,7 @@ const AppContent = () => {
               {() => (
                 <LoginScreen
                   onLoginSuccess={login}
-                  initialCredentials={preloadedCredentials}
+                  initialCredentials={reloginCredentials || preloadedCredentials}
                 />
               )}
             </RootStack.Screen>
