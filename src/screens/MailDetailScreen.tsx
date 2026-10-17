@@ -18,6 +18,7 @@ import {Mail} from '../types';
 import {formatRelativeTime} from '../utils/timeFormat';
 import ImageWithPlaceholder from '../components/ImageWithPlaceholder';
 import {getConversationMessages, markMessageAsRead, sendMessage} from '../services/api';
+import {applyMailConversationRead, refreshUnreadCounts} from '../services/unreadCounts';
 import {AccountCacheContext, getAccountCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
 import {useTheme} from '../components/ThemedComponents';
 import {useFloatingHeader} from '../components/ThemeHeader';
@@ -287,12 +288,13 @@ const MailDetailScreen: React.FC = () => {
     
     // 只在有未读消息时才标记已读
     if (mail.unread > 0) {
-      void getAccountCacheContext().then(accountContext => {
-        if (accountContext && isAccountCacheCurrent(accountContext)) {
-          return markMessageAsRead(speakerId, accountContext);
-        }
-        return undefined;
-      }).catch(error => console.error('[MailDetail] 标记已读失败:', error));
+      void getAccountCacheContext().then(async accountContext => {
+        if (!accountContext || !isAccountCacheCurrent(accountContext)) return;
+        const result = await markMessageAsRead(speakerId, accountContext);
+        if (result.success) applyMailConversationRead(accountContext, mail.unread);
+      }).catch(error => console.error('[MailDetail] 标记已读失败:', error))
+        // 以服务端为准对账，也让消息中心列表返回时拿到已读后的状态。
+        .finally(() => { void refreshUnreadCounts({force: true}); });
     }
   }, [loadMessages, speakerId, mail.unread]);
 

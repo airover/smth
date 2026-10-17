@@ -8,7 +8,6 @@ import {
   Alert,
   ScrollView,
   ActivityIndicator,
-  KeyboardAvoidingView,
   Platform,
   Image,
   Modal,
@@ -121,6 +120,11 @@ const CreatePostScreen: React.FC = () => {
   // 键盘工具栏ID - 使用useRef生成唯一ID，确保组件实例间不冲突，且在组件生命周期内保持不变
   const inputAccessoryViewID = useRef(`createPostKeyboardAccessory_${Date.now()}`).current;
   const contentInputRef = useRef<TextInput>(null);
+  const scrollViewRef = useRef<ScrollView>(null);
+  const scrollOffsetRef = useRef(0);
+  const keyboardTopRef = useRef<number | null>(null);
+  const contentFocusedRef = useRef(false);
+  const contentSelectionEndRef = useRef(0);
   const draftLoadGenerationRef = useRef(0);
   const submitGenerationRef = useRef(0);
 
@@ -234,6 +238,41 @@ const CreatePostScreen: React.FC = () => {
     setDeletedAttachmentNames([]);
     setSubmitting(false);
   }), []);
+
+  // 记录键盘顶部位置，用于让正文末尾始终处于可见区域
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillChangeFrame' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, e => {
+      keyboardTopRef.current = e.endCoordinates.screenY;
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      keyboardTopRef.current = null;
+    });
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  // 正文输入框随内容增高（自身不滚动），在末尾输入时让外层 ScrollView 跟随，避免光标被键盘遮挡。
+  // Android 由 adjustResize + 系统 requestRectangleOnScreen 处理，这里只补 iOS。
+  const keepContentCaretVisible = useCallback(() => {
+    if (Platform.OS !== 'ios' || !contentFocusedRef.current || keyboardTopRef.current == null) return;
+    if (contentSelectionEndRef.current < content.length) return;
+    requestAnimationFrame(() => {
+      contentInputRef.current?.measureInWindow((_x, y, _width, height) => {
+        const keyboardTop = keyboardTopRef.current;
+        if (keyboardTop == null) return;
+        // 输入框底部留有图片按钮的空白，按文本末行计算可见性
+        const textBottom = y + height - responsiveSize(44, 48, 52, 56) + SPACING.md;
+        const overflow = textBottom - (keyboardTop - SPACING.md);
+        if (overflow > 0) {
+          scrollViewRef.current?.scrollTo({y: scrollOffsetRef.current + overflow, animated: true});
+        }
+      });
+    });
+  }, [content.length]);
 
   // 自动保存草稿（编辑模式下不保存草稿）
   useEffect(() => {
@@ -826,11 +865,17 @@ const CreatePostScreen: React.FC = () => {
         onApply={handleAiReplyApply}
       />
       
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.container}>
-
-        <ScrollView style={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        ref={scrollViewRef}
+        style={styles.content}
+        contentContainerStyle={styles.contentContainer}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'none'}
+        automaticallyAdjustKeyboardInsets
+        onScroll={e => {
+          scrollOffsetRef.current = e.nativeEvent.contentOffset.y;
+        }}
+        scrollEventThrottle={16}>
           {/* 键盘工具栏 - 移到ScrollView内部，确保与TextInput在同一渲染上下文中，提高稳定性（编辑模式下不显示） */}
           {Platform.OS === 'ios' && (
             <InputAccessoryView nativeID={inputAccessoryViewID}>
@@ -864,7 +909,10 @@ const CreatePostScreen: React.FC = () => {
               placeholderTextColor={theme.secondaryText}
               maxLength={80}
               returnKeyType="next"
+              submitBehavior="submit"
+              onSubmitEditing={() => contentInputRef.current?.focus()}
               editable={!submitting}
+              inputAccessoryViewID={inputAccessoryViewID}
             />
             <Text style={styles.counter}>{title.length}/80</Text>
           </View>
@@ -897,10 +945,21 @@ const CreatePostScreen: React.FC = () => {
                 placeholder="请输入内容"
                 placeholderTextColor={theme.secondaryText}
                 multiline
+                scrollEnabled={false}
                 textAlignVertical="top"
                 maxLength={10000}
                 editable={!submitting}
                 inputAccessoryViewID={inputAccessoryViewID}
+                onFocus={() => {
+                  contentFocusedRef.current = true;
+                }}
+                onBlur={() => {
+                  contentFocusedRef.current = false;
+                }}
+                onSelectionChange={e => {
+                  contentSelectionEndRef.current = e.nativeEvent.selection.end;
+                }}
+                onContentSizeChange={keepContentCaretVisible}
               />
               {/* 图片选择按钮（左下角） */}
               <TouchableOpacity
@@ -1016,8 +1075,7 @@ const CreatePostScreen: React.FC = () => {
               </>
             )}
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+      </ScrollView>
     </View>
   );
 };
@@ -1032,7 +1090,10 @@ const createStyles = (theme: ThemeColors, fontSizes: ReturnType<typeof getFontSi
   },
   content: {
     flex: 1,
+  },
+  contentContainer: {
     padding: SPACING.lg,
+    paddingBottom: SPACING.xxxl,
   },
   boardInfo: {
     flexDirection: 'row',
@@ -1096,8 +1157,7 @@ const createStyles = (theme: ThemeColors, fontSizes: ReturnType<typeof getFontSi
     color: theme.text,
     borderWidth: 1,
     borderColor: theme.border,
-    minHeight: responsiveSize(180, 200, 220, 250),
-    maxHeight: responsiveSize(350, 400, 450, 500),
+    minHeight: responsiveSize(220, 240, 260, 300),
   },
   imagePickerButton: {
     position: 'absolute',
