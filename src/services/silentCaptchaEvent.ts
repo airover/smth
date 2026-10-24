@@ -1,9 +1,7 @@
 /**
- * 静默验证码事件通信模块
- * 
- * 用于 auth.ts（服务层）和 SilentCaptchaWebView（UI 组件）之间的通信：
- * 1. auth.ts 发起请求 → SilentCaptchaWebView 加载极验 SDK 完成无感验证
- * 2. SilentCaptchaWebView 返回验证结果 → auth.ts 继续登录流程
+ * 静默验证码事件通信模块。
+ * 登录、发帖/回复可指定各自的 GeeTest ID 和超时；静默通过时返回服务端票据，
+ * 失败/超时由调用方决定是否打开可交互的验证码界面。
  */
 
 type CaptchaResult = {
@@ -18,20 +16,33 @@ type CaptchaResult = {
   error?: string;
 };
 
+export const DEFAULT_LOGIN_CAPTCHA_ID = 'b01299f3ff24047dc399e650eec51a81';
+
+export type SilentCaptchaRequest = {
+  captchaId: string;
+  timeoutMs: number;
+};
+
 type CaptchaRequestCallback = (result: CaptchaResult) => void;
+type CaptchaRequestHandler = (request: SilentCaptchaRequest) => void;
 
 // 当前等待中的验证码请求回调
 let pendingCallback: CaptchaRequestCallback | null = null;
 
 // UI 组件注册的处理器（当收到请求时触发 WebView 加载）
-let requestHandler: (() => void) | null = null;
+let requestHandler: CaptchaRequestHandler | null = null;
+let cancelActiveRequest: (() => void) | null = null;
 
 /**
  * 【服务层调用】请求静默验证码
  * 返回一个 Promise，在验证完成或超时后 resolve
- * @param timeoutMs 超时时间（毫秒），超时后静默放弃
+ * @param timeoutMs 超时时间（毫秒），超时后回退到可见验证
+ * @param captchaId 当前操作对应的 GeeTest ID；缺省为 M 站登录验证码
  */
-export const requestSilentCaptcha = (timeoutMs: number = 15000): Promise<CaptchaResult> => {
+export const requestSilentCaptcha = (
+  timeoutMs: number = 15000,
+  captchaId: string = DEFAULT_LOGIN_CAPTCHA_ID,
+): Promise<CaptchaResult> => {
   return new Promise((resolve) => {
     // 如果已有等待中的请求，直接返回失败
     if (pendingCallback) {
@@ -42,9 +53,9 @@ export const requestSilentCaptcha = (timeoutMs: number = 15000): Promise<Captcha
     // 设置超时
     const timer = setTimeout(() => {
       if (pendingCallback) {
-        console.log('[静默验证码] ⏰ 超时，静默放弃');
-        pendingCallback = null;
-        resolve({ success: false, error: '验证码超时' });
+        console.log('[静默验证码] ⏰ 超时，回退到可见验证');
+        pendingCallback({ success: false, error: '验证码超时' });
+        cancelActiveRequest?.();
       }
     }, timeoutMs);
 
@@ -57,7 +68,7 @@ export const requestSilentCaptcha = (timeoutMs: number = 15000): Promise<Captcha
 
     // 通知 UI 组件开始加载验证码
     if (requestHandler) {
-      requestHandler();
+      requestHandler({ captchaId, timeoutMs });
     } else {
       // UI 组件未注册，直接返回失败
       clearTimeout(timer);
@@ -71,12 +82,17 @@ export const requestSilentCaptcha = (timeoutMs: number = 15000): Promise<Captcha
  * 【UI 组件调用】注册请求处理器
  * SilentCaptchaWebView 在挂载时调用，注册自己为处理器
  */
-export const registerCaptchaHandler = (handler: () => void): (() => void) => {
+export const registerCaptchaHandler = (
+  handler: CaptchaRequestHandler,
+  cancelHandler: () => void,
+): (() => void) => {
   requestHandler = handler;
+  cancelActiveRequest = cancelHandler;
   return () => {
     // 返回取消注册函数
     if (requestHandler === handler) {
       requestHandler = null;
+      cancelActiveRequest = null;
     }
   };
 };

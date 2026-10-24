@@ -20,6 +20,7 @@ import {
 import ImageCropPicker from 'react-native-image-crop-picker';
 import {useNavigation, useRoute} from '@react-navigation/native';
 import {createPost, replyPost, updateArticle, getDraft, saveDraft, clearDraft, checkPublish, getUploadToken, getArticleFileToken, deleteUploadedFiles, uploadImages, buildCreatePostReferer, buildReplyPostReferer} from '../services/postApi';
+import {requestSilentCaptcha} from '../services/silentCaptchaEvent';
 import PostCaptchaScreen from './PostCaptchaScreen';
 import {
   SPACING,
@@ -32,7 +33,7 @@ import {ThemedHeaderButton, useFloatingHeader} from '../components/ThemeHeader';
 import {useTheme} from '../components/ThemedComponents';
 import {useSettings} from '../context/SettingsContext';
 import {getCardElevation, getFontSizes, ThemeColors} from '../utils/theme';
-import {CameraIcon, ImageIcon, CheckCircleIcon, CheckIcon, LightbulbIcon, TrashIcon, SaveIcon, SendIcon, FileIcon} from '../components/SvgIcons';
+import {CameraIcon, ImageIcon, CheckIcon, LightbulbIcon, TrashIcon, SaveIcon, SendIcon, FileIcon} from '../components/SvgIcons';
 import {notifySuccess} from '../utils/haptics';
 import {Attachment} from '../types';
 import {AccountCacheContext, getLocalCacheContext, isAccountCacheCurrent, subscribeAccountCacheChange} from '../services/accountCache';
@@ -63,6 +64,9 @@ interface RouteParams {
   editContent?: string; // 编辑模式下的原始内容
   editAttachments?: Attachment[]; // 编辑模式下的原始附件
 }
+
+const GEETEST_POST_CAPTCHA_ID = 'ade4a85345062fda4657d64aa3206cba';
+const SILENT_POST_CAPTCHA_TIMEOUT_MS = 8000;
 
 const getAttachmentFileName = (attachment: Attachment): string | null => {
   const rawAttachment = attachment as Attachment & {
@@ -96,6 +100,7 @@ const CreatePostScreen: React.FC = () => {
   const [captchaTicket, setCaptchaTicket] = useState<string | null>(null);
   const [captchaRandstr, setCaptchaRandstr] = useState<string | null>(null);
   const [captchaVerified, setCaptchaVerified] = useState(false); // 验证码是否已验证
+  const [silentCaptchaChecking, setSilentCaptchaChecking] = useState(false);
   const [selectedImages, setSelectedImages] = useState<any[]>([]); // 选中的图片asset对象列表
   const [uploadToken, setUploadToken] = useState<string | null>(null); // 上传token（多个图片共用）
   const [uploading, setUploading] = useState(false); // 是否正在上传图片
@@ -127,6 +132,9 @@ const CreatePostScreen: React.FC = () => {
   const contentSelectionEndRef = useRef(0);
   const draftLoadGenerationRef = useRef(0);
   const submitGenerationRef = useRef(0);
+  const captchaSubmitPendingRef = useRef(false);
+  const submitInFlightRef = useRef(false);
+  const submitActionRef = useRef<(() => Promise<void>) | null>(null);
 
   // 设置导航栏
   const setHeaderOptions = useFloatingHeader();
@@ -135,10 +143,10 @@ const CreatePostScreen: React.FC = () => {
       title: isEditMode ? '编辑' : (isReplyMode ? '回复' : '发帖'),
       headerRight: () => (
         <ThemedHeaderButton
-          onPress={handleSubmit}
-          accessibilityLabel={isEditMode ? '保存帖子' : '发布帖子'}
-          style={submitting ? {opacity: 0.5} : undefined}>
-          {submitting ? (
+          onPress={() => submitActionRef.current?.()}
+          accessibilityLabel={isEditMode ? '保存帖子' : (isReplyMode ? '回复帖子' : '发布帖子')}
+          style={submitting || silentCaptchaChecking ? {opacity: 0.5} : undefined}>
+          {submitting || silentCaptchaChecking ? (
             <ActivityIndicator size="small" color={theme.primary} />
           ) : (
             isEditMode ? (
@@ -150,7 +158,7 @@ const CreatePostScreen: React.FC = () => {
         </ThemedHeaderButton>
       ),
     });
-  }, [navigation, isReplyMode, isEditMode, submitting, title, content, captchaVerified, captchaTicket, captchaRandstr, selectedImages, uploadToken, uploading, existingAttachments, deletedAttachmentNames, theme, styles]);
+  }, [navigation, setHeaderOptions, isReplyMode, isEditMode, submitting, silentCaptchaChecking, title, content, captchaVerified, captchaTicket, captchaRandstr, selectedImages, uploadToken, uploading, existingAttachments, deletedAttachmentNames, theme, styles]);
 
   // 加载当前账号的草稿 / 编辑模式原始内容。
   const loadDraftForCurrentContext = useCallback(async () => {
@@ -222,6 +230,8 @@ const CreatePostScreen: React.FC = () => {
   useEffect(() => subscribeAccountCacheChange(() => {
     draftLoadGenerationRef.current += 1;
     submitGenerationRef.current += 1;
+    captchaSubmitPendingRef.current = false;
+    submitInFlightRef.current = false;
     setDraftContext(null);
     setAccountChanged(true);
     setLoadingDraft(false);
@@ -234,10 +244,17 @@ const CreatePostScreen: React.FC = () => {
     setCaptchaTicket(null);
     setCaptchaRandstr(null);
     setCaptchaVerified(false);
+    setSilentCaptchaChecking(false);
     setExistingAttachments([]);
     setDeletedAttachmentNames([]);
     setSubmitting(false);
   }), []);
+
+  // 离开发帖页面时使尚未完成的静默验证失效，避免返回后意外提交。
+  useEffect(() => () => {
+    captchaSubmitPendingRef.current = false;
+    submitGenerationRef.current += 1;
+  }, []);
 
   // 记录键盘顶部位置，用于让正文末尾始终处于可见区域
   useEffect(() => {
@@ -292,7 +309,8 @@ const CreatePostScreen: React.FC = () => {
     }
   }, [title, content, params.boardId, params.boardName, isReplyMode, isEditMode, loadingDraft, draftContext]);
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (captchaOverride?: {ticket: string; randstr: string}) => {
+    if (submitting || submitInFlightRef.current || (captchaSubmitPendingRef.current && !captchaOverride)) return;
     if (accountChanged || !draftContext || !isAccountCacheCurrent(draftContext)) {
       Alert.alert('账号已切换', '请返回后重新进入发帖页面');
       return;
@@ -310,25 +328,69 @@ const CreatePostScreen: React.FC = () => {
       return;
     }
 
-    // 编辑模式不需要验证码
-    if (!isEditMode && (!captchaVerified || !captchaTicket || !captchaRandstr)) {
-      Alert.alert('提示', '请先完成人机验证');
+    // 新发帖/回复必须完成原有验证码；从发布按钮进入时自动打开验证面板。
+    const effectiveCaptchaTicket = captchaOverride?.ticket ?? captchaTicket;
+    const effectiveCaptchaRandstr = captchaOverride?.randstr ?? captchaRandstr;
+    const hasCaptchaResult = captchaOverride
+      ? Boolean(captchaOverride.ticket && captchaOverride.randstr)
+      : Boolean(captchaVerified && effectiveCaptchaTicket && effectiveCaptchaRandstr);
+    if (!isEditMode && !hasCaptchaResult) {
+      captchaSubmitPendingRef.current = true;
+      setSilentCaptchaChecking(true);
+
+      let silentTicket: string | null = null;
+      let silentRandstr: string | null = null;
+      try {
+        const result = await requestSilentCaptcha(
+          SILENT_POST_CAPTCHA_TIMEOUT_MS,
+          GEETEST_POST_CAPTCHA_ID,
+        );
+        const captcha = result.captchaParams;
+        if (result.success && captcha
+          && captcha.lot_number && captcha.captcha_output
+          && captcha.pass_token && captcha.gen_time) {
+          silentTicket = [
+            captcha.lot_number,
+            captcha.captcha_output,
+            captcha.pass_token,
+            captcha.gen_time,
+          ].join('|');
+          silentRandstr = captcha.lot_number;
+        }
+      } catch (error) {
+        console.log('[发帖静默验证码] 尝试失败，转为可见验证:', error);
+      }
+
+      if (requestGeneration !== submitGenerationRef.current
+        || !captchaSubmitPendingRef.current
+        || !isAccountCacheCurrent(submitContext)) {
+        if (requestGeneration === submitGenerationRef.current) setSilentCaptchaChecking(false);
+        return;
+      }
+
+      setSilentCaptchaChecking(false);
+      if (silentTicket && silentRandstr) {
+        await handleCaptchaSuccess(silentTicket, silentRandstr);
+      } else {
+        // 只有官方 SDK 静默通过时才自动提交；否则展示可交互挑战。
+        setShowCaptchaModal(true);
+      }
       return;
     }
 
-    // 新发帖时，选中的图片需要先完成上传；编辑模式会在保存时统一处理附件。
-    if (!isEditMode && selectedImages.length > 0 && (!uploadToken || uploading)) {
-      Alert.alert('提示', uploading ? '图片正在上传中，请稍候' : '请先完成人机验证以上传图片');
+    // 图片随提交流程上传；若正在上传则阻止重复提交。
+    if (!isEditMode && selectedImages.length > 0 && uploading) {
+      Alert.alert('提示', '图片正在上传中，请稍候');
       return;
     }
 
     // 解析验证码参数（编辑模式不需要）
     let captchaParams;
-    if (!isEditMode && captchaTicket) {
-      const parts = captchaTicket.split('|');
+    if (!isEditMode && effectiveCaptchaTicket) {
+      const parts = effectiveCaptchaTicket.split('|');
       if (parts.length >= 4) {
         captchaParams = {
-          captcha_id: 'ade4a85345062fda4657d64aa3206cba', // 发帖专用的captcha_id
+          captcha_id: GEETEST_POST_CAPTCHA_ID,
           lot_number: parts[0],
           captcha_output: parts[1],
           pass_token: parts[2],
@@ -337,8 +399,16 @@ const CreatePostScreen: React.FC = () => {
       }
     }
 
+    let submitUploadToken = uploadToken || undefined;
+    submitInFlightRef.current = true;
     setSubmitting(true);
     try {
+      if (!isEditMode && selectedImages.length > 0 && !submitUploadToken) {
+        submitUploadToken = (await handleUploadImages()) || undefined;
+        if (!submitUploadToken) return;
+        if (requestGeneration !== submitGenerationRef.current || !isAccountCacheCurrent(submitContext)) return;
+      }
+
       if (isEditMode) {
         // 编辑模式：在同一个附件 token 上先删除旧附件、再上传新增图片，最后更新文章。
         const articleId = params.articleId!;
@@ -387,7 +457,7 @@ const CreatePostScreen: React.FC = () => {
           reId: params.reId,
           topicId: params.topicId,
           captchaParams, // 传递验证码参数
-          uploadToken: uploadToken || undefined, // 传递图片上传token
+          uploadToken: submitUploadToken, // 传递图片上传token
         };
 
         await (isReplyMode
@@ -424,11 +494,14 @@ const CreatePostScreen: React.FC = () => {
         setCaptchaVerified(false);
       }
     } finally {
-      if (requestGeneration === submitGenerationRef.current && isAccountCacheCurrent(submitContext)) {
-        setSubmitting(false);
+      if (requestGeneration === submitGenerationRef.current) {
+        submitInFlightRef.current = false;
+        if (isAccountCacheCurrent(submitContext)) setSubmitting(false);
       }
     }
   };
+
+  submitActionRef.current = handleSubmit;
 
   const handleAiReplyApply = (generatedText: string, mode: 'replace' | 'prepend' | 'append') => {
     const generated = generatedText.trim();
@@ -455,26 +528,27 @@ const CreatePostScreen: React.FC = () => {
     }
   };
 
-  // 验证码验证成功
+  // 验证码验证成功后，自动续交用户刚才发起的发帖/回复。
   const handleCaptchaSuccess = async (ticket: string, randstr: string) => {
+    if (!captchaSubmitPendingRef.current) return;
+    captchaSubmitPendingRef.current = false;
+    setSilentCaptchaChecking(false);
     setCaptchaTicket(ticket);
     setCaptchaRandstr(randstr);
     setCaptchaVerified(true);
     setShowCaptchaModal(false);
-    
-    // 延迟关闭键盘，确保Modal完全关闭后再执行，避免焦点自动回到输入框
+
     setTimeout(() => {
       Keyboard.dismiss();
     }, 300);
 
-    // 如果有选中的图片，自动开始上传
-    if (selectedImages.length > 0 && !uploadToken) {
-      await handleUploadImages();
-    }
+    await handleSubmit({ticket, randstr});
   };
 
-  // 验证码取消
+  // 用户关闭验证码时取消待续交动作，避免稍后意外发帖。
   const handleCaptchaCancel = () => {
+    captchaSubmitPendingRef.current = false;
+    setSilentCaptchaChecking(false);
     setShowCaptchaModal(false);
   };
 
@@ -647,12 +721,12 @@ const CreatePostScreen: React.FC = () => {
   };
 
   // 上传图片（批量上传）
-  const handleUploadImages = async () => {
+  const handleUploadImages = async (): Promise<string | null> => {
     const uploadContext = draftContext;
-    if (accountChanged || !uploadContext || !isAccountCacheCurrent(uploadContext)) return;
+    if (accountChanged || !uploadContext || !isAccountCacheCurrent(uploadContext)) return null;
 
     if (selectedImages.length === 0) {
-      return;
+      return null;
     }
 
     // 验证图片asset对象
@@ -665,7 +739,7 @@ const CreatePostScreen: React.FC = () => {
     
     if (validImages.length === 0) {
       Alert.alert('提示', '没有有效的图片可上传');
-      return;
+      return null;
     }
 
     setUploading(true);
@@ -677,15 +751,15 @@ const CreatePostScreen: React.FC = () => {
 
       // 先检查发帖权限
       await checkPublish(params.boardId, pageReferer, uploadContext);
-      if (!isAccountCacheCurrent(uploadContext)) return;
+      if (!isAccountCacheCurrent(uploadContext)) return null;
       
       // 回复场景请求一次 token；新发帖保留 WAP 的两次 token 请求流程。
       const firstToken = await getUploadToken(params.boardId, pageReferer, uploadContext);
-      if (!isAccountCacheCurrent(uploadContext)) return;
+      if (!isAccountCacheCurrent(uploadContext)) return null;
       const uploadTokenForRequest = isReplyMode
         ? firstToken
         : await getUploadToken(params.boardId, pageReferer, uploadContext);
-      if (!isAccountCacheCurrent(uploadContext)) return;
+      if (!isAccountCacheCurrent(uploadContext)) return null;
       
       // 批量上传所有图片（一次HTTP请求），并监听进度
       await uploadImages(
@@ -699,15 +773,17 @@ const CreatePostScreen: React.FC = () => {
         uploadContext,
       );
 
-      if (!isAccountCacheCurrent(uploadContext)) return;
+      if (!isAccountCacheCurrent(uploadContext)) return null;
       setUploadToken(uploadTokenForRequest);
       setUploadProgress(100);
+      return uploadTokenForRequest;
     } catch (error: any) {
-      if (!isAccountCacheCurrent(uploadContext) || error.message === 'ACCOUNT_CHANGED') return;
+      if (!isAccountCacheCurrent(uploadContext) || error.message === 'ACCOUNT_CHANGED') return null;
       console.error('上传图片失败:', error);
       console.error('错误堆栈:', error.stack);
       setUploadProgress(0);
       Alert.alert('失败', '上传图片失败: ' + error.message);
+      return null;
     } finally {
       if (isAccountCacheCurrent(uploadContext)) setUploading(false);
     }
@@ -1028,32 +1104,6 @@ const CreatePostScreen: React.FC = () => {
             </View>
           )}
 
-          {/* 人机验证（编辑模式下不显示） */}
-          {!isEditMode && <View style={styles.inputGroup}>
-            <TouchableOpacity
-              style={[
-                styles.captchaButton,
-                {
-                  backgroundColor: captchaVerified ? theme.quoteBackground : theme.placeholderBackground,
-                  borderColor: captchaVerified ? theme.primary : theme.border,
-                },
-              ]}
-              onPress={() => setShowCaptchaModal(true)}
-              disabled={submitting}>
-              {captchaVerified ? (
-                <View style={styles.captchaVerifiedContent}>
-                  <CheckCircleIcon size={18} color={theme.primary} />
-                  <Text style={{fontSize: 16, color: theme.primary, marginLeft: 4}}>验证码已验证</Text>
-                </View>
-              ) : (
-                <>
-                  <Text style={{fontSize: 16, color: theme.secondaryText}}>点击进行人机验证</Text>
-                  <Text style={{fontSize: 14, color: theme.primary}}>去验证</Text>
-                </>
-              )}
-            </TouchableOpacity>
-          </View>}
-
           {/* 提示信息 */}
           <View style={styles.tipContainer}>
             <View style={styles.tipHeader}>
@@ -1061,17 +1111,11 @@ const CreatePostScreen: React.FC = () => {
               <Text style={styles.tipText}> 提示：</Text>
             </View>
             {isEditMode ? (
-              <>
-                <Text style={styles.tipText}>• 修改标题和内容后点击右上角保存</Text>
-                <Text style={styles.tipText}>• 可删除已有附件或添加图片，附件总数最多9个</Text>
-                <Text style={styles.tipText}>• 附件修改会在保存时生效</Text>
-              </>
+              <Text style={styles.tipText}>• 附件总数最多9个</Text>
             ) : (
               <>
-                <Text style={styles.tipText}>• 点击发布前先完成人机验证</Text>
-                <Text style={styles.tipText}>• 点击内容框左下角图标可添加图片（最多9张）</Text>
-                <Text style={styles.tipText}>• 图片上传完成后才能发布</Text>
-                <Text style={styles.tipText}>• 草稿会自动保存（不含图片）</Text>
+                <Text style={styles.tipText}>• 如弹出人机验证，请按提示完成</Text>
+                <Text style={styles.tipText}>• 图片最多9张</Text>
               </>
             )}
           </View>
@@ -1174,17 +1218,6 @@ const createStyles = (theme: ThemeColors, fontSizes: ReturnType<typeof getFontSi
     textAlign: 'right',
     marginTop: SPACING.xs,
   },
-  captchaButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: theme.placeholderBackground,
-    borderWidth: 1,
-    borderColor: theme.border,
-    borderRadius: BORDER_RADIUS.md,
-    padding: SPACING.lg,
-    minHeight: responsiveSize(46, 50, 54, 58),
-  },
   tipContainer: {
     backgroundColor: theme.quoteBackground,
     borderRadius: BORDER_RADIUS.md,
@@ -1199,10 +1232,6 @@ const createStyles = (theme: ThemeColors, fontSizes: ReturnType<typeof getFontSi
     fontSize: FONT_SIZE.sm,
     color: theme.secondaryText,
     lineHeight: FONT_SIZE.xl,
-  },
-  captchaVerifiedContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
   },
   modalOverlay: {
     flex: 1,

@@ -147,7 +147,7 @@ const AppContent = () => {
           )}
         </RootStack.Navigator>
       </NavigationContainer>
-      {/* 隐藏的静默验证码 WebView，用于 M 站心跳检测到过期后自动重新登录 */}
+      {/* 隐藏的静默验证码 WebView：支持登录静默续期及发帖/回复静默优先验证 */}
       {isLoggedIn && <SilentCaptchaWebView />}
     </View>
   );

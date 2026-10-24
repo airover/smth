@@ -1,48 +1,53 @@
 /**
- * 静默验证码 WebView 组件
- * 
- * 挂载在 App 根组件中，完全不可见。
- * 当 auth.ts 检测到 M 站 session 过期时，通过事件机制触发此组件：
- * 1. 加载隐藏的 WebView，初始化极验 SDK（bind 模式）
- * 2. 极验无感验证自动完成 → 返回验证码参数
- * 3. 如果极验弹出交互式验证（用户无法操作隐藏 WebView）→ 超时后静默放弃
+ * 静默优先验证 WebView：按调用方指定的 GeeTest ID 做限时尝试。
+ * 仅 SDK 正常返回票据时报告成功；交互挑战无法在隐藏 WebView 中完成，
+ * 超时/错误会返回失败，由发帖/回复流程切换到可见验证码界面。
  */
 import React, {useRef, useState, useEffect, useCallback} from 'react';
 import {View, StyleSheet} from 'react-native';
 import {WebView} from 'react-native-webview';
 import {
+  DEFAULT_LOGIN_CAPTCHA_ID,
   registerCaptchaHandler,
   submitCaptchaResult,
 } from '../services/silentCaptchaEvent';
-
-const GEETEST_CAPTCHA_ID = 'b01299f3ff24047dc399e650eec51a81';
+import type {SilentCaptchaRequest} from '../services/silentCaptchaEvent';
 
 const SilentCaptchaWebView: React.FC = () => {
   const webViewRef = useRef<WebView>(null);
   // active 为 true 时才渲染 WebView（按需加载，避免常驻占用资源）
   const [active, setActive] = useState(false);
+  const [activeRequest, setActiveRequest] = useState<SilentCaptchaRequest>({
+    captchaId: DEFAULT_LOGIN_CAPTCHA_ID,
+    timeoutMs: 15000,
+  });
   // 用于强制重新创建 WebView（每次请求都用全新的 WebView）
   const [webViewKey, setWebViewKey] = useState(0);
 
-  // 注册为验证码请求处理器
+  // 注册为验证码请求处理器；超时/离开流程时可立即销毁隐藏 WebView。
   useEffect(() => {
-    const unregister = registerCaptchaHandler(() => {
-      console.log('[静默验证码WebView] 收到验证码请求，激活 WebView');
-      setWebViewKey(prev => prev + 1); // 强制重新创建
-      setActive(true);
-    });
+    const unregister = registerCaptchaHandler(
+      request => {
+        console.log('[静默验证码WebView] 收到验证码请求，激活 WebView');
+        setActiveRequest(request);
+        setWebViewKey(prev => prev + 1); // 强制重新创建
+        setActive(true);
+      },
+      () => setActive(false),
+    );
     return unregister;
   }, []);
 
-  // WebView 加载完成后的超时保护：如果 15 秒内没有结果，自动销毁
+  // 隐藏验证限时尝试；无感通过则返回票据，交互/超时则立即回退到可见验证。
   useEffect(() => {
     if (!active) return;
     const timer = setTimeout(() => {
-      console.log('[静默验证码WebView] WebView 活跃超时，自动销毁');
+      console.log('[静默验证码WebView] 静默尝试超时，回退到可见验证');
+      submitCaptchaResult({success: false, error: '静默验证超时'});
       setActive(false);
-    }, 16000); // 比 requestSilentCaptcha 的超时稍长
+    }, Math.max(0, activeRequest.timeoutMs - 250));
     return () => clearTimeout(timer);
-  }, [active, webViewKey]);
+  }, [active, activeRequest.timeoutMs, webViewKey]);
 
   const handleMessage = useCallback((event: any) => {
     try {
@@ -60,7 +65,7 @@ const SilentCaptchaWebView: React.FC = () => {
           submitCaptchaResult({
             success: true,
             captchaParams: {
-              captcha_id: GEETEST_CAPTCHA_ID,
+              captcha_id: activeRequest.captchaId,
               lot_number: data.lot_number,
               captcha_output: data.captcha_output,
               pass_token: data.pass_token,
@@ -89,7 +94,7 @@ const SilentCaptchaWebView: React.FC = () => {
     } catch (e) {
       console.error('[静默验证码WebView] 解析消息失败:', e);
     }
-  }, []);
+  }, [activeRequest.captchaId]);
 
   // 静默模式的极验 HTML：和 CaptchaScreen 类似，但去掉所有 UI 元素
   const silentCaptchaHtml = `
@@ -124,7 +129,7 @@ const SilentCaptchaWebView: React.FC = () => {
       }
 
       initGeetest4({
-        captchaId: '${GEETEST_CAPTCHA_ID}',
+        captchaId: '${activeRequest.captchaId}',
         product: 'bind',
         language: 'zho',
         protocol: 'https://',
