@@ -3,6 +3,7 @@ import {
   Modal,
   View,
   Image,
+  Text,
   TouchableOpacity,
   StyleSheet,
   Dimensions,
@@ -10,6 +11,7 @@ import {
   Platform,
   ScrollView,
   Animated,
+  Easing,
   PanResponder,
   Share,
   Alert,
@@ -32,6 +34,7 @@ const SWIPE_THRESHOLD = 100; // 下滑关闭距离阈值
 const SWIPE_VELOCITY_THRESHOLD = 0.6; // 下滑关闭速度阈值
 const SWIPE_FORCE_CLOSE_THRESHOLD = 220; // 强制关闭的距离阈值（降低到250px）
 const MIN_SWIPE_DISTANCE = 8; // 最小滑动距离才开始响应（降低到8px）
+const IMAGE_SWIPE_DISTANCE = 60; // 水平切图的最小距离
 const MIN_OPACITY = 0.3;
 const ZOOM_IN_DURATION = 400;
 const ZOOM_OUT_DURATION = 600;
@@ -41,17 +44,37 @@ const DEFAULT_IMAGE_HEIGHT_RATIO = 0.7;
 
 interface ImageViewerProps {
   visible: boolean;
-  imageUri: string;
+  images: string[];
+  initialIndex: number;
   onClose: () => void;
 }
 
-const ImageViewer: React.FC<ImageViewerProps> = ({visible, imageUri, onClose}) => {
+const ImageViewer: React.FC<ImageViewerProps> = ({visible, images, initialIndex, onClose}) => {
+  const [currentIndex, setCurrentIndex] = useState(initialIndex);
+  const currentIndexRef = useRef(initialIndex);
+  const imageCountRef = useRef(images.length);
+  imageCountRef.current = images.length;
+  const imagesRef = useRef(images);
+  imagesRef.current = images;
+  const imageUri = images[currentIndex] || '';
   const [loading, setLoading] = useState(true);
   const [imageSize, setImageSize] = useState<{width: number; height: number} | null>(null);
   const [isZoomed, setIsZoomed] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
   const lastTap = useRef<number | null>(null);
   const translateY = useRef(new Animated.Value(0)).current;
+  const swipeX = useRef(new Animated.Value(0)).current;
+  const coverOpacity = useRef(new Animated.Value(1)).current;
+  const [transitionCover, setTransitionCover] = useState<{uri: string; index: number} | null>(null);
+  const coverRef = useRef<{uri: string; index: number} | null>(null);
+  const handoffReset = useRef(false);
+  const handoffLoaded = useRef(false);
+  const handoffFading = useRef(false);
+  const handoffCommitted = useRef(false);
+  const handoffTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const swipeAnimating = useRef(false);
+  const swipeWasHorizontal = useRef(false);
+  const imageSizeCache = useRef<Record<string, {width: number; height: number}>>({});
   const opacity = useRef(new Animated.Value(1)).current;
   const currentZoomScale = useRef(1); // 记录当前实际的缩放比例
   const backgroundPressStart = useRef<{x: number; y: number} | null>(null); // 记录背景按下的位置
@@ -60,36 +83,109 @@ const ImageViewer: React.FC<ImageViewerProps> = ({visible, imageUri, onClose}) =
   const isPinching = useRef(false); // 是否正在双指缩放
   const lastPinchTime = useRef(0); // 最后一次双指缩放的时间
 
+  // 目标图始终覆盖动画交接处，待新图片真实渲染后再淡出，防止一帧空白。
+  const finishHandoff = () => {
+    if (!coverRef.current || !handoffReset.current || !handoffLoaded.current || handoffFading.current) return;
+    handoffFading.current = true;
+    if (handoffTimeout.current) clearTimeout(handoffTimeout.current);
+    handoffTimeout.current = null;
+    Animated.timing(coverOpacity, {
+      toValue: 0,
+      duration: 100,
+      useNativeDriver: true,
+    }).start(() => {
+      coverRef.current = null;
+      setTransitionCover(null);
+      coverOpacity.setValue(1);
+      swipeAnimating.current = false;
+      handoffFading.current = false;
+    });
+  };
+
+  const commitHandoff = (cover: {uri: string; index: number}) => {
+    if (coverRef.current !== cover || handoffCommitted.current) return;
+    handoffCommitted.current = true;
+    if (handoffTimeout.current) clearTimeout(handoffTimeout.current);
+    handoffTimeout.current = null;
+    currentIndexRef.current = cover.index;
+    setCurrentIndex(cover.index);
+    requestAnimationFrame(() => {
+      if (coverRef.current !== cover) return;
+      swipeX.setValue(0);
+      handoffReset.current = true;
+      handoffTimeout.current = setTimeout(() => {
+        handoffLoaded.current = true;
+        finishHandoff();
+      }, 3000);
+      finishHandoff();
+    });
+  };
+
   React.useEffect(() => {
-    if (visible && imageUri) {
-      setLoading(true);
-      setIsZoomed(false);
-      translateY.setValue(0);
-      opacity.setValue(1);
-      // 重置缩放
-      scrollViewRef.current?.getScrollResponder()?.scrollResponderZoomTo({
-        x: 0, 
-        y: 0, 
-        width: SCREEN_WIDTH, 
-        height: SCREEN_HEIGHT, 
-        animated: false
-      });
-      currentZoomScale.current = 1;
-      
-      // 获取图片尺寸
+    if (handoffTimeout.current) clearTimeout(handoffTimeout.current);
+    handoffTimeout.current = null;
+    coverRef.current = null;
+    setTransitionCover(null);
+    coverOpacity.stopAnimation();
+    coverOpacity.setValue(1);
+    handoffReset.current = false;
+    handoffLoaded.current = false;
+    handoffFading.current = false;
+    handoffCommitted.current = false;
+    swipeAnimating.current = false;
+    swipeX.stopAnimation();
+    swipeX.setValue(0);
+    if (visible) {
+      currentIndexRef.current = initialIndex;
+      setCurrentIndex(initialIndex);
+    }
+  }, [visible, images, initialIndex, swipeX, coverOpacity]);
+
+  React.useEffect(() => {
+    if (!visible || !imageUri) return;
+    let cancelled = false;
+    const cachedSize = imageSizeCache.current[imageUri];
+    setLoading(!cachedSize);
+    setImageSize(cachedSize || null);
+    setIsZoomed(false);
+    lastTap.current = null;
+    translateY.setValue(0);
+    opacity.setValue(1);
+    // 重置缩放
+    scrollViewRef.current?.getScrollResponder()?.scrollResponderZoomTo({
+      x: 0,
+      y: 0,
+      width: SCREEN_WIDTH,
+      height: SCREEN_HEIGHT,
+      animated: false,
+    });
+    currentZoomScale.current = 1;
+
+    if (!cachedSize) {
       Image.getSize(
         imageUri,
         (width, height) => {
+          if (cancelled) return;
+          imageSizeCache.current[imageUri] = {width, height};
           setImageSize({width, height});
           setLoading(false);
         },
         () => {
-          setLoading(false);
-        }
+          if (!cancelled) setLoading(false);
+        },
       );
     }
+    // 缓存相邻图片尺寸，让翻页时无需再次等待 getSize 才显示图片。
+    [images[currentIndex - 1], images[currentIndex + 1]].forEach(uri => {
+      if (uri && !imageSizeCache.current[uri]) {
+        Image.getSize(uri, (width, height) => {
+          imageSizeCache.current[uri] = {width, height};
+        }, () => {});
+      }
+    });
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, imageUri]);
+  }, [visible, imageUri, currentIndex]);
 
   // 处理背景按下
   const handleBackgroundPressIn = (event: any) => {
@@ -117,7 +213,20 @@ const ImageViewer: React.FC<ImageViewerProps> = ({visible, imageUri, onClose}) =
     }
   };
 
-  // 下滑关闭手势处理
+  // 未放大时才允许左右切图；放大后单指拖动仍交给 ScrollView。
+  const canSwipeBetweenImages = (dx: number, dy: number, touches: number) => (
+    imageCountRef.current > 1
+    && !swipeAnimating.current
+    && touches === 1
+    && currentZoomScale.current <= 1.05
+    && !gestureDisabled.current
+    && !isPinching.current
+    && Date.now() - lastPinchTime.current >= 500
+    && Math.abs(dx) > 12
+    && Math.abs(dx) > Math.abs(dy) * 1.5
+  );
+
+  // 下滑关闭与未放大时的水平切图手势处理
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false, // 永远不在开始时捕获
@@ -150,17 +259,34 @@ const ImageViewer: React.FC<ImageViewerProps> = ({visible, imageUri, onClose}) =
         const isDownSwipe = gestureState.dy > 0;
         
         // 所有条件必须同时满足，确保不干扰双指缩放
-        return isSingleTouch && isNotZoomed && isVerticalSwipe && hasMinDistance && isDownSwipe;
+        return (isSingleTouch && isNotZoomed && isVerticalSwipe && hasMinDistance && isDownSwipe)
+          || canSwipeBetweenImages(gestureState.dx, gestureState.dy, gestureState.numberActiveTouches);
       },
       onStartShouldSetPanResponderCapture: () => false, // 不捕获开始事件
-      onMoveShouldSetPanResponderCapture: () => false, // 不捕获移动事件
+      onMoveShouldSetPanResponderCapture: (_, gestureState) =>
+        canSwipeBetweenImages(gestureState.dx, gestureState.dy, gestureState.numberActiveTouches),
       onPanResponderMove: (_, gestureState) => {
-        // 双重检查
-        if (gestureDisabled.current || isScrolling.current || isPinching.current) return;
-        
-        // 如果缩放比例大于1，不响应
+        if (gestureDisabled.current || isPinching.current || swipeAnimating.current) return;
         if (currentZoomScale.current > 1.05) return;
 
+        if (imageCountRef.current > 1
+          && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.5) {
+          const direction = gestureState.dx < 0 ? 1 : -1;
+          const hasNeighbor = currentIndexRef.current + direction >= 0
+            && currentIndexRef.current + direction < imageCountRef.current;
+          swipeWasHorizontal.current = true;
+          swipeX.setValue(hasNeighbor
+            ? Math.max(-SCREEN_WIDTH, Math.min(SCREEN_WIDTH, gestureState.dx))
+            : gestureState.dx * 0.2);
+          return;
+        }
+
+        if (isScrolling.current) return;
+        // 手势从横向转成纵向时先让图片回到中心。
+        if (swipeWasHorizontal.current) {
+          swipeWasHorizontal.current = false;
+          Animated.spring(swipeX, {toValue: 0, useNativeDriver: true}).start();
+        }
         // 只响应向下滑动
         if (gestureState.dy > 0) {
           translateY.setValue(gestureState.dy);
@@ -170,13 +296,59 @@ const ImageViewer: React.FC<ImageViewerProps> = ({visible, imageUri, onClose}) =
         }
       },
       onPanResponderRelease: (_, gestureState) => {
-        // 重置禁用状态（但不影响 isPinching，它由 onTouchEnd 处理）
+        // 多指触摸过程中即使缩放状态尚未更新，也不能当作翻图。
+        const wasPinching = gestureDisabled.current || isPinching.current || gestureState.numberActiveTouches > 1;
         gestureDisabled.current = false;
-        
-        // 如果当前是缩放状态，不处理关闭逻辑
-        if (currentZoomScale.current > 1.05) {
+        swipeWasHorizontal.current = false;
+        if (wasPinching || currentZoomScale.current > 1.05) {
+          Animated.spring(swipeX, {toValue: 0, useNativeDriver: true}).start();
           return;
         }
+
+        const horizontal = imageCountRef.current > 1
+          && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.5;
+        if (horizontal) {
+          const direction = gestureState.dx < 0 ? 1 : -1;
+          const nextIndex = currentIndexRef.current + direction;
+          const hasNeighbor = nextIndex >= 0 && nextIndex < imageCountRef.current;
+          const shouldTurn = hasNeighbor && (
+            Math.abs(gestureState.dx) >= IMAGE_SWIPE_DISTANCE
+            || (Math.abs(gestureState.dx) >= 20 && Math.abs(gestureState.vx) > 0.65)
+          );
+          swipeAnimating.current = true;
+          if (shouldTurn) {
+            Animated.timing(swipeX, {
+              toValue: -direction * SCREEN_WIDTH,
+              duration: 220,
+              easing: Easing.out(Easing.cubic),
+              useNativeDriver: true,
+            }).start(({finished}) => {
+              if (finished) {
+                const cover = {uri: imagesRef.current[nextIndex], index: nextIndex};
+                coverRef.current = cover;
+                handoffLoaded.current = false;
+                handoffReset.current = false;
+                handoffCommitted.current = false;
+                coverOpacity.setValue(1);
+                setTransitionCover(cover);
+                // 目标图完成解码后再替换底层；相邻图在等待期间仍留在屏幕中央。
+                handoffTimeout.current = setTimeout(() => commitHandoff(cover), 3000);
+              } else {
+                swipeX.setValue(0);
+                swipeAnimating.current = false;
+              }
+            });
+          } else {
+            Animated.spring(swipeX, {
+              toValue: 0,
+              speed: 22,
+              bounciness: 4,
+              useNativeDriver: true,
+            }).start(() => { swipeAnimating.current = false; });
+          }
+          return;
+        }
+        Animated.spring(swipeX, {toValue: 0, useNativeDriver: true}).start();
 
         // 关闭条件：
         // 1. 距离非常大（超过强制关闭阈值）- 无论速度如何都关闭
@@ -217,6 +389,9 @@ const ImageViewer: React.FC<ImageViewerProps> = ({visible, imageUri, onClose}) =
       onPanResponderTerminate: () => {
         // 手势被中断时重置状态（但不影响 isPinching）
         gestureDisabled.current = false;
+        swipeWasHorizontal.current = false;
+        swipeX.stopAnimation();
+        Animated.spring(swipeX, {toValue: 0, useNativeDriver: true}).start();
         Animated.parallel([
           Animated.spring(translateY, {
             toValue: 0,
@@ -627,8 +802,21 @@ const ImageViewer: React.FC<ImageViewerProps> = ({visible, imageUri, onClose}) =
               style={[styles.scrollWrapper, {transform: [{translateY}]}]}
               {...panResponder.panHandlers}
             >
+              <Animated.View style={[styles.pageTrack, {transform: [{translateX: swipeX}]}]}>
+                {currentIndex > 0 && (
+                  <View style={[styles.adjacentPage, {left: -SCREEN_WIDTH}]} pointerEvents="none">
+                    <Image source={{uri: images[currentIndex - 1]}} style={styles.adjacentImage} resizeMode="contain" />
+                  </View>
+                )}
+                {currentIndex + 1 < images.length && (
+                  <View style={[styles.adjacentPage, {left: SCREEN_WIDTH}]} pointerEvents="none">
+                    <Image source={{uri: images[currentIndex + 1]}} style={styles.adjacentImage} resizeMode="contain" />
+                  </View>
+                )}
               <ScrollView
+                key={`preview-${currentIndex}`}
                 ref={scrollViewRef}
+                style={styles.currentPage}
                 contentContainerStyle={styles.scrollContent}
                 maximumZoomScale={3}
                 minimumZoomScale={1}
@@ -699,12 +887,42 @@ const ImageViewer: React.FC<ImageViewerProps> = ({visible, imageUri, onClose}) =
                       source={{uri: imageUri}}
                       style={[styles.image, getImageStyle()]}
                       resizeMode="contain"
+                      onLoad={() => {
+                        if (coverRef.current?.index === currentIndex) {
+                          handoffLoaded.current = true;
+                          finishHandoff();
+                        }
+                      }}
+                      onError={() => {
+                        if (coverRef.current?.index === currentIndex) {
+                          handoffLoaded.current = true;
+                          finishHandoff();
+                        }
+                      }}
                     />
                   )}
                 </TouchableOpacity>
               </ScrollView>
+              </Animated.View>
+              {transitionCover && (
+                <Animated.View style={[styles.transitionCover, {opacity: coverOpacity}]} pointerEvents="none">
+                  <Image
+                    source={{uri: transitionCover.uri}}
+                    style={styles.adjacentImage}
+                    resizeMode="contain"
+                    onLoad={() => commitHandoff(transitionCover)}
+                    onError={() => commitHandoff(transitionCover)}
+                  />
+                </Animated.View>
+              )}
             </Animated.View>
           </TouchableOpacity>
+
+          {images.length > 1 && (
+            <View style={styles.pageIndicator} pointerEvents="none">
+              <Text style={styles.pageIndicatorText}>{currentIndex + 1} / {images.length}</Text>
+            </View>
+          )}
 
           {/* 右下角操作按钮组 */}
           <View style={styles.actionButtons}>
@@ -756,6 +974,30 @@ const styles = StyleSheet.create({
   },
   scrollWrapper: {
     flex: 1,
+    overflow: 'hidden',
+  },
+  pageTrack: {
+    flex: 1,
+    width: SCREEN_WIDTH,
+  },
+  currentPage: {
+    flex: 1,
+  },
+  adjacentPage: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: SCREEN_WIDTH,
+    justifyContent: 'center',
+  },
+  transitionCover: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+  },
+  adjacentImage: {
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT * MAX_IMAGE_HEIGHT_RATIO,
+    alignSelf: 'center',
   },
   scrollContent: {
     flexGrow: 1,
@@ -768,6 +1010,19 @@ const styles = StyleSheet.create({
   },
   image: {
     backgroundColor: 'transparent',
+  },
+  pageIndicator: {
+    position: 'absolute',
+    bottom: Platform.OS === 'ios' ? 47 : 37,
+    left: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+  },
+  pageIndicatorText: {
+    color: '#fff',
+    fontSize: 14,
   },
   // 右下角操作按钮组
   actionButtons: {

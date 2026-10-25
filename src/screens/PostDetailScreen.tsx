@@ -350,7 +350,8 @@ const PostDetailScreen: React.FC = () => {
   const [repliesReloading, setRepliesReloading] = useState(false);
   const [refreshing, setRefreshing] = useState(false); // 下拉刷新状态
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
-  const [selectedImageUri, setSelectedImageUri] = useState('');
+  const [viewerImages, setViewerImages] = useState<string[]>([]);
+  const [viewerInitialIndex, setViewerInitialIndex] = useState(0);
   const [imageSizes, setImageSizes] = useState<{[key: string]: {width: number; height: number}}>({});
   const [failedImages, setFailedImages] = useState<Set<string>>(new Set()); // 跟踪加载失败的图片
   const [currentUsername, setCurrentUsername] = useState<string | null>(null);
@@ -2020,16 +2021,18 @@ const PostDetailScreen: React.FC = () => {
     );
   };
 
-  const handleImagePress = (imageUri: string) => {
-    // 检查图片是否加载失败
-    if (failedImages.has(imageUri)) {
-      console.log('🖼️ 图片加载失败，禁止查看原图:', imageUri);
-      return;
-    }
+  const handleImagePress = (attachments: Attachment[], selectedAttachmentIndex: number) => {
+    const selected = attachments[selectedAttachmentIndex];
+    if (!selected || failedImages.has(selected.url)) return;
 
-    // 标准化图片URL作为最后的安全保障（通常dataFetcher已经处理过了）
-    const normalizedUri = normalizeImageUrl(imageUri);
-    setSelectedImageUri(normalizedUri);
+    // 每次只取当前主帖或当前回复的图片，保持附件顺序且不混入视频/其他回复。
+    const imageAttachments = attachments
+      .map((item, attachmentIndex) => ({item, attachmentIndex}))
+      .filter(({item}) => isImage(item) && !failedImages.has(item.url));
+    const initialIndex = imageAttachments.findIndex(({attachmentIndex}) => attachmentIndex === selectedAttachmentIndex);
+    if (initialIndex < 0) return;
+    setViewerImages(imageAttachments.map(({item}) => normalizeImageUrl(item.url)));
+    setViewerInitialIndex(initialIndex);
     setImageViewerVisible(true);
   };
 
@@ -2079,7 +2082,7 @@ const PostDetailScreen: React.FC = () => {
               <TouchableOpacity
                 key={index}
                 style={[styles.imageContainer, !isFailed && {backgroundColor: theme.placeholderBackground}, isFailed && styles.imageContainerFailed]}
-                onPress={() => !isFailed && handleImagePress(url)}
+                onPress={() => !isFailed && handleImagePress(attachments, index)}
                 activeOpacity={isFailed ? 1 : 0.9}
               >
                 <ImageWithPlaceholder
@@ -3037,7 +3040,8 @@ const PostDetailScreen: React.FC = () => {
       
       <ImageViewer
         visible={imageViewerVisible}
-        imageUri={selectedImageUri}
+        images={viewerImages}
+        initialIndex={viewerInitialIndex}
         onClose={() => setImageViewerVisible(false)}
       />
 
